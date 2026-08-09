@@ -1,6 +1,6 @@
 package com.billing.service.payment.impl;
 
-import com.billing.entity.Order;
+import com.billing.license.entity.Order;
 import com.billing.service.payment.strategy.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

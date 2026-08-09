@@ -1,16 +1,37 @@
-package com.billing.service.payment.strategy;
+package com.billing.service.payment.impl;
 
-import com.billing.entity.Order;
+import com.alipay.api.AlipayApiException;
+import com.alipay.api.AlipayClient;
+import com.alipay.api.DefaultAlipayClient;
+import com.alipay.api.request.AlipayTradePrecreateRequest;
+import com.alipay.api.request.AlipayTradePagePayRequest;
+import com.alipay.api.request.AlipayTradeQueryRequest;
+import com.alipay.api.response.AlipayTradePrecreateResponse;
+import com.alipay.api.response.AlipayTradePagePayResponse;
+import com.alipay.api.response.AlipayTradeQueryResponse;
+import com.alipay.api.internal.util.AlipaySignature;
+import com.billing.license.entity.Order;
+import com.billing.service.payment.strategy.PaymentMethod;
+import com.billing.service.payment.strategy.PaymentResponse;
+import com.billing.service.payment.strategy.PaymentStatus;
+import com.billing.service.payment.strategy.PaymentStrategy;
+import com.billing.service.payment.strategy.WebhookPayload;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * 支付宝支付策略实现
+ * 支持扫码支付（预下单）和网页支付
  */
 @Service
 public class AlipayStrategy implements PaymentStrategy {
@@ -34,34 +55,97 @@ public class AlipayStrategy implements PaymentStrategy {
     
     @Value("${payment.alipay.gateway-url:https://openapi.alipay.com/gateway.do}")
     private String gatewayUrl;
+    
+    @Value("${payment.alipay.sign-type:RSA2}")
+    private String signType;
+
+    private AlipayClient getAlipayClient() {
+        return new DefaultAlipayClient(gatewayUrl, appId, privateKey, "json", "UTF-8", alipayPublicKey, signType);
+    }
 
     @Override
     public PaymentResponse createPayment(Order order) {
-        logger.info("创建支付宝支付订单：orderId={}", order.getOrderNo());
+        logger.info("创建支付宝支付订单：orderId={}, amount={}", order.getOrderNo(), order.getAmount());
         
         PaymentResponse response = new PaymentResponse();
         response.setPaymentId("alipay_" + order.getOrderNo());
-        response.setStatus("PENDING");
+        response.setStatus(PaymentStatus.PENDING.name());
+        response.setPaymentMethod(PaymentMethod.ALIPAY.name());
         
-        // TODO: 集成支付宝SDK，调用 alipay.trade.precreate (扫码支付) 或 alipay.trade.page.pay (网页支付)
-        // 示例伪代码：
-        // AlipayClient client = new DefaultAlipayClient(gatewayUrl, appId, privateKey, "json", "UTF-8", alipayPublicKey, "RSA2");
-        // AlipayTradePrecreateRequest request = new AlipayTradePrecreateRequest();
-        // request.setBizContent("{\"out_trade_no\":\"" + order.getOrderNo() + "\",\"total_amount\":\"" + order.getAmount() + "\",\"subject\":\"" + order.getTitle() + "\"}");
-        // request.setNotifyUrl(notifyUrl);
-        // request.setReturnUrl(returnUrl);
-        // AlipayTradePrecreateResponse alipayResponse = client.execute(request);
-        // if (alipayResponse.isSuccess()) {
-        //     response.setQrCode(alipayResponse.getQrCode());
-        // }
-        
-        // 模拟返回二维码
-        response.setQrCode("https://qr.alipay.com/mock_" + order.getOrderNo());
-        
-        Map<String, String> extraParams = new HashMap<>();
-        extraParams.put("appId", appId);
-        extraParams.put("gatewayUrl", gatewayUrl);
-        response.setExtraParams(extraParams);
+        try {
+            AlipayClient client = getAlipayClient();
+            
+            // 根据订单类型选择支付方式：有 machineCode 用扫码，否则用网页
+            if (StringUtils.hasText(order.getMachineCode())) {
+                // 扫码支付（预下单）
+                AlipayTradePrecreateRequest request = new AlipayTradePrecreateRequest();
+                request.setNotifyUrl(notifyUrl);
+                request.setReturnUrl(returnUrl);
+                
+                String bizContent = String.format(
+                    "{" +
+                    "\"out_trade_no\":\"%s\"," +
+                    "\"total_amount\":\"%s\"," +
+                    "\"subject\":\"%s\"," +
+                    "\"body\":\"%s\"," +
+                    "\"product_code\":\"FACE_TO_FACE_PAYMENT\"" +
+                    "}",
+                    order.getOrderNo(),
+                    order.getAmount().setScale(2, BigDecimal.ROUND_HALF_UP).toString(),
+                    order.getTitle(),
+                    order.getDescription() != null ? order.getDescription() : ""
+                );
+                request.setBizContent(bizContent);
+                
+                AlipayTradePrecreateResponse alipayResponse = client.execute(request);
+                
+                if (alipayResponse.isSuccess()) {
+                    response.setQrCode(alipayResponse.getQrCode());
+                    response.setExtraParams(buildExtraParams(alipayResponse.getOutTradeNo(), alipayResponse.getTradeNo()));
+                    logger.info("支付宝预下单成功：qrCode={}", alipayResponse.getQrCode());
+                } else {
+                    logger.error("支付宝预下单失败：code={}, msg={}", alipayResponse.getCode(), alipayResponse.getMsg());
+                    response.setStatus(PaymentStatus.FAILED.name());
+                    response.setErrorMessage(alipayResponse.getMsg());
+                }
+            } else {
+                // 网页支付
+                AlipayTradePagePayRequest request = new AlipayTradePagePayRequest();
+                request.setNotifyUrl(notifyUrl);
+                request.setReturnUrl(returnUrl);
+                
+                String bizContent = String.format(
+                    "{" +
+                    "\"out_trade_no\":\"%s\"," +
+                    "\"total_amount\":\"%s\"," +
+                    "\"subject\":\"%s\"," +
+                    "\"body\":\"%s\"," +
+                    "\"product_code\":\"FAST_INSTANT_TRADE_PAY\"" +
+                    "}",
+                    order.getOrderNo(),
+                    order.getAmount().setScale(2, BigDecimal.ROUND_HALF_UP).toString(),
+                    order.getTitle(),
+                    order.getDescription() != null ? order.getDescription() : ""
+                );
+                request.setBizContent(bizContent);
+                
+                AlipayTradePagePayResponse alipayResponse = client.pageExecute(request);
+                
+                if (alipayResponse.isSuccess()) {
+                    response.setRedirectUrl(alipayResponse.getBody());
+                    logger.info("支付宝网页支付表单生成成功");
+                } else {
+                    logger.error("支付宝网页支付失败：code={}, msg={}", alipayResponse.getCode(), alipayResponse.getMsg());
+                    response.setStatus(PaymentStatus.FAILED.name());
+                    response.setErrorMessage(alipayResponse.getMsg());
+                }
+            }
+            
+        } catch (AlipayApiException e) {
+            logger.error("支付宝 API 调用异常", e);
+            response.setStatus(PaymentStatus.FAILED.name());
+            response.setErrorMessage("支付宝接口调用失败：" + e.getMessage());
+        }
         
         return response;
     }
@@ -70,55 +154,133 @@ public class AlipayStrategy implements PaymentStrategy {
     public PaymentStatus queryPayment(String paymentId) {
         logger.info("查询支付宝支付状态：paymentId={}", paymentId);
         
-        // TODO: 调用支付宝查询接口 alipay.trade.query
-        // 模拟返回待支付状态
-        return PaymentStatus.PENDING;
+        try {
+            AlipayClient client = getAlipayClient();
+            AlipayTradeQueryRequest request = new AlipayTradeQueryRequest();
+            
+            String outTradeNo = paymentId.replaceFirst("alipay_", "");
+            request.setBizContent("{\"out_trade_no\":\"" + outTradeNo + "\"}");
+            
+            AlipayTradeQueryResponse response = client.execute(request);
+            
+            if (response.isSuccess()) {
+                String tradeStatus = response.getTradeStatus();
+                switch (tradeStatus) {
+                    case "TRADE_SUCCESS":
+                    case "TRADE_FINISHED":
+                        return PaymentStatus.SUCCESS;
+                    case "WAIT_BUYER_PAY":
+                        return PaymentStatus.PENDING;
+                    case "TRADE_CLOSED":
+                        return PaymentStatus.CANCELLED;
+                    default:
+                        return PaymentStatus.PENDING;
+                }
+            } else {
+                logger.warn("支付宝查询失败：code={}, msg={}", response.getCode(), response.getMsg());
+                return PaymentStatus.UNKNOWN;
+            }
+            
+        } catch (AlipayApiException e) {
+            logger.error("支付宝查询异常", e);
+            return PaymentStatus.UNKNOWN;
+        }
     }
 
     @Override
     public boolean verifyWebhookSignature(String payload, String signature, Map<String, String> headers) {
-        logger.info("验证支付宝Webhook签名");
+        logger.info("验证支付宝 Webhook 签名");
         
-        // TODO: 使用支付宝公钥验证签名
-        // 支付宝回调验签逻辑：
-        // 1. 从请求参数中获取所有非空参数（除sign和sign_type外）
-        // 2. 按字典序排序并拼接成字符串
-        // 3. 使用支付宝公钥进行RSA2验签
+        if (!StringUtils.hasText(signature)) {
+            logger.error("支付宝签名为空");
+            return false;
+        }
         
         try {
-            // 伪代码示例：
-            // SignUtils.verify(payload, signature, alipayPublicKey, "RSA2");
+            // 解析回调参数
+            Map<String, String> params = parseCallbackParams(payload);
             
-            // 开发环境暂时跳过验签
-            logger.warn("开发环境：跳过支付宝签名验证");
-            return true;
+            // 移除 sign 和 sign_type 参数
+            params.remove("sign");
+            params.remove("sign_type");
+            
+            // 使用支付宝 SDK 验签
+            boolean isValid = AlipaySignature.rsaCheckV1(
+                params, 
+                alipayPublicKey, 
+                StandardCharsets.UTF_8.name(), 
+                signType
+            );
+            
+            if (isValid) {
+                logger.info("支付宝签名验证通过");
+            } else {
+                logger.error("支付宝签名验证失败");
+            }
+            
+            return isValid;
+            
         } catch (Exception e) {
-            logger.error("支付宝签名验证失败", e);
+            logger.error("支付宝签名验证异常", e);
             return false;
         }
     }
 
     @Override
     public WebhookPayload parseWebhookPayload(String payload) {
-        logger.info("解析支付宝Webhook回调");
+        logger.info("解析支付宝 Webhook 回调");
         
         WebhookPayload webhookPayload = new WebhookPayload();
         
-        // TODO: 解析支付宝回调参数
-        // 支付宝回调格式为 form表单 或 JSON，需根据配置解析
-        // 示例伪代码：
-        // Map<String, String> params = parseFormPayload(payload);
-        // String outTradeNo = params.get("out_trade_no");
-        // String tradeStatus = params.get("trade_status");
-        // String tradeNo = params.get("trade_no");
-        // String totalAmount = params.get("total_amount");
-        
-        // 模拟解析
-        webhookPayload.setOrderId("ORDER_123");
-        webhookPayload.setPaymentId("alipay_ORDER_123");
-        webhookPayload.setStatus("SUCCESS");
-        webhookPayload.setTransactionId("20240101123456789");
-        webhookPayload.setTimestamp(System.currentTimeMillis());
+        try {
+            Map<String, String> params = parseCallbackParams(payload);
+            
+            String outTradeNo = params.get("out_trade_no");
+            String tradeNo = params.get("trade_no");
+            String tradeStatus = params.get("trade_status");
+            String totalAmount = params.get("total_amount");
+            String buyerId = params.get("buyer_id");
+            String gmtPayment = params.get("gmt_payment");
+            
+            webhookPayload.setOrderId(outTradeNo);
+            webhookPayload.setPaymentId("alipay_" + outTradeNo);
+            webhookPayload.setTransactionId(tradeNo);
+            webhookPayload.setAmount(new BigDecimal(totalAmount != null ? totalAmount : "0"));
+            webhookPayload.setCurrency("CNY");
+            webhookPayload.setBuyerId(buyerId);
+            
+            // 解析支付时间
+            if (StringUtils.hasText(gmtPayment)) {
+                try {
+                    java.time.LocalDateTime paymentTime = java.time.LocalDateTime.parse(
+                        gmtPayment.replace(" ", "T")
+                    );
+                    webhookPayload.setTimestamp(paymentTime.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
+                } catch (Exception e) {
+                    webhookPayload.setTimestamp(System.currentTimeMillis());
+                }
+            } else {
+                webhookPayload.setTimestamp(System.currentTimeMillis());
+            }
+            
+            // 转换状态
+            if ("TRADE_SUCCESS".equals(tradeStatus) || "TRADE_FINISHED".equals(tradeStatus)) {
+                webhookPayload.setStatus(PaymentStatus.SUCCESS.name());
+            } else if ("TRADE_CLOSED".equals(tradeStatus)) {
+                webhookPayload.setStatus(PaymentStatus.CANCELLED.name());
+            } else {
+                webhookPayload.setStatus(PaymentStatus.PENDING.name());
+            }
+            
+            // 原始数据用于对账
+            webhookPayload.setRawData(params);
+            
+            logger.info("支付宝回调解析成功：orderId={}, status={}", outTradeNo, webhookPayload.getStatus());
+            
+        } catch (Exception e) {
+            logger.error("支付宝回调解析失败", e);
+            webhookPayload.setStatus(PaymentStatus.FAILED.name());
+        }
         
         return webhookPayload;
     }
@@ -126,5 +288,40 @@ public class AlipayStrategy implements PaymentStrategy {
     @Override
     public PaymentMethod getPaymentMethod() {
         return PaymentMethod.ALIPAY;
+    }
+    
+    /**
+     * 解析支付宝回调参数（支持 form 表单和 URL 编码格式）
+     */
+    private Map<String, String> parseCallbackParams(String payload) {
+        Map<String, String> params = new TreeMap<>();
+        
+        if (payload == null || payload.isEmpty()) {
+            return params;
+        }
+        
+        // 尝试解析 URL 编码格式
+        String[] pairs = payload.split("&");
+        for (String pair : pairs) {
+            int idx = pair.indexOf("=");
+            if (idx > 0) {
+                String key = URLDecoder.decode(pair.substring(0, idx), StandardCharsets.UTF_8);
+                String value = URLDecoder.decode(pair.substring(idx + 1), StandardCharsets.UTF_8);
+                params.put(key, value);
+            }
+        }
+        
+        return params;
+    }
+    
+    /**
+     * 构建额外参数
+     */
+    private Map<String, String> buildExtraParams(String outTradeNo, String tradeNo) {
+        Map<String, String> extraParams = new HashMap<>();
+        extraParams.put("outTradeNo", outTradeNo);
+        extraParams.put("tradeNo", tradeNo);
+        extraParams.put("channel", "ALIPAY");
+        return extraParams;
     }
 }

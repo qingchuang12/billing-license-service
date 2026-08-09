@@ -83,26 +83,53 @@
         </dependency>
 
         <!-- Payment Providers -->
+        <!-- Stripe SDK -->
         <dependency>
             <groupId>com.stripe</groupId>
             <artifactId>stripe-java</artifactId>
             <version>${stripe.version}</version>
         </dependency>
         
-        <!-- Alipay SDK (Optional) -->
+        <!-- Alipay SDK -->
         <dependency>
             <groupId>com.alipay.sdk</groupId>
             <artifactId>alipay-sdk-java</artifactId>
             <version>4.38.157.ALL</version>
-            <optional>true</optional>
         </dependency>
         
-        <!-- WeChat Pay SDK (Optional) -->
+        <!-- WeChat Pay SDK (Official V3) -->
         <dependency>
             <groupId>com.github.wechatpay-apiv3</groupId>
             <artifactId>wechatpay-java</artifactId>
             <version>0.2.14</version>
-            <optional>true</optional>
+        </dependency>
+
+        <!-- PayPal Checkout SDK -->
+        <dependency>
+            <groupId>com.paypal.sdk</groupId>
+            <artifactId>checkout-sdk</artifactId>
+            <version>2.0.0</version>
+        </dependency>
+
+        <!-- AWS KMS -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>kms</artifactId>
+            <version>2.21.0</version>
+        </dependency>
+
+        <!-- Azure Key Vault -->
+        <dependency>
+            <groupId>com.azure</groupId>
+            <artifactId>azure-security-keyvault-keys</artifactId>
+            <version>4.8.0</version>
+        </dependency>
+
+        <!-- Aliyun KMS -->
+        <dependency>
+            <groupId>com.aliyun</groupId>
+            <artifactId>aliyun-java-sdk-kms</artifactId>
+            <version>2.16.0</version>
         </dependency>
 
         <!-- Utilities -->

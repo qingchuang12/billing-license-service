@@ -1,11 +1,11 @@
 package com.billing.service.payment.impl;
 
-import com.billing.entity.Order;
+import com.billing.license.entity.Order;
 import com.billing.entity.Payment;
-import com.billing.repository.OrderRepository;
-import com.billing.repository.PaymentRepository;
-import com.billing.service.LicenseService;
-import com.billing.service.RedeemCodeService;
+import com.billing.license.repository.OrderRepository;
+import com.billing.license.repository.PaymentRepository;
+import com.billing.license.service.LicenseService;
+import com.billing.license.service.RedeemCodeService;
 import com.billing.service.payment.strategy.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

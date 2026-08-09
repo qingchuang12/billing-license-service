@@ -2,9 +2,9 @@ package com.billing.controller.webhook;
 
 import com.billing.license.entity.Order;
 import com.billing.license.repository.OrderRepository;
-import com.billing.repository.PaymentRepository;
-import com.billing.service.LicenseService;
-import com.billing.service.RedeemCodeService;
+
+import com.billing.license.service.LicenseService;
+import com.billing.license.service.RedeemCodeService;
 import com.billing.service.notification.EmailNotificationService;
 import com.billing.service.payment.impl.PaymentServiceFactory;
 import com.billing.service.payment.strategy.PaymentMethod;
@@ -34,7 +34,7 @@ public class WebhookController {
     private PaymentServiceFactory paymentServiceFactory;
     
     @Autowired
-    private PaymentRepository paymentRepository;
+    private com.billing.service.payment.PaymentService paymentService;
     
     @Autowired
     private OrderRepository orderRepository;
@@ -163,8 +163,12 @@ public class WebhookController {
                 return ResponseEntity.ok("Already processed");
             }
             
-            // 5. 更新支付记录
-            Payment payment = paymentRepository.findByPaymentId(webhookData.getPaymentId());
+            // 5. 更新支付状态
+            com.billing.license.entity.Payment payment = paymentService.updatePaymentStatus(
+                webhookData.getPaymentId(), 
+                PaymentStatus.valueOf(webhookData.getStatus()), 
+                webhookData.getTransactionId()
+            );
             if (payment == null) {
                 logger.error("支付记录不存在：paymentId={}", webhookData.getPaymentId());
                 return ResponseEntity.status(404).body("Payment not found");
@@ -178,7 +182,7 @@ public class WebhookController {
             
             // 6. 如果支付成功，执行发货逻辑
             if ("SUCCESS".equals(webhookData.getStatus())) {
-                fulfillOrder(payment.getOrderId(), payment);
+                fulfillOrder(payment.getOrderId().toString());
             }
             
             logger.info("Webhook处理成功：orderId={}, status={}", webhookData.getOrderId(), webhookData.getStatus());
@@ -194,7 +198,7 @@ public class WebhookController {
      * 发货逻辑 - 生成兑换码或License
      */
     @Transactional
-    protected void fulfillOrder(String orderId, Payment payment) {
+    protected void fulfillOrder(String orderId) {
         logger.info("开始发货：orderId={}", orderId);
         
         Order order = orderRepository.findByOrderNo(orderId);

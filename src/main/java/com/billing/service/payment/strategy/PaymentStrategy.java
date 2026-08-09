@@ -1,6 +1,6 @@
 package com.billing.service.payment.strategy;
 
-import com.billing.entity.Order;
+import com.billing.license.entity.Order;
 
 import java.util.Map;
 

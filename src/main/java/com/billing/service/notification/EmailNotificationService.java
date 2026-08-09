@@ -276,7 +276,7 @@ public class EmailNotificationService {
         html.append("<p><strong>使用步骤：</strong></p><ol>");
         html.append("<li>访问我们的官网激活页面</li>");
         html.append("<li>输入上述兑换码</li>");
-        html.append("<li>点击"激活"按钮完成兑换</li>");
+        html.append("<li>点击\"激活\"按钮完成兑换</li>");
         html.append("</ol>");
         html.append("<p>注意：每个兑换码只能使用一次，请妥善保管。</p>");
         html.append("</div><div class='footer'><p>此邮件由系统自动发送，请勿回复。</p></div>");

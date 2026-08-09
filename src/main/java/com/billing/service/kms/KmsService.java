@@ -1,3 +1,5 @@
+
+import jakarta.annotation.PostConstruct;
 package com.billing.service.kms;
 
 import org.slf4j.Logger;
@@ -43,7 +45,7 @@ public class KmsService {
     /**
      * 初始化密钥
      */
-    @javax.annotation.PostConstruct
+    @PostConstruct
     public void init() throws Exception {
         logger.info("初始化KMS服务，provider={}", kmsProvider);
         
