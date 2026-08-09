@@ -80,6 +80,19 @@ public class License {
         updatedAt = LocalDateTime.now();
     }
     
+    // 兼容方法 - 供LicenseService使用
+    public String getMachineCode() {
+        return this.order != null ? this.order.getMachineCode() : null;
+    }
+
+    // 内部类 Builder 扩展方法
+    public static class LicenseBuilder {
+        public LicenseBuilder machineCode(String machineCode) {
+            // 这是一个兼容方法，实际机器码存储在关联的 Order 中
+            return this;
+        }
+    }
+    
     public enum LicenseStatus {
         ACTIVE,
         EXPIRED,

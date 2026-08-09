@@ -14,6 +14,7 @@ public class WebhookPayload {
     private String currency;
     private String transactionId; // 第三方支付流水号
     private String paymentMethod;
+    private String buyerId; // 买家ID
     private Long timestamp;
     private Map<String, Object> rawData; // 原始数据
     
@@ -40,6 +41,9 @@ public class WebhookPayload {
     
     public String getPaymentMethod() { return paymentMethod; }
     public void setPaymentMethod(String paymentMethod) { this.paymentMethod = paymentMethod; }
+    
+    public String getBuyerId() { return buyerId; }
+    public void setBuyerId(String buyerId) { this.buyerId = buyerId; }
     
     public Long getTimestamp() { return timestamp; }
     public void setTimestamp(Long timestamp) { this.timestamp = timestamp; }

@@ -8,7 +8,8 @@ public enum PaymentStatus {
     SUCCESS("支付成功"),
     FAILED("支付失败"),
     REFUNDED("已退款"),
-    CANCELLED("已取消");
+    CANCELLED("已取消"),
+    UNKNOWN("未知状态");
     
     private final String description;
     
