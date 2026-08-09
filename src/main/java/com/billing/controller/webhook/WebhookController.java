@@ -1,15 +1,16 @@
 package com.billing.controller.webhook;
 
-import com.billing.entity.Order;
-import com.billing.entity.Payment;
-import com.billing.repository.OrderRepository;
+import com.billing.license.entity.Order;
+import com.billing.license.repository.OrderRepository;
 import com.billing.repository.PaymentRepository;
 import com.billing.service.LicenseService;
 import com.billing.service.RedeemCodeService;
+import com.billing.service.notification.EmailNotificationService;
 import com.billing.service.payment.impl.PaymentServiceFactory;
 import com.billing.service.payment.strategy.PaymentMethod;
 import com.billing.service.payment.strategy.PaymentStatus;
 import com.billing.service.payment.strategy.WebhookPayload;
+import com.billing.service.payment.util.AmountValidator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,6 +44,12 @@ public class WebhookController {
     
     @Autowired
     private RedeemCodeService redeemCodeService;
+    
+    @Autowired
+    private EmailNotificationService emailNotificationService;
+    
+    @Autowired
+    private AmountValidator amountValidator;
 
     /**
      * 支付宝回调

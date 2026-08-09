@@ -80,19 +80,36 @@ payment:
 
 # KMS Configuration (optional, for cloud key management)
 kms:
-  # Type: local, aws, gcp, azure
-  type: local
+  # Type: local, aws, azure, aliyun
+  provider: local
+  key-id: ${KMS_KEY_ID:license-signing-key}
+  private-key-path: ${KMS_PRIVATE_KEY_PATH:}
+  public-key-path: ${KMS_PUBLIC_KEY_PATH:}
   aws:
     region: us-east-1
-    key-id: ${AWS_KMS_KEY_ID:}
-  gcp:
-    project-id: ${GCP_PROJECT_ID:}
-    location: global
-    key-ring: ${GCP_KEY_RING:}
-    key-name: ${GCP_KEY_NAME:}
   azure:
     vault-name: ${AZURE_VAULT_NAME:}
-    key-name: ${AZURE_KEY_NAME:}
+  aliyun:
+    region: cn-hangzhou
+
+# Email Configuration
+spring:
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+        from-address: ${MAIL_FROM_ADDRESS:noreply@billing.com}
+
+billing:
+  support-email: ${SUPPORT_EMAIL:support@company.com}
 
 # Security
 security:
