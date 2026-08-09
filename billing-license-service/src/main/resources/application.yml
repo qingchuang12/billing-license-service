@@ -1,0 +1,72 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: billing-license-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/billing_db
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+# Billing & License Configuration
+billing:
+  # Signature algorithm: ED25519, ES256, ES384, ES512, RS256, RS384, RS512
+  signature-algorithm: ED25519
+  # Private key path (for signing licenses)
+  private-key-path: ${PRIVATE_KEY_PATH:/keys/private.key}
+  # Public key path (distributed to clients for verification)
+  public-key-path: ${PUBLIC_KEY_PATH:/keys/public.key}
+  # License expiration check interval (hours)
+  license-check-interval-hours: 24
+  # Default license duration days
+  default-license-duration-days: 365
+
+# Payment Provider Configuration
+payment:
+  # Provider: stripe, paypal, alipay, wechat_pay
+  provider: stripe
+  stripe:
+    api-key: ${STRIPE_API_KEY:sk_test_xxx}
+    webhook-secret: ${STRIPE_WEBHOOK_SECRET:whsec_xxx}
+  paypal:
+    client-id: ${PAYPAL_CLIENT_ID:}
+    client-secret: ${PAYPAL_CLIENT_SECRET:}
+    mode: sandbox
+
+# KMS Configuration (optional, for cloud key management)
+kms:
+  # Type: local, aws, gcp, azure
+  type: local
+  aws:
+    region: us-east-1
+    key-id: ${AWS_KMS_KEY_ID:}
+  gcp:
+    project-id: ${GCP_PROJECT_ID:}
+    location: global
+    key-ring: ${GCP_KEY_RING:}
+    key-name: ${GCP_KEY_NAME:}
+  azure:
+    vault-name: ${AZURE_VAULT_NAME:}
+    key-name: ${AZURE_KEY_NAME:}
+
+# Security
+security:
+  api-key-header: X-API-Key
+  admin-api-keys: ${ADMIN_API_KEYS:admin-key-change-me}
+
+logging:
+  level:
+    com.billing.license: DEBUG
+    org.springframework.security: INFO
