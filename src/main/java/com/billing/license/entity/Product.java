@@ -40,6 +40,7 @@ public class Product {
     @Column(nullable = false)
     private String currency = "USD";
     
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private BillingCycle billingCycle = BillingCycle.ONE_TIME;
     
