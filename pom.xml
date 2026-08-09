@@ -88,6 +88,22 @@
             <artifactId>stripe-java</artifactId>
             <version>${stripe.version}</version>
         </dependency>
+        
+        <!-- Alipay SDK (Optional) -->
+        <dependency>
+            <groupId>com.alipay.sdk</groupId>
+            <artifactId>alipay-sdk-java</artifactId>
+            <version>4.38.157.ALL</version>
+            <optional>true</optional>
+        </dependency>
+        
+        <!-- WeChat Pay SDK (Optional) -->
+        <dependency>
+            <groupId>com.github.wechatpay-apiv3</groupId>
+            <artifactId>wechatpay-java</artifactId>
+            <version>0.2.14</version>
+            <optional>true</optional>
+        </dependency>
 
         <!-- Utilities -->
         <dependency>

@@ -63,6 +63,12 @@ public class Order {
     @Column(name = "paid_at")
     private LocalDateTime paidAt;
     
+    @Column(name = "machine_code")
+    private String machineCode; // 客户端机器码，用于绑定设备
+    
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    private java.util.List<OrderItem> orderItems;
+    
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();

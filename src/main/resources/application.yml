@@ -35,15 +35,48 @@ billing:
 
 # Payment Provider Configuration
 payment:
-  # Provider: stripe, paypal, alipay, wechat_pay
+  # Default provider: stripe, paypal, alipay, wechat_pay, paddle
   provider: stripe
+  
+  # Alipay Configuration (Domestic China)
+  alipay:
+    app-id: ${ALIPAY_APP_ID:}
+    private-key: ${ALIPAY_PRIVATE_KEY:}
+    public-key: ${ALIPAY_PUBLIC_KEY:}
+    notify-url: ${ALIPAY_NOTIFY_URL:https://your-domain.com/api/webhooks/alipay}
+    return-url: ${ALIPAY_RETURN_URL:https://your-domain.com/payment/return}
+    gateway-url: ${ALIPAY_GATEWAY_URL:https://openapi.alipay.com/gateway.do}
+  
+  # WeChat Pay Configuration (Domestic China)
+  wechat:
+    app-id: ${WECHAT_APP_ID:}
+    mch-id: ${WECHAT_MCH_ID:}
+    api-key: ${WECHAT_API_KEY:}
+    private-key-path: ${WECHAT_PRIVATE_KEY_PATH:/keys/wechat/apiclient_key.pem}
+    certificate-path: ${WECHAT_CERT_PATH:/keys/wechat/apiclient_cert.pem}
+    notify-url: ${WECHAT_NOTIFY_URL:https://your-domain.com/api/webhooks/wechat}
+  
+  # Stripe Configuration (International)
   stripe:
     api-key: ${STRIPE_API_KEY:sk_test_xxx}
     webhook-secret: ${STRIPE_WEBHOOK_SECRET:whsec_xxx}
+    success-url: ${STRIPE_SUCCESS_URL:https://your-domain.com/payment/success}
+    cancel-url: ${STRIPE_CANCEL_URL:https://your-domain.com/payment/cancel}
+  
+  # Paddle Configuration (International, SaaS subscriptions)
+  paddle:
+    vendor-id: ${PADDLE_VENDOR_ID:}
+    api-key: ${PADDLE_API_KEY:}
+    environment: ${PADDLE_ENVIRONMENT:https://sandbox-api.paddle.com}
+    webhook-secret: ${PADDLE_WEBHOOK_SECRET:}
+  
+  # PayPal Configuration (International)
   paypal:
     client-id: ${PAYPAL_CLIENT_ID:}
     client-secret: ${PAYPAL_CLIENT_SECRET:}
-    mode: sandbox
+    environment: ${PAYPAL_ENVIRONMENT:https://api-m.sandbox.paypal.com}
+    return-url: ${PAYPAL_RETURN_URL:https://your-domain.com/payment/return}
+    cancel-url: ${PAYPAL_CANCEL_URL:https://your-domain.com/payment/cancel}
 
 # KMS Configuration (optional, for cloud key management)
 kms:
