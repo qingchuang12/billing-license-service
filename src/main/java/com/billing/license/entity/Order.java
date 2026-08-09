@@ -66,6 +66,12 @@ public class Order {
     @Column(name = "machine_code")
     private String machineCode; // 客户端机器码，用于绑定设备
     
+    @Column(name = "title")
+    private String title; // 订单标题
+    
+    @Column(name = "description", columnDefinition = "TEXT")
+    private String description; // 订单描述
+    
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private java.util.List<OrderItem> orderItems;
     
@@ -80,13 +86,23 @@ public class Order {
         updatedAt = LocalDateTime.now();
     }
     
+    // 兼容方法 - 供支付策略使用
+    public String getOrderNo() {
+        return this.orderNumber;
+    }
+    
+    public BigDecimal getAmount() {
+        return this.totalAmount;
+    }
+    
     public enum OrderStatus {
         PENDING,
         CONFIRMED,
         PROCESSING,
         COMPLETED,
         CANCELLED,
-        REFUNDED
+        REFUNDED,
+        PAID
     }
     
     public enum PaymentStatus {
