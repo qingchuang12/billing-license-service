@@ -10,7 +10,7 @@
     <version>1.0.0</version>
     <packaging>jar</packaging>
 
-    <name>Billing & License Service</name>
+    <name>Billing &amp; License Service</name>
     <description>Unified Billing and License Management Service</description>
 
     <parent>
