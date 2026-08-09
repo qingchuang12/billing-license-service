@@ -52,7 +52,7 @@ public class PaddleStrategy implements PaymentStrategy {
         // 模拟返回支付链接
         response.setPayUrl("https://checkout.paddle.com/checkout/mock_" + order.getOrderNo());
         
-        Map<String, String> extraParams = new HashMap<>();
+        Map<String, Object> extraParams = new HashMap<>();
         extraParams.put("vendorId", vendorId);
         response.setExtraParams(extraParams);
         

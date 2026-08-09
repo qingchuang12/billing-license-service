@@ -79,7 +79,7 @@ public class UnionPayStrategy implements PaymentStrategy {
         // 模拟返回支付链接
         response.setPayUrl(gatewayUrl + "/mock/pay?orderId=" + order.getOrderNo());
 
-        Map<String, String> extraParams = new HashMap<>();
+        Map<String, Object> extraParams = new HashMap<>();
         extraParams.put("merchantId", merchantId);
         extraParams.put("acquirerId", acquirerId);
         response.setExtraParams(extraParams);

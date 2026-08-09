@@ -42,7 +42,8 @@ public class PaymentService {
         
         // 保存支付记录
         Payment payment = new Payment();
-        payment.setOrderId(order.getId());
+        // 将 UUID 转换为 String 存储（因为 Order.id 是 UUID 类型）
+        payment.setOrderIdStr(order.getId().toString());
         payment.setPaymentId(response.getPaymentId());
         payment.setAmount(order.getAmount());
         payment.setCurrency(method.isDomestic() ? "CNY" : "USD");

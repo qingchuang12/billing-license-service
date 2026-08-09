@@ -101,7 +101,8 @@ public class AlipayStrategy implements PaymentStrategy {
                 
                 if (alipayResponse.isSuccess()) {
                     response.setQrCode(alipayResponse.getQrCode());
-                    response.setExtraParams(buildExtraParams(alipayResponse.getOutTradeNo(), alipayResponse.getTradeNo()));
+                    // 支付宝预下单响应中只有 outTradeNo，没有 tradeNo，tradeNo 在支付成功后才会有
+                    response.setExtraParams(buildExtraParams(alipayResponse.getOutTradeNo(), null));
                     logger.info("支付宝预下单成功：qrCode={}", alipayResponse.getQrCode());
                 } else {
                     logger.error("支付宝预下单失败：code={}, msg={}", alipayResponse.getCode(), alipayResponse.getMsg());
@@ -273,7 +274,11 @@ public class AlipayStrategy implements PaymentStrategy {
             }
             
             // 原始数据用于对账
-            webhookPayload.setRawData(params);
+            Map<String, Object> rawData = new HashMap<>();
+            for (Map.Entry<String, String> entry : params.entrySet()) {
+                rawData.put(entry.getKey(), entry.getValue());
+            }
+            webhookPayload.setRawData(rawData);
             
             logger.info("支付宝回调解析成功：orderId={}, status={}", outTradeNo, webhookPayload.getStatus());
             
@@ -317,8 +322,8 @@ public class AlipayStrategy implements PaymentStrategy {
     /**
      * 构建额外参数
      */
-    private Map<String, String> buildExtraParams(String outTradeNo, String tradeNo) {
-        Map<String, String> extraParams = new HashMap<>();
+    private Map<String, Object> buildExtraParams(String outTradeNo, String tradeNo) {
+        Map<String, Object> extraParams = new HashMap<>();
         extraParams.put("outTradeNo", outTradeNo);
         extraParams.put("tradeNo", tradeNo);
         extraParams.put("channel", "ALIPAY");

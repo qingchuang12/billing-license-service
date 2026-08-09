@@ -62,7 +62,7 @@ public class StripeStrategy implements PaymentStrategy {
         // 模拟返回支付链接
         response.setPayUrl("https://checkout.stripe.com/c/pay/mock_" + order.getOrderNo());
         
-        Map<String, String> extraParams = new HashMap<>();
+        Map<String, Object> extraParams = new HashMap<>();
         extraParams.put("sessionId", "cs_mock_" + order.getOrderNo());
         response.setExtraParams(extraParams);
         

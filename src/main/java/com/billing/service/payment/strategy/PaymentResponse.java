@@ -45,5 +45,13 @@ public class PaymentResponse {
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
     
     public Map<String, String> getExtraParams() { return extraParams; }
-    public void setExtraParams(Map<String, String> extraParams) { this.extraParams = extraParams; }
+    public void setExtraParams(Map<String, Object> extraParams) { 
+        // 将 Object 转换为 String
+        if (extraParams != null) {
+            this.extraParams = new java.util.HashMap<>();
+            for (Map.Entry<String, Object> entry : extraParams.entrySet()) {
+                this.extraParams.put(entry.getKey(), entry.getValue() != null ? entry.getValue().toString() : null);
+            }
+        }
+    }
 }

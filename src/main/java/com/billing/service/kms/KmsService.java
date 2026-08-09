@@ -164,7 +164,7 @@ public class KmsService {
         byte[] encoded = publicKey.getEncoded();
         StringBuilder pem = new StringBuilder();
         pem.append("-----BEGIN PUBLIC KEY-----\n");
-        pem.append(Base64.getMimeEncoder(64).encodeToString(encoded));
+        pem.append(Base64.getMimeEncoder().encodeToString(encoded));
         pem.append("\n-----END PUBLIC KEY-----\n");
         
         return pem.toString();

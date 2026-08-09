@@ -71,7 +71,7 @@ public class PayPalStrategy implements PaymentStrategy {
         // 模拟返回支付链接
         response.setPayUrl("https://www.paypal.com/checkoutnow?token=mock_" + order.getOrderNo());
         
-        Map<String, String> extraParams = new HashMap<>();
+        Map<String, Object> extraParams = new HashMap<>();
         extraParams.put("clientId", clientId);
         response.setExtraParams(extraParams);
         

@@ -24,8 +24,23 @@ public class Payment {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     
-    @Column(name = "order_id", nullable = false)
-    private Long orderId;
+    @Column(name = "order_id", nullable = false, length = 64)
+    private String orderIdStr;
+    
+    // 兼容 Long 类型的 orderId（旧代码使用）
+    @Transient
+    public void setOrderId(Long orderId) {
+        this.orderIdStr = orderId != null ? orderId.toString() : null;
+    }
+    
+    @Transient
+    public Long getOrderId() {
+        try {
+            return orderIdStr != null ? Long.parseLong(orderIdStr) : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
     
     @Column(name = "payment_id", unique = true, nullable = false, length = 128)
     private String paymentId;
