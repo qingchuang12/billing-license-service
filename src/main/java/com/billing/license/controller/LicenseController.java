@@ -9,6 +9,10 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * License 控制器
+ * 提供软件许可证的签发、验证和管理功能
+ */
 @RestController
 @RequestMapping("/api/v1/licenses")
 @RequiredArgsConstructor
@@ -17,7 +21,9 @@ public class LicenseController {
     private final LicenseService licenseService;
     
     /**
-     * Issue licenses for a paid order
+     * 为已支付订单签发 License
+     * @param orderId 订单 UUID
+     * @return 签发的 License 列表
      */
     @PostMapping("/issue/{orderId}")
     public ResponseEntity<List<LicenseResponse>> issueLicenses(@PathVariable UUID orderId) {
@@ -25,7 +31,9 @@ public class LicenseController {
     }
     
     /**
-     * Verify a license by key
+     * 验证 License 有效性
+     * @param licenseKey License 密钥
+     * @return License 详细信息
      */
     @GetMapping("/verify/{licenseKey}")
     public ResponseEntity<LicenseResponse> verifyLicense(@PathVariable String licenseKey) {
@@ -33,7 +41,9 @@ public class LicenseController {
     }
     
     /**
-     * Get all licenses for a customer
+     * 查询客户的所有 License
+     * @param customerId 客户 UUID
+     * @return License 列表
      */
     @GetMapping("/customer/{customerId}")
     public ResponseEntity<List<LicenseResponse>> getCustomerLicenses(@PathVariable UUID customerId) {
@@ -41,7 +51,9 @@ public class LicenseController {
     }
     
     /**
-     * Revoke a license
+     * 撤销 License
+     * @param licenseKey License 密钥
+     * @return 操作结果
      */
     @PostMapping("/revoke/{licenseKey}")
     public ResponseEntity<Void> revokeLicense(@PathVariable String licenseKey) {

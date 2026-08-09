@@ -11,6 +11,10 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * 兑换码控制器
+ * 提供兑换码生成、兑换和撤销功能
+ */
 @RestController
 @RequestMapping("/api/v1/redeem")
 @RequiredArgsConstructor
@@ -19,7 +23,11 @@ public class RedeemCodeController {
     private final RedeemCodeService redeemCodeService;
     
     /**
-     * Generate redeem codes (admin only)
+     * 批量生成兑换码（管理员权限）
+     * @param productSku 产品 SKU
+     * @param count 生成数量
+     * @param expiresAt 过期时间（可选）
+     * @return 生成的兑换码数量
      */
     @PostMapping("/generate")
     public ResponseEntity<Map<String, Object>> generateCodes(
@@ -36,7 +44,9 @@ public class RedeemCodeController {
     }
     
     /**
-     * Redeem a code
+     * 兑换兑换码获取 License
+     * @param request 兑换请求，包含兑换码和客户 ID
+     * @return 兑换成功后返回 License 信息
      */
     @PostMapping("/redeem")
     public ResponseEntity<Map<String, Object>> redeemCode(@RequestBody RedeemCodeRequest request) {
@@ -51,7 +61,9 @@ public class RedeemCodeController {
     }
     
     /**
-     * Revoke a redeem code (admin only)
+     * 撤销兑换码（管理员权限）
+     * @param code 要撤销的兑换码
+     * @return 操作结果
      */
     @PostMapping("/revoke/{code}")
     public ResponseEntity<Map<String, Object>> revokeCode(@PathVariable String code) {
