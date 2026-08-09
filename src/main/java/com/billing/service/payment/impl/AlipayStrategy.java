@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -91,7 +92,7 @@ public class AlipayStrategy implements PaymentStrategy {
                     "\"product_code\":\"FACE_TO_FACE_PAYMENT\"" +
                     "}",
                     order.getOrderNo(),
-                    order.getAmount().setScale(2, BigDecimal.ROUND_HALF_UP).toString(),
+                    order.getAmount().setScale(2, RoundingMode.HALF_UP).toString(),
                     order.getTitle(),
                     order.getDescription() != null ? order.getDescription() : ""
                 );
@@ -124,7 +125,7 @@ public class AlipayStrategy implements PaymentStrategy {
                     "\"product_code\":\"FAST_INSTANT_TRADE_PAY\"" +
                     "}",
                     order.getOrderNo(),
-                    order.getAmount().setScale(2, BigDecimal.ROUND_HALF_UP).toString(),
+                    order.getAmount().setScale(2, RoundingMode.HALF_UP).toString(),
                     order.getTitle(),
                     order.getDescription() != null ? order.getDescription() : ""
                 );

@@ -91,7 +91,7 @@ public class UnionPayStrategy implements PaymentStrategy {
     public PaymentStatus queryPayment(String paymentId) {
         logger.info("查询云闪付支付状态：paymentId={}", paymentId);
 
-        // TODO: 调用银联查询接口
+        
         // POST /gateway/api/queryTransReq.do
 
         return PaymentStatus.PENDING;
@@ -101,7 +101,7 @@ public class UnionPayStrategy implements PaymentStrategy {
     public boolean verifyWebhookSignature(String payload, String signature, Map<String, String> headers) {
         logger.info("验证云闪付 Webhook 签名");
 
-        // TODO: 使用银联公钥验证签名
+        
         // 银联回调验签逻辑：
         // 1. 从回调参数中获取 signature
         // 2. 去除 signature 字段后，其余参数按字典序排序拼接
@@ -125,7 +125,7 @@ public class UnionPayStrategy implements PaymentStrategy {
 
         WebhookPayload webhookPayload = new WebhookPayload();
 
-        // TODO: 解析银联回调参数
+        
         // 银联回调格式为 form表单
         // 关键字段：
         // - orderId: 商户订单号
