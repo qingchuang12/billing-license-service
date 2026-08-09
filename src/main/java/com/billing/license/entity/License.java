@@ -40,6 +40,7 @@ public class License {
     
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
+    @Builder.Default
     private LicenseStatus status = LicenseStatus.ACTIVE;
     
     @Column(name = "issued_at", nullable = false)
