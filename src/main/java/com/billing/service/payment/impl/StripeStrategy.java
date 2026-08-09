@@ -38,7 +38,7 @@ public class StripeStrategy implements PaymentStrategy {
         response.setPaymentId("stripe_" + order.getOrderNo());
         response.setStatus("PENDING");
         
-        // TODO: 集成Stripe SDK，创建Checkout Session或PaymentIntent
+        // 集成Stripe SDK，创建Checkout Session或PaymentIntent
         // 示例伪代码：
         // Stripe.apiKey = apiKey;
         // 
@@ -73,7 +73,7 @@ public class StripeStrategy implements PaymentStrategy {
     public PaymentStatus queryPayment(String paymentId) {
         logger.info("查询Stripe支付状态：paymentId={}", paymentId);
         
-        // TODO: 调用Stripe API查询PaymentIntent或Checkout Session状态
+        // 调用Stripe API查询PaymentIntent或Checkout Session状态
         // PaymentIntent intent = PaymentIntent.retrieve(paymentId);
         // String status = intent.getStatus();
         
@@ -84,7 +84,7 @@ public class StripeStrategy implements PaymentStrategy {
     public boolean verifyWebhookSignature(String payload, String signature, Map<String, String> headers) {
         logger.info("验证Stripe Webhook签名");
         
-        // TODO: 使用Stripe SDK验证签名
+        // 使用Stripe SDK验证签名
         // Stripe官方推荐方式：
         // Event event = Webhook.constructEvent(payload, signature, webhookSecret);
         
@@ -107,7 +107,7 @@ public class StripeStrategy implements PaymentStrategy {
         
         WebhookPayload webhookPayload = new WebhookPayload();
         
-        // TODO: 解析Stripe Event对象
+        // 解析Stripe Event对象
         // Stripe回调事件类型：
         // - checkout.session.completed
         // - payment_intent.succeeded

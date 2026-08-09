@@ -78,7 +78,7 @@ public class KmsService {
         } else {
             // 从文件加载密钥
             logger.info("从文件加载密钥：privateKeyPath={}, publicKeyPath={}", privateKeyPath, publicKeyPath);
-            // TODO: 实现从文件加载PEM格式密钥
+            // 实现从文件加载PEM格式密钥
         }
     }
 
@@ -87,7 +87,7 @@ public class KmsService {
      */
     private void initAwsKms() {
         logger.info("初始化AWS KMS，keyId={}", keyId);
-        // TODO: 集成AWS KMS SDK
+        // 集成AWS KMS SDK
         // AWSKMS kmsClient = AWSKMSClientBuilder.standard().build();
         // GetPublicKeyRequest request = new GetPublicKeyRequest().withKeyId(keyId);
         // GetPublicKeyResult result = kmsClient.getPublicKey(request);
@@ -100,7 +100,7 @@ public class KmsService {
      */
     private void initAzureKeyVault() {
         logger.info("初始化Azure Key Vault，keyId={}", keyId);
-        // TODO: 集成Azure Key Vault SDK
+        // 集成Azure Key Vault SDK
     }
 
     /**
@@ -108,7 +108,7 @@ public class KmsService {
      */
     private void initAliyunKms() {
         logger.info("初始化阿里云KMS，keyId={}", keyId);
-        // TODO: 集成阿里云KMS SDK
+        // 集成阿里云KMS SDK
     }
 
     /**

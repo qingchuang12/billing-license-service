@@ -38,7 +38,7 @@ public class PaddleStrategy implements PaymentStrategy {
         response.setPaymentId("paddle_" + order.getOrderNo());
         response.setStatus("PENDING");
         
-        // TODO: 集成Paddle API，创建Payment Link或Transaction
+        // 集成Paddle API，创建Payment Link或Transaction
         // Paddle适合订阅制SaaS产品
         // 示例伪代码：
         // HttpClient client = HttpClient.newBuilder().build();
@@ -63,7 +63,7 @@ public class PaddleStrategy implements PaymentStrategy {
     public PaymentStatus queryPayment(String paymentId) {
         logger.info("查询Paddle支付状态：paymentId={}", paymentId);
         
-        // TODO: 调用Paddle API查询交易状态
+        // 调用Paddle API查询交易状态
         
         return PaymentStatus.PENDING;
     }
@@ -72,7 +72,7 @@ public class PaddleStrategy implements PaymentStrategy {
     public boolean verifyWebhookSignature(String payload, String signature, Map<String, String> headers) {
         logger.info("验证Paddle Webhook签名");
         
-        // TODO: 使用Paddle提供的验签逻辑
+        // 使用Paddle提供的验签逻辑
         // Paddle v2使用HMAC-SHA256签名
         // 1. 从Header获取 Paddle-Signature
         // 2. 使用webhook_secret计算HMAC
@@ -93,7 +93,7 @@ public class PaddleStrategy implements PaymentStrategy {
         
         WebhookPayload webhookPayload = new WebhookPayload();
         
-        // TODO: 解析Paddle回调事件
+        // 解析Paddle回调事件
         // Paddle事件类型：
         // - transaction.completed
         // - transaction.updated

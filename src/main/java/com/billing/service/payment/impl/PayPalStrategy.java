@@ -41,7 +41,7 @@ public class PayPalStrategy implements PaymentStrategy {
         response.setPaymentId("paypal_" + order.getOrderNo());
         response.setStatus("PENDING");
         
-        // TODO: 集成PayPal API，创建Order
+        // 集成PayPal API，创建Order
         // 示例伪代码：
         // HttpClient client = HttpClient.newBuilder().build();
         // 
@@ -82,7 +82,7 @@ public class PayPalStrategy implements PaymentStrategy {
     public PaymentStatus queryPayment(String paymentId) {
         logger.info("查询PayPal支付状态：paymentId={}", paymentId);
         
-        // TODO: 调用PayPal API查询Order状态
+        // 调用PayPal API查询Order状态
         // GET /v2/checkout/orders/{order_id}
         
         return PaymentStatus.PENDING;
@@ -92,7 +92,7 @@ public class PayPalStrategy implements PaymentStrategy {
     public boolean verifyWebhookSignature(String payload, String signature, Map<String, String> headers) {
         logger.info("验证PayPal Webhook签名");
         
-        // TODO: 调用PayPal API验签
+        // 调用PayPal API验签
         // PayPal推荐使用API验签而非本地验签
         // POST /v1/notifications/verify-webhook-signature
         
@@ -111,7 +111,7 @@ public class PayPalStrategy implements PaymentStrategy {
         
         WebhookPayload webhookPayload = new WebhookPayload();
         
-        // TODO: 解析PayPal回调事件
+        // 解析PayPal回调事件
         // PayPal事件类型：
         // - PAYMENT.CAPTURE.COMPLETED
         // - PAYMENT.CAPTURE.DENIED

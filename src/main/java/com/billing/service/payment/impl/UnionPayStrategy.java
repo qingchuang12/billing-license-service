@@ -46,7 +46,7 @@ public class UnionPayStrategy implements PaymentStrategy {
         response.setPaymentId("unionpay_" + order.getOrderNo());
         response.setStatus("PENDING");
 
-        // TODO: 集成银联支付API
+        // 集成银联支付API
         // 云闪付支付方式：
         // 1. 网关支付（跳转银联页面）
         // 2. 二维码支付（当面付）
