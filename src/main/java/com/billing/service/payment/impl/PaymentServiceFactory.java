@@ -1,7 +1,7 @@
 package com.billing.service.payment.impl;
 
 import com.billing.license.entity.Order;
-import com.billing.entity.Payment;
+import com.billing.license.entity.Payment;
 import com.billing.license.repository.OrderRepository;
 import com.billing.license.repository.PaymentRepository;
 import com.billing.license.service.LicenseService;

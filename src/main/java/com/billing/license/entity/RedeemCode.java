@@ -52,6 +52,9 @@ public class RedeemCode {
     
     @Column(columnDefinition = "TEXT")
     private String metadata;
+
+    @Column(name = "order_id")
+    private String orderId;
     
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

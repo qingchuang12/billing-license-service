@@ -28,6 +28,30 @@ public class RedeemCodeService {
     private final LicenseIssuer licenseIssuer;
     
     /**
+     * Generate a single redeem code for an order
+     */
+    @Transactional
+    public String generateCode(String orderId) {
+        log.info("Generating redeem code for order: {}", orderId);
+        
+        // For order-based code generation, we use a simple approach
+        String code = generateCode();
+        
+        RedeemCode redeemCode = RedeemCode.builder()
+            .code(code)
+            .status(RedeemCode.RedeemCodeStatus.UNUSED)
+            .maxUses(1)
+            .currentUses(0)
+            .metadata("{\"orderId\":\"" + orderId + "\"}")
+            .build();
+        
+        redeemCodeRepository.save(redeemCode);
+        log.info("Generated redeem code: {} for order: {}", code, orderId);
+        
+        return code;
+    }
+
+    /**
      * Generate a batch of redeem codes
      */
     @Transactional

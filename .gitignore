@@ -1,39 +1,39 @@
 ```
-# Java/Maven specific
-target/
+# Compiled and build artifacts
 *.class
-*.jar
-*.war
-*.ear
-*.iml
-*.ipr
-*.iws
-out/
+*.o
+*.obj
+*.out
+build/
+target/
 
 # Dependencies
-.m2/
 .gradle/
-node_modules/
+lib/
+libs/
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Logs
+# Logs and temp files
 *.log
+*.tmp
+*.swp
 
 # Environment
 .env
 .env.local
 *.env.*
 
-# OS
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# System files
 .DS_Store
 Thumbs.db
 
-# Build artifacts
-build/
-dist/
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
 ```

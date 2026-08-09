@@ -30,6 +30,53 @@ public class LicenseService {
     private final BillingProperties billingProperties;
     
     /**
+     * Issue a license bound to a specific machine code
+     */
+    @Transactional
+    public License issueLicense(String orderId, String machineCode) {
+        log.info("Issuing license for order: {} with machineCode: {}", orderId, machineCode);
+
+        Order order = orderRepository.findByOrderNumber(orderId)
+            .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND",
+                "Order not found: " + orderId));
+
+        if (order.getPaymentStatus() != Order.PaymentStatus.PAID) {
+            throw new BusinessException("ORDER_NOT_PAID",
+                "Order must be paid before issuing licenses");
+        }
+
+        // Get first product from order items
+        Product product = order.getOrderItems().stream()
+            .findFirst()
+            .map(item -> item.getProduct())
+            .orElseThrow(() -> new BusinessException("NO_ORDER_ITEMS", "Order has no items"));
+
+        String licenseKey = generateLicenseKey();
+        LocalDateTime issuedAt = LocalDateTime.now();
+        LocalDateTime expiresAt = issuedAt.plusDays(product.getLicenseDurationDays());
+
+        License license = License.builder()
+            .licenseKey(licenseKey)
+            .customerId(order.getCustomerId())
+            .order(order)
+            .product(product)
+            .status(License.LicenseStatus.ACTIVE)
+            .issuedAt(issuedAt)
+            .expiresAt(expiresAt)
+            .machineCode(machineCode)
+            .build();
+
+        // Sign the license
+        String signedToken = licenseIssuer.issueLicense(license);
+        license.setSignedToken(signedToken);
+
+        licenseRepository.save(license);
+        log.info("License issued successfully: {}", licenseKey);
+
+        return license;
+    }
+
+    /**
      * Issue licenses for a paid order
      */
     @Transactional
