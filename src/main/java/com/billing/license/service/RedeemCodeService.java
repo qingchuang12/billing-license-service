@@ -9,6 +9,7 @@ import com.billing.license.infrastructure.crypto.LicenseIssuer;
 import com.billing.license.repository.LicenseRepository;
 import com.billing.license.repository.ProductRepository;
 import com.billing.license.repository.RedeemCodeRepository;
+import com.billing.license.service.risk.RateLimitService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,7 @@ public class RedeemCodeService {
     private final LicenseRepository licenseRepository;
     private final ProductRepository productRepository;
     private final LicenseIssuer licenseIssuer;
+    private final RateLimitService rateLimitService;
     
     /**
      * Generate a single redeem code for an order
@@ -89,33 +91,59 @@ public class RedeemCodeService {
     @Transactional
     public License redeemCode(RedeemCodeRequest request) {
         log.info("Redeeming code for customer: {}", request.getCustomerId());
-        
+
+        // 风控前置：同一 IP 高频兑换限流 + 暴力猜测拦截（架构十七）
+        String clientIp = request.getClientIp();
+        if (clientIp != null && !clientIp.isEmpty()) {
+            try {
+                rateLimitService.checkRedeemIp(clientIp);
+            } catch (RateLimitService.RateLimitExceededException e) {
+                throw new BusinessException("REDEEM_IP_LIMIT", "兑换请求过于频繁，请稍后再试");
+            }
+        }
+
+        try {
+            return doRedeem(request);
+        } catch (BusinessException e) {
+            // 兑换失败（码无效/已用/过期）计入暴力猜测风控
+            if (clientIp != null && !clientIp.isEmpty()) {
+                try {
+                    rateLimitService.recordRedeemFailure(clientIp);
+                } catch (RateLimitService.RateLimitExceededException ex) {
+                    throw new BusinessException("REDEEM_BRUTE_FORCE", "兑换失败次数过多，已临时锁定");
+                }
+            }
+            throw e;
+        }
+    }
+
+    private License doRedeem(RedeemCodeRequest request) {
         RedeemCode redeemCode = redeemCodeRepository.findByCode(request.getCode())
-            .orElseThrow(() -> new BusinessException("CODE_NOT_FOUND", 
+            .orElseThrow(() -> new BusinessException("CODE_NOT_FOUND",
                 "Invalid redeem code"));
-        
+
         // Validate status
         if (redeemCode.getStatus() != RedeemCode.RedeemCodeStatus.UNUSED) {
-            throw new BusinessException("CODE_ALREADY_USED", 
+            throw new BusinessException("CODE_ALREADY_USED",
                 "This code has already been used");
         }
-        
+
         // Check expiration
-        if (redeemCode.getExpiresAt() != null && 
+        if (redeemCode.getExpiresAt() != null &&
             LocalDateTime.now().isAfter(redeemCode.getExpiresAt())) {
             redeemCode.setStatus(RedeemCode.RedeemCodeStatus.EXPIRED);
             redeemCodeRepository.save(redeemCode);
-            throw new BusinessException("CODE_EXPIRED", 
+            throw new BusinessException("CODE_EXPIRED",
                 "This code has expired");
         }
-        
+
         UUID customerId = UUID.fromString(request.getCustomerId());
-        
+
         // Create license
         String licenseKey = generateLicenseKey();
         LocalDateTime issuedAt = LocalDateTime.now();
         LocalDateTime expiresAt = issuedAt.plusDays(redeemCode.getProduct().getLicenseDurationDays());
-        
+
         License license = License.builder()
             .licenseKey(licenseKey)
             .customerId(customerId)
@@ -124,23 +152,24 @@ public class RedeemCodeService {
             .status(License.LicenseStatus.ACTIVE)
             .issuedAt(issuedAt)
             .expiresAt(expiresAt)
+            .machineCode(request.getMachineId()) // 绑定兑换时传入的机器码（架构十一.4）
             .build();
-        
+
         // Sign the license
         String signedToken = licenseIssuer.issueLicense(license);
         license.setSignedToken(signedToken);
-        
+
         // Mark code as used
         redeemCode.setStatus(RedeemCode.RedeemCodeStatus.USED);
         redeemCode.setUsedBy(customerId);
         redeemCode.setUsedAt(LocalDateTime.now());
         redeemCode.setCurrentUses(redeemCode.getCurrentUses() + 1);
-        
+
         licenseRepository.save(license);
         redeemCodeRepository.save(redeemCode);
-        
+
         log.info("Code redeemed successfully, license issued: {}", licenseKey);
-        
+
         return license;
     }
     

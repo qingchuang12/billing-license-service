@@ -99,7 +99,7 @@ public class OrderService {
         return "ORD-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
     }
     
-    private OrderResponse mapToResponse(Order order) {
+    public OrderResponse mapToResponse(Order order) {
         return OrderResponse.builder()
             .id(order.getId())
             .orderNumber(order.getOrderNumber())

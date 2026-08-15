@@ -3,12 +3,16 @@ package com.billing.license.service;
 import com.billing.license.config.BillingProperties;
 import com.billing.license.dto.LicenseResponse;
 import com.billing.license.entity.License;
+import com.billing.license.entity.LicenseEvent;
 import com.billing.license.entity.Order;
 import com.billing.license.entity.Product;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.infrastructure.crypto.LicenseIssuer;
+import com.billing.license.repository.LicenseEventRepository;
 import com.billing.license.repository.LicenseRepository;
 import com.billing.license.repository.OrderRepository;
+import com.billing.license.service.notification.EmailNotificationService;
+import com.billing.license.service.risk.RateLimitService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -26,8 +30,11 @@ public class LicenseService {
     
     private final LicenseRepository licenseRepository;
     private final OrderRepository orderRepository;
+    private final LicenseEventRepository licenseEventRepository;
     private final LicenseIssuer licenseIssuer;
     private final BillingProperties billingProperties;
+    private final EmailNotificationService emailNotificationService;
+    private final RateLimitService rateLimitService;
     
     /**
      * Issue a license bound to a specific machine code
@@ -71,6 +78,7 @@ public class LicenseService {
         license.setSignedToken(signedToken);
 
         licenseRepository.save(license);
+        recordLicenseEvent(license, LicenseEvent.EventType.ISSUED, machineCode, "Issued for order " + orderId);
         log.info("License issued successfully: {}", licenseKey);
 
         return license;
@@ -127,6 +135,8 @@ public class LicenseService {
         
         // Check status
         if (license.getStatus() != License.LicenseStatus.ACTIVE) {
+            recordLicenseEvent(license, LicenseEvent.EventType.VERIFY_FAILED, license.getMachineCode(),
+                "Inactive status: " + license.getStatus().name());
             throw new BusinessException("LICENSE_INVALID", 
                 "License is not active: " + license.getStatus().name());
         }
@@ -136,6 +146,8 @@ public class LicenseService {
             LocalDateTime.now().isAfter(license.getExpiresAt())) {
             license.setStatus(License.LicenseStatus.EXPIRED);
             licenseRepository.save(license);
+            recordLicenseEvent(license, LicenseEvent.EventType.VERIFY_FAILED, license.getMachineCode(),
+                "Expired at " + license.getExpiresAt());
             throw new BusinessException("LICENSE_EXPIRED", 
                 "License has expired");
         }
@@ -163,9 +175,98 @@ public class LicenseService {
                 "License not found: " + licenseKey));
         
         license.setStatus(License.LicenseStatus.REVOKED);
+        license.setRevokedAt(LocalDateTime.now());
         licenseRepository.save(license);
-        
+        recordLicenseEvent(license, LicenseEvent.EventType.REVOKED, license.getMachineCode(),
+            "Revoked");
         log.info("Revoked license: {}", licenseKey);
+    }
+
+    /**
+     * 换机重发 - 为已绑定设备的 License 重新签发一个新 License 绑定到新机器码（架构十一.5）
+     * 原 License 标记为 REISSUED，新 License 通过 reissuedFrom 指回原 License。
+     */
+    @Transactional
+    public LicenseResponse reissueLicense(String licenseKey, String newMachineId, String reason) {
+        log.info("Reissuing license {} to new machine {}", licenseKey, newMachineId);
+
+        License original = licenseRepository.findByLicenseKey(licenseKey)
+            .orElseThrow(() -> new BusinessException("LICENSE_NOT_FOUND",
+                "License not found: " + licenseKey));
+
+        if (original.getStatus() == License.LicenseStatus.REVOKED) {
+            throw new BusinessException("LICENSE_REVOKED", "Cannot reissue a revoked license");
+        }
+
+        // 风控：同一机器码窗口内频繁换机（架构十七）
+        if (newMachineId != null && !newMachineId.isEmpty()) {
+            try {
+                rateLimitService.checkMachineReissue(newMachineId);
+            } catch (RateLimitService.RateLimitExceededException e) {
+                throw new BusinessException("MACHINE_REISSUE_LIMIT", "该设备换机重发过于频繁，请稍后再试");
+            }
+        }
+
+        // 风控：单个 License 累计重发次数上限（架构十七：License 重发次数限制）
+        long reissuedCount = licenseEventRepository.findByLicenseKey(licenseKey).stream()
+            .filter(e -> e.getEventType() == LicenseEvent.EventType.REISSUED)
+            .count();
+        if (reissuedCount >= billingProperties.getRisk().getLicenseReissueMax()) {
+            throw new BusinessException("LICENSE_REISSUE_LIMIT",
+                "License 重发次数已达上限：" + billingProperties.getRisk().getLicenseReissueMax());
+        }
+
+        // 原 License 标记为 REISSUED
+        original.setStatus(License.LicenseStatus.REVOKED);
+        original.setRevokedAt(LocalDateTime.now());
+        licenseRepository.save(original);
+        recordLicenseEvent(original, LicenseEvent.EventType.REISSUED, newMachineId,
+            "Reissued to new machine. reason=" + (reason != null ? reason : ""));
+
+        // 签发新的绑定新机器码的 License
+        LocalDateTime issuedAt = LocalDateTime.now();
+        LocalDateTime expiresAt = original.getExpiresAt() != null
+            ? original.getExpiresAt() : issuedAt.plusDays(billingProperties.getDefaultLicenseDurationDays());
+
+        License newLicense = License.builder()
+            .licenseKey(generateLicenseKey())
+            .customerId(original.getCustomerId())
+            .order(original.getOrder())
+            .product(original.getProduct())
+            .status(License.LicenseStatus.ACTIVE)
+            .issuedAt(issuedAt)
+            .expiresAt(expiresAt)
+            .machineCode(newMachineId)
+            .reissuedFrom(original.getId())
+            .build();
+
+        String signedToken = licenseIssuer.issueLicense(newLicense);
+        newLicense.setSignedToken(signedToken);
+
+        licenseRepository.save(newLicense);
+        recordLicenseEvent(newLicense, LicenseEvent.EventType.ISSUED, newMachineId,
+            "Reissued license for original " + licenseKey);
+
+        log.info("Reissued license created: {}", newLicense.getLicenseKey());
+        return mapToResponse(newLicense);
+    }
+
+    /**
+     * 记录 License 事件用于审计
+     */
+    private void recordLicenseEvent(License license, LicenseEvent.EventType type, String machineId, String detail) {
+        try {
+            LicenseEvent event = LicenseEvent.builder()
+                .licenseId(license.getId())
+                .licenseKey(license.getLicenseKey())
+                .eventType(type)
+                .machineId(machineId)
+                .detail(detail)
+                .build();
+            licenseEventRepository.save(event);
+        } catch (Exception e) {
+            log.error("记录 License 事件失败：type={}, licenseKey={}", type, license.getLicenseKey(), e);
+        }
     }
     
     private License createLicense(Order order, Product product) {

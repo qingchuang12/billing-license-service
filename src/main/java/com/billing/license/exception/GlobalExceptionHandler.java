@@ -1,5 +1,6 @@
 package com.billing.license.exception;
 
+import com.billing.license.controller.AdminController;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -43,5 +44,18 @@ public class GlobalExceptionHandler {
         body.put("message", ex.getMessage());
         body.put("success", false);
         return ResponseEntity.internalServerError().body(body);
+    }
+
+    /**
+     * 处理管理后台鉴权失败
+     */
+    @ExceptionHandler(AdminController.AdminUnauthorizedException.class)
+    public ResponseEntity<Map<String, Object>> handleAdminUnauthorized(AdminController.AdminUnauthorizedException ex) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("timestamp", LocalDateTime.now());
+        body.put("errorCode", "ADMIN_UNAUTHORIZED");
+        body.put("message", ex.getMessage());
+        body.put("success", false);
+        return ResponseEntity.status(401).body(body);
     }
 }

@@ -3,6 +3,7 @@ package com.billing.license.controller;
 import com.billing.license.dto.RedeemCodeRequest;
 import com.billing.license.entity.License;
 import com.billing.license.service.RedeemCodeService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -49,7 +50,14 @@ public class RedeemCodeController {
      * @return 兑换成功后返回 License 信息
      */
     @PostMapping("/redeem")
-    public ResponseEntity<Map<String, Object>> redeemCode(@RequestBody RedeemCodeRequest request) {
+    public ResponseEntity<Map<String, Object>> redeemCode(
+            @RequestBody RedeemCodeRequest request,
+            HttpServletRequest httpRequest) {
+        // 解析客户端真实 IP（支持反向代理 X-Forwarded-For）
+        String clientIp = parseClientIp(httpRequest);
+        if (request.getClientIp() == null) {
+            request.setClientIp(clientIp);
+        }
         License license = redeemCodeService.redeemCode(request);
         
         Map<String, Object> response = new HashMap<>();
@@ -72,5 +80,21 @@ public class RedeemCodeController {
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 解析客户端真实 IP（优先 X-Forwarded-For，其次 X-Real-IP，最后 remoteAddr）
+     */
+    private String parseClientIp(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isEmpty()) {
+            // 取第一个（最原始客户端）
+            return forwarded.split(",")[0].trim();
+        }
+        String realIp = request.getHeader("X-Real-IP");
+        if (realIp != null && !realIp.isEmpty()) {
+            return realIp.trim();
+        }
+        return request.getRemoteAddr();
     }
 }

@@ -20,4 +20,10 @@ public class RedeemCodeRequest {
     
     /** 客户唯一标识 */
     private String customerId;
+
+    /** 客户端机器码（兑换时绑定到 License，架构十一.4） */
+    private String machineId;
+
+    /** 客户端 IP（风控：高频兑换/暴力猜测限流，架构十七） */
+    private String clientIp;
 }

@@ -54,7 +54,16 @@ public class License {
     
     @Column(name = "last_verified_at")
     private LocalDateTime lastVerifiedAt;
-    
+
+    @Column(name = "machine_code")
+    private String machineCode; // 绑定的设备机器码（换机重发时更新）
+
+    @Column(name = "reissued_from")
+    private UUID reissuedFrom; // 换机重发时指向原 License ID
+
+    @Column(name = "revoked_at")
+    private LocalDateTime revokedAt;
+
     @Column(columnDefinition = "TEXT")
     private String signedToken;
     
@@ -83,7 +92,7 @@ public class License {
     
     // 兼容方法 - 供LicenseService使用
     public String getMachineCode() {
-        return this.order != null ? this.order.getMachineCode() : null;
+        return this.machineCode != null ? this.machineCode : (this.order != null ? this.order.getMachineCode() : null);
     }
 
     // 内部类 Builder 扩展方法

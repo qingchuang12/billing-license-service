@@ -65,6 +65,9 @@ public class Order {
     
     @Column(name = "machine_code")
     private String machineCode; // 客户端机器码，用于绑定设备
+
+    @Column(name = "email")
+    private String email; // 客户邮箱，用于发货通知
     
     @Column(name = "title")
     private String title; // 订单标题
