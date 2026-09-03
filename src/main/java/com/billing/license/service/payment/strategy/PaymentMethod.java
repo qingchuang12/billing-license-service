@@ -10,8 +10,6 @@ public enum PaymentMethod {
     ALIPAY("支付宝", "国内"),
     /** 微信支付 - 国内主流支付方式 */
     WECHAT_PAY("微信支付", "国内"),
-    /** 云闪付/银联 - 国内支付方式 */
-    UNIONPAY("云闪付", "国内"),
     /** Stripe - 国际信用卡支付 */
     STRIPE("Stripe", "国际"),
     /** Paddle - 国际 SaaS 订阅支付（Merchant of Record） */

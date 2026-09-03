@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -27,6 +28,10 @@ public class RateLimitService {
     /** key -> 时间戳环形缓冲（限制窗口内的事件数） */
     private final Map<String, TimestampRing> windows = new ConcurrentHashMap<>();
 
+    /** H8：内存泄漏防护——超过阈值才触发惰性回收，回收长期无活动的窗口 */
+    private static final long EVICT_AFTER_MS = 60 * 60_000L; // 1 小时无活动即回收
+    private static final int EVICT_THRESHOLD = 4096;          // 超过该条目数才触发，避免每次调用 O(n)
+
     /**
      * 检查某 key 在窗口内的事件数是否超过 max；
      * 超过则抛出异常（由调用方捕获转为 BusinessException）。
@@ -45,6 +50,9 @@ public class RateLimitService {
         long now = Instant.now().toEpochMilli();
         long windowMillis = (long) windowMinutes * 60_000L;
 
+        // w7：主路径也触发过期淘汰，避免频控 key 无限累积导致内存持续上涨
+        evictStaleWindows();
+
         TimestampRing ring = windows.computeIfAbsent(composite, k -> new TimestampRing(max));
         int count = ring.record(now, windowMillis);
 
@@ -60,6 +68,7 @@ public class RateLimitService {
      */
     public int countOnly(String namespace, String key, int windowMinutes) {
         if (key == null || key.isEmpty()) return 0;
+        evictStaleWindows();
         String composite = namespace + ":" + key.toLowerCase();
         long now = Instant.now().toEpochMilli();
         long windowMillis = (long) windowMinutes * 60_000L;
@@ -102,11 +111,28 @@ public class RateLimitService {
     }
 
     /**
+     * H8：惰性回收过期窗口，防止 windows 无限增长导致内存泄漏。
+     * 仅当条目数超过阈值时触发，回收最后活动时间早于 EVICT_AFTER_MS 的条目。
+     */
+    public void evictStaleWindows() {
+        if (windows.size() <= EVICT_THRESHOLD) return;
+        long now = Instant.now().toEpochMilli();
+        Iterator<Map.Entry<String, TimestampRing>> it = windows.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<String, TimestampRing> e = it.next();
+            if (now - e.getValue().getLastAccess() > EVICT_AFTER_MS) {
+                it.remove();
+            }
+        }
+    }
+
+    /**
      * 滑动窗口环形计数：保留窗口内的时间戳，统计窗口内事件数。
      */
     private static class TimestampRing {
         private final java.util.concurrent.atomic.AtomicLongArray stamps;
         private final AtomicLong idx = new AtomicLong(0);
+        private final AtomicLong lastAccess = new AtomicLong(0);
 
         TimestampRing(int capacity) {
             // 容量+1 作为环形缓冲大小（允许瞬间峰值稍大于 max 再被 check 拦下）
@@ -116,6 +142,7 @@ public class RateLimitService {
         int record(long now, long windowMillis) {
             long pos = idx.getAndIncrement() % stamps.length();
             stamps.set((int) pos, now);
+            lastAccess.set(now);
             // 统计窗口内（now - windowMillis, now] 的时间戳数量
             int count = 0;
             long lower = now - windowMillis;
@@ -124,6 +151,10 @@ public class RateLimitService {
                 if (t > lower) count++;
             }
             return count;
+        }
+
+        long getLastAccess() {
+            return lastAccess.get();
         }
     }
 }

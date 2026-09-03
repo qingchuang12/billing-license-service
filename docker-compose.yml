@@ -1,33 +1,51 @@
-version: '3.8'
-
 services:
   app:
     build: .
+    restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
       - SPRING_PROFILES_ACTIVE=docker
-      - DB_USERNAME=postgres
-      - DB_PASSWORD=postgres
+      # 数据源：指向同网络内的 postgres 服务（非 127.0.0.1），库名与 POSTGRES_DB 一致
+      - DB_URL=jdbc:postgresql://postgres:5432/billing_db
+      - DB_USERNAME=${DB_USERNAME:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - ADMIN_API_KEYS=${ADMIN_API_KEYS}
+      - KMS_PROVIDER=${KMS_PROVIDER:-local}
       - PRIVATE_KEY_PATH=/keys/private.key
       - PUBLIC_KEY_PATH=/keys/public.key
     volumes:
       - ./keys:/keys:ro
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     networks:
       - billing-network
+    healthcheck:
+      # i11：H13 已接入 Actuator /actuator/health（SecurityConfig 已放行），改用 HTTP 探针
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   postgres:
     image: postgres:15-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
     environment:
       - POSTGRES_DB=billing_db
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_USER=${DB_USERNAME:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
       - billing-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
 networks:
   billing-network:

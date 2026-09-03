@@ -2,9 +2,11 @@ package com.billing.license.controller;
 
 import com.billing.license.dto.RedeemCodeRequest;
 import com.billing.license.entity.License;
+import com.billing.license.exception.BusinessException;
 import com.billing.license.service.RedeemCodeService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -22,7 +24,22 @@ import java.util.Map;
 public class RedeemCodeController {
     
     private final RedeemCodeService redeemCodeService;
-    
+
+    /**
+     * H8：是否信任反向代理注入的 X-Forwarded-For / X-Real-IP。
+     * 默认 false——这些头可被客户端伪造，在未确认反代可信前不得用于频控/审计，
+     * 否则攻击者可伪造 IP 绕过 RateLimitService 的兑换频控。
+     */
+    @Value("${billing.trust-x-forwarded-for:false}")
+    private boolean trustXForwardedFor;
+
+    /**
+     * i3：批量生成兑换码数量上限，防止超大 count 打爆 DB / 线程（DoS）。
+     * 默认 1000，可通过 billing.redeem-code.max-generate 调整。
+     */
+    @Value("${billing.redeem-code.max-generate:1000}")
+    private int maxGenerateCount;
+
     /**
      * 批量生成兑换码（管理员权限）
      * @param productSku 产品 SKU
@@ -35,7 +52,16 @@ public class RedeemCodeController {
             @RequestParam String productSku,
             @RequestParam int count,
             @RequestParam(required = false) LocalDateTime expiresAt) {
-        
+
+        // i3：数量边界校验——非正或超上限一律拒绝，避免无脑循环写库造成资源耗尽
+        if (count <= 0) {
+            throw new BusinessException("INVALID_COUNT", "生成数量必须为正整数");
+        }
+        if (count > maxGenerateCount) {
+            throw new BusinessException("COUNT_EXCEED_LIMIT",
+                "批量生成数量超过上限（上限=" + maxGenerateCount + "），请分批生成");
+        }
+
         int created = redeemCodeService.generateCodes(productSku, count, expiresAt);
         
         Map<String, Object> response = new HashMap<>();
@@ -83,9 +109,15 @@ public class RedeemCodeController {
     }
 
     /**
-     * 解析客户端真实 IP（优先 X-Forwarded-For，其次 X-Real-IP，最后 remoteAddr）
+     * 解析客户端真实 IP。
+     * H8：未显式信任反代（trustXForwardedFor=false）时，绝不信任可伪造的
+     * X-Forwarded-For / X-Real-IP，直接采用直连接 peer 地址；
+     * 仅在确认反代可信后才解析转发头，防止频控被伪造 IP 绕过。
      */
     private String parseClientIp(HttpServletRequest request) {
+        if (!trustXForwardedFor) {
+            return request.getRemoteAddr();
+        }
         String forwarded = request.getHeader("X-Forwarded-For");
         if (forwarded != null && !forwarded.isEmpty()) {
             // 取第一个（最原始客户端）

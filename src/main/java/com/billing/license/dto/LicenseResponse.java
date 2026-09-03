@@ -1,5 +1,6 @@
 package com.billing.license.dto;
 
+import com.billing.license.entity.License;
 import lombok.Data;
 import lombok.Builder;
 import lombok.NoArgsConstructor;
@@ -44,4 +45,21 @@ public class LicenseResponse {
     
     /** 签名的 License Token，用于离线验证 */
     private String signedToken;
+
+    /**
+     * H10：管理后台安全视图。映射除敏感字段外的全部信息，
+     * 显式不设置 {@code signedToken}（内部离线校验令牌，不应经管理接口返回）。
+     */
+    public static LicenseResponse adminView(License license) {
+        return LicenseResponse.builder()
+            .id(license.getId())
+            .licenseKey(license.getLicenseKey())
+            .customerId(license.getCustomerId())
+            .productSku(license.getProduct() != null ? license.getProduct().getSku() : null)
+            .status(license.getStatus() != null ? license.getStatus().name() : null)
+            .issuedAt(license.getIssuedAt())
+            .expiresAt(license.getExpiresAt())
+            .activatedAt(license.getActivatedAt())
+            .build();
+    }
 }

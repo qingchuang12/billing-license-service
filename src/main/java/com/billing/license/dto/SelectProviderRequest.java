@@ -14,6 +14,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class SelectProviderRequest {
 
-    /** 支付方式，如 alipay / wechat_pay / unionpay / stripe / paddle / paypal */
+    /** 支付方式，如 alipay / wechat_pay / stripe / paddle / paypal */
     private String provider;
 }

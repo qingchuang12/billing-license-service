@@ -1,0 +1,8 @@
+# Docker 部署专用 profile（由 SPRING_PROFILES_ACTIVE=docker 激活）
+# 容器内 schema 由 Flyway 全权管理，Hibernate 仅做校验，禁止自动改表（避免与迁移漂移导致启动失败）
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true

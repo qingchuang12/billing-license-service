@@ -1,3 +1,7 @@
+-- ============================================================================
+-- Flyway 迁移 V2 —— 收银台会话 / 事件表 / orders.email
+-- 按文件名版本号顺序自动执行；首次部署后禁止修改本文件（Flyway 校验和固定）
+-- ============================================================================
 -- V2 migration: checkout sessions, event tables, order email column
 -- Applied on top of V1 (ddl-auto=validate requires Flyway-managed schema changes)
 

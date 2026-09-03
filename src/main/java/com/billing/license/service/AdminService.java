@@ -3,13 +3,17 @@ package com.billing.license.service;
 import com.billing.license.dto.OrderResponse;
 import com.billing.license.entity.License;
 import com.billing.license.entity.Order;
+import com.billing.license.entity.Payment;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.LicenseRepository;
 import com.billing.license.repository.OrderRepository;
+import com.billing.license.repository.PaymentRepository;
 import com.billing.license.service.notification.EmailNotificationService;
 import com.billing.license.service.payment.PaymentService;
 import com.billing.license.service.payment.impl.PaymentServiceFactory;
 import com.billing.license.service.payment.strategy.PaymentMethod;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -35,6 +39,10 @@ public class AdminService {
     private final PaymentServiceFactory paymentServiceFactory;
     private final PaymentService paymentService;
     private final EmailNotificationService emailNotificationService;
+    private final PaymentRepository paymentRepository;
+
+    // i6：复用 ObjectMapper 构造 metadata JSON，避免手写拼接导致的转义/注入问题
+    private static final ObjectMapper METADATA_MAPPER = new ObjectMapper();
 
     /**
      * 列出全部订单
@@ -55,7 +63,11 @@ public class AdminService {
     }
 
     /**
-     * 退款订单：调用支付服务商退款接口，标记订单 REFUNDED，作废全部 License，发送通知
+     * 退款订单：调用支付服务商退款接口，标记订单 REFUNDED，作废全部 License，发送通知。
+     *
+     * H4 资损防护：仅当支付渠道侧退款成功（refundPayment 返回 true）才标记 REFUNDED 并作废 License；
+     * 若渠道未实现/返回失败/抛异常，绝不本地谎报退款成功——改为标记 REFUND_FAILED（保留 PAID），
+     * 并抛出业务异常交由运营到渠道控制台手动退款，避免「账显示已退但钱没退」的资损与对账混乱。
      */
     @Transactional
     public OrderResponse refundOrder(String orderNumber, String reason) {
@@ -68,21 +80,62 @@ public class AdminService {
             throw new BusinessException("ALREADY_REFUNDED", "Order already refunded: " + orderNumber);
         }
 
-        // 调用支付渠道退款（若已实现）
+        // 调用支付渠道退款
         PaymentMethod method = resolveMethod(order.getPaymentProvider());
-        if (method != null) {
+
+        // C2 兜底：存量订单（provider 为 NULL）从已落库的 Payment.method 回补渠道，
+        // 避免线上历史 PAID 订单退款依旧 100% 失败。Payment.method 由 createPayment 写入，比 Order 字段更权威。
+        if (method == null) {
             try {
-                boolean ok = paymentServiceFactory.getStrategy(method)
-                    .refundPayment(order, order.getPaymentIntentId(), order.getTotalAmount());
-                if (!ok) {
-                    log.warn("支付渠道退款未实现或返回失败，仅做本地标记：provider={}", method);
+                Payment payment = paymentRepository.findByOrderIdStr(order.getId().toString()).orElse(null);
+                if (payment != null && payment.getMethod() != null) {
+                    method = resolveMethod(payment.getMethod());
+                    if (method != null) {
+                        log.info("存量订单渠道兜底：从 Payment.method 回补 provider={}, orderNumber={}", method, orderNumber);
+                    }
                 }
             } catch (Exception e) {
-                log.error("调用支付渠道退款异常，仅做本地标记：provider={}", method, e);
+                log.warn("存量订单渠道兜底查询失败：orderNumber={}", orderNumber, e);
             }
         }
 
-        // 作废该订单下所有 License
+        // H5 修正：渠道交易号存储于 Payment 实体（createPayment 时落库），
+        // order.paymentIntentId 从未被赋值；必须以 Payment.paymentId 作为退款目标，
+        // 否则 Stripe/Paddle/PayPal 因拿不到交易号而退款失败（进而被 H4 误判为 REFUND_FAILED）。
+        String channelPaymentId = order.getPaymentIntentId();
+        try {
+            Payment payment = paymentRepository.findByOrderIdStr(order.getId().toString()).orElse(null);
+            if (payment != null && payment.getPaymentId() != null) {
+                channelPaymentId = payment.getPaymentId();
+            }
+        } catch (Exception e) {
+            log.warn("查询支付记录失败，退而使用 order.paymentIntentId：orderNumber={}", orderNumber, e);
+        }
+
+        boolean channelRefunded = false;
+        if (method != null) {
+            try {
+                channelRefunded = paymentServiceFactory.getStrategy(method)
+                    .refundPayment(order, channelPaymentId, order.getTotalAmount());
+            } catch (Exception e) {
+                log.error("调用支付渠道退款异常：provider={}, orderNumber={}", method, orderNumber, e);
+                channelRefunded = false;
+            }
+        } else {
+            log.warn("无法解析支付渠道，无法发起渠道侧退款：provider={}, orderNumber={}",
+                order.getPaymentProvider(), orderNumber);
+        }
+
+        if (!channelRefunded) {
+            // H4：渠道退款未成功——绝不能标记 REFUNDED。置内部退款失败态，保留 PAID。
+            order.markRefundFailed();
+            order.setMetadata(appendMetadata(order.getMetadata(), "refundReason", reason));
+            orderRepository.save(order);
+            throw new BusinessException("REFUND_FAILED",
+                "支付渠道退款未成功（订单保持已支付）。请到支付渠道控制台手动退款，或确认渠道配置后重试。orderNumber=" + orderNumber);
+        }
+
+        // 渠道退款成功：作废该订单下所有 License
         List<License> licenses = licenseRepository.findByOrder(order);
         for (License license : licenses) {
             if (license.getStatus() != License.LicenseStatus.REVOKED) {
@@ -92,14 +145,14 @@ public class AdminService {
             }
         }
 
-        // 标记订单状态
-        order.setPaymentStatus(Order.PaymentStatus.REFUNDED);
-        order.setStatus(Order.OrderStatus.REFUNDED);
+        // H15：通过状态机唯一出口标记已退款，status 与 paymentStatus 一致
+        order.markRefunded();
         order.setMetadata(appendMetadata(order.getMetadata(), "refundReason", reason));
         orderRepository.save(order);
 
         if (order.getEmail() != null && !order.getEmail().isEmpty()) {
-            emailNotificationService.sendPaymentFailureEmail(
+            // M5 修正：退款通知使用退款专用文案，不再复用「支付失败」模板
+            emailNotificationService.sendRefundProcessedEmail(
                 order.getEmail(), orderNumber, "退款已处理：" + (reason != null ? reason : ""));
         }
 
@@ -139,9 +192,29 @@ public class AdminService {
     }
 
     private String appendMetadata(String metadata, String key, String value) {
-        String base = metadata == null ? "" : metadata;
-        if (base.isEmpty()) return "{" + "\"" + key + "\":\"" + (value == null ? "" : value) + "\"}";
-        // 简单追加，避免引入 JSON 库
-        return base.replaceFirst("\\}$", ",\"" + key + "\":\"" + (value == null ? "" : value) + "\"}");
+        // i6：用 ObjectMapper 构造，避免手写 JSON 拼接导致的转义/注入问题
+        // （value 可能含引号、反斜杠、换行、< 等，手写会破坏 JSON 结构或被注入）
+        try {
+            ObjectNode node;
+            if (metadata == null || metadata.isBlank()) {
+                node = METADATA_MAPPER.createObjectNode();
+            } else {
+                try {
+                    node = (ObjectNode) METADATA_MAPPER.readTree(metadata);
+                } catch (Exception e) {
+                    // 存量脏数据或非 JSON：以现有内容为 raw 字段兜底，不丢信息
+                    node = METADATA_MAPPER.createObjectNode();
+                    node.put("raw", metadata);
+                }
+            }
+            node.put(key, value == null ? "" : value);
+            return METADATA_MAPPER.writeValueAsString(node);
+        } catch (Exception e) {
+            // 极端兜底：序列化失败时退化为手写（保证主流程不中断）
+            log.warn("appendMetadata 序列化失败，回退手写拼接：key={}", key, e);
+            String base = metadata == null ? "" : metadata;
+            if (base.isEmpty()) return "{\"" + key + "\":\"" + (value == null ? "" : value) + "\"}";
+            return base.replaceFirst("\\}$", ",\"" + key + "\":\"" + (value == null ? "" : value) + "\"}");
+        }
     }
 }

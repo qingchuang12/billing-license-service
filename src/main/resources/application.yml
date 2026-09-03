@@ -4,13 +4,16 @@ spring:
   application:
     name: billing-license-service
   datasource:
-    url: jdbc:postgresql://127.0.0.1:10001/license
+    # 容器化部署时需通过 DB_URL 指向 postgres 服务名，勿用 127.0.0.1
+    url: ${DB_URL:jdbc:postgresql://127.0.0.1:10001/license}
     username: ${DB_USERNAME:license}
-    password: ${DB_PASSWORD:XGTjfWhkfd3QXJA7}
+    # 密钥类配置不设默认值：缺失即启动失败（fail-fast），避免带着弱口令/默认口令上线
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
-      ddl-auto: update
+      # H3：生产环境 schema 由 Flyway 全权管理，Hibernate 仅做校验，禁止自动改表（避免与应用迁移漂移）
+      ddl-auto: validate
     show-sql: false
     properties:
       hibernate:
@@ -31,7 +34,8 @@ spring:
             enable: true
             required: true
         from-address: ${MAIL_FROM_ADDRESS:noreply@billing.com}
-
+  api-docs:
+    enabled: true
 # Billing & License Configuration
 billing:
   # Signature algorithm: ED25519, ES256, ES384, ES512, RS256, RS384, RS512
@@ -44,6 +48,10 @@ billing:
   license-check-interval-hours: 24
   # Default license duration days
   default-license-duration-days: 365
+  # H8：是否信任反向代理注入的 X-Forwarded-For 作为客户端真实 IP。
+  # 默认 false（仅按 TCP remoteAddr 限流），避免攻击者伪造 XFF 绕过限流/风控。
+  # 仅在确知前方是可信代理（如本服务的 ingress/gateway）时置 true。
+  trust-x-forwarded-for: ${BILLING_TRUST_XFF:false}
   support-email: ${SUPPORT_EMAIL:support@company.com}
 # Payment Provider Configuration
 payment:
@@ -91,26 +99,69 @@ payment:
     return-url: ${PAYPAL_RETURN_URL:https://your-domain.com/payment/return}
     cancel-url: ${PAYPAL_CANCEL_URL:https://your-domain.com/payment/cancel}
 
-# KMS Configuration (optional, for cloud key management)
+# KMS Configuration (本地文件 / 云 KMS 按 kms.provider 切换，仅一个实现生效)
 kms:
-  # Type: local, aws, azure, aliyun
-  provider: local
+  # provider: local(默认) | aws | aliyun  （azure 暂未实现）
+  provider: ${KMS_PROVIDER:local}
+  # 云 KMS 密钥 ID/ARN（本地文件方案不使用）
   key-id: ${KMS_KEY_ID:license-signing-key}
+  # 本地文件方案的密钥路径（由 billing.private-key-path/public-key-path 提供，此处留空）
   private-key-path: ${KMS_PRIVATE_KEY_PATH:}
   public-key-path: ${KMS_PUBLIC_KEY_PATH:}
   aws:
-    region: us-east-1
+    region: ${KMS_AWS_REGION:us-east-1}
+    # 凭证走 AWS SDK 默认链：环境变量 AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY 或 IAM 角色
+  aliyun:
+    region: ${KMS_ALIYUN_REGION:cn-hangzhou}
+    # 阿里云 API 签名算法（AsymmetricSign 用），需与密钥类型匹配
+    sign-algorithm: ${KMS_ALIYUN_SIGN_ALG:RSA_PKCS1_SHA_256}
+    # 密钥类型（供 JWS alg 头使用）：RSA | EC
+    key-type: ${KMS_ALIYUN_KEY_TYPE:RSA}
+    # 凭证走环境变量 ALIYUN_ACCESS_KEY_ID / ALIYUN_ACCESS_KEY_SECRET
   azure:
     vault-name: ${AZURE_VAULT_NAME:}
-  aliyun:
-    region: cn-hangzhou
 
 # Security
 security:
   api-key-header: X-API-Key
-  admin-api-keys: ${ADMIN_API_KEYS:admin-key-change-me}
+  # 管理端密钥：不设默认值，缺失即启动失败。多个密钥用英文逗号分隔。
+  admin-api-keys: ${ADMIN_API_KEYS}
+
+# 应用对外基址，用于拼接各渠道回调/回跳地址
+app:
+  base-url: ${APP_BASE_URL:https://localhost:8080}
+  # H9：CORS 允许的源头（逗号分隔）。留空表示不开放跨域（纯服务端 API 默认关闭）。
+  # 部署前端独立域名时再显式填入，如 https://shop.example.com
+  cors:
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:}
+
+# H13：Actuator 健康检查与探针（上线前必配）
+management:
+  endpoints:
+    web:
+      exposure:
+        # 仅暴露健康与基本信息；敏感端点（env/beans/heapdump 等）默认不暴露
+        include: health,info
+        exclude: env,beans,configprops,heapdump,threaddump,loggers
+  endpoint:
+    health:
+      # 聚合应用、DB、KMS 等组件健康；分组探针供 k8s 使用
+      show-details: when-authorized
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: db
+        liveness:
+          include: db
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
 
 logging:
   level:
-    com.billing.license: DEBUG
+    # 生产禁用 DEBUG：会打印 License token 与支付回调 payload 等敏感信息
+    com.billing.license: INFO
     org.springframework.security: INFO

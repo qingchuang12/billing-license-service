@@ -1,3 +1,7 @@
+-- ============================================================================
+-- Flyway 迁移 V1 —— 初始库表结构（products / orders / licenses / redeem_codes / payment_events 等核心表）
+-- 按文件名版本号顺序自动执行；首次部署后禁止修改本文件（Flyway 校验和固定）
+-- ============================================================================
 -- Initial schema for Billing & License Service
 
 CREATE TABLE IF NOT EXISTS products (

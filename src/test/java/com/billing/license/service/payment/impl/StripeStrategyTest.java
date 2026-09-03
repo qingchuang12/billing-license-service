@@ -69,10 +69,11 @@ class StripeStrategyTest {
     }
 
     @Test
-    void verifyWebhookSignature_shouldReturnTrue_whenSecretNotConfigured() {
-        // StripeStrategy 未注入 webhook-secret 时开发模式跳过验签
+    void verifyWebhookSignature_shouldReturnFalse_whenSecretNotConfigured() {
+        // w10：未配置 webhook-secret 不再「跳过验签返回 true」（否则漏配等于零鉴权）；
+        // 缺失即拒绝回调，由启动期 ChannelConfigValidator fail-fast 提前暴露部署错误。
         Map<String, String> headers = Map.of();
-        assertTrue(strategy.verifyWebhookSignature("{}", "sig", headers));
+        assertFalse(strategy.verifyWebhookSignature("{}", "sig", headers));
     }
 
     @Test

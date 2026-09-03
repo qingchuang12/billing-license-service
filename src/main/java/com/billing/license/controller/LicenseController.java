@@ -55,6 +55,8 @@ public class LicenseController {
      * @param licenseKey License 密钥
      * @return 操作结果
      */
+    // i8：客户端自吊销端点（带 X-API-Key 即 ROLE_ADMIN 的客户端调用）；与 AdminController 的
+    // /api/admin/licenses/{key}/revoke（管理端特权吊销）功能重叠但分工不同，二者均保留。
     @PostMapping("/revoke/{licenseKey}")
     public ResponseEntity<Void> revokeLicense(@PathVariable String licenseKey) {
         licenseService.revokeLicense(licenseKey);

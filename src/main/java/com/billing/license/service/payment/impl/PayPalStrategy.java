@@ -151,7 +151,8 @@ public class PayPalStrategy implements PaymentStrategy {
             JsonNode result = objectMapper.readTree(httpResponse.body());
             if (result.has("status")) {
                 String status = result.get("status").asText();
-                if ("COMPLETED".equals(status) || "APPROVED".equals(status)) {
+                // w9：仅 COMPLETED 视为成功；APPROVED 仅「用户批准、尚未捕获扣款」，回落 PENDING 避免未收款即发货
+                if ("COMPLETED".equals(status)) {
                     return PaymentStatus.SUCCESS;
                 }
             }
@@ -166,8 +167,9 @@ public class PayPalStrategy implements PaymentStrategy {
     public boolean verifyWebhookSignature(String payload, String signature, Map<String, String> headers) {
         logger.info("验证 PayPal Webhook 签名");
         if (clientId == null || clientId.isEmpty() || webhookId == null || webhookId.isEmpty()) {
-            logger.warn("PayPal 凭证/webhook-id 未配置，开发环境跳过验签");
-            return true;
+            // w10：未配置不再「跳过验签返回 true」，否则生产漏配等于零鉴权
+            logger.error("PayPal 凭证/webhook-id 未配置，拒绝回调（需配置后重启）");
+            return false;
         }
         try {
             String accessToken = getAccessToken();
@@ -245,6 +247,73 @@ public class PayPalStrategy implements PaymentStrategy {
         }
 
         return webhookPayload;
+    }
+
+    /**
+     * H5：PayPal 退款。paymentId 为 PayPal Order ID，需先查出 capture ID 再发起退款。
+     * 未配置或失败返回 false（绝不谎报成功）；渠道标记 COMPLETED 才返回 true。
+     */
+    @Override
+    public boolean refundPayment(Order order, String paymentId, java.math.BigDecimal amount) {
+        if (clientId == null || clientId.isEmpty() || clientSecret == null || clientSecret.isEmpty()) {
+            logger.warn("PayPal 未配置，无法发起退款：orderNo={}", order.getOrderNo());
+            return false;
+        }
+        try {
+            String accessToken = getAccessToken();
+            String captureId = findCaptureId(accessToken, paymentId);
+            if (captureId == null) {
+                logger.error("PayPal 无法解析 captureId：orderId={}", paymentId);
+                return false;
+            }
+            String value = amount.setScale(2, RoundingMode.HALF_UP).toString();
+            Map<String, Object> amt = new HashMap<>();
+            amt.put("currency_code", order.getCurrency());
+            amt.put("value", value);
+            Map<String, Object> refundBody = new HashMap<>();
+            refundBody.put("amount", amt);
+
+            HttpClient client = HttpClient.newHttpClient();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(environment + "/v2/payments/captures/" + captureId + "/refund"))
+                    .header("Authorization", "Bearer " + accessToken)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(refundBody)))
+                    .build();
+            HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+            JsonNode result = objectMapper.readTree(httpResponse.body());
+            String status = result.has("status") ? result.get("status").asText() : "";
+            if (result.has("id") && "COMPLETED".equals(status)) {
+                logger.info("PayPal 退款成功：orderNo={}, refundId={}", order.getOrderNo(), result.get("id").asText());
+                return true;
+            }
+            logger.error("PayPal 退款失败：orderNo={}, status={}, body={}", order.getOrderNo(), status, result.toString());
+            return false;
+        } catch (Exception e) {
+            logger.error("PayPal 退款异常：orderNo={}", order.getOrderNo(), e);
+            return false;
+        }
+    }
+
+    /**
+     * 从 PayPal Order 中解析 capture ID（退款目标）
+     */
+    private String findCaptureId(String accessToken, String paypalOrderId) throws Exception {
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(environment + "/v2/checkout/orders/" + paypalOrderId))
+                .header("Authorization", "Bearer " + accessToken)
+                .GET()
+                .build();
+        HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+        JsonNode result = objectMapper.readTree(httpResponse.body());
+        if (result.has("purchase_units")) {
+            JsonNode pu = result.get("purchase_units").get(0);
+            if (pu.has("payments") && pu.get("payments").has("captures")) {
+                return pu.get("payments").get("captures").get(0).get("id").asText();
+            }
+        }
+        return null;
     }
 
     @Override

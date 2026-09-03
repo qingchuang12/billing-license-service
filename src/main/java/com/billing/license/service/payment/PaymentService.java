@@ -7,6 +7,7 @@ import com.billing.license.service.payment.impl.PaymentServiceFactory;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentResponse;
 import com.billing.license.service.payment.strategy.PaymentStatus;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,6 +25,9 @@ public class PaymentService {
     
     private static final Logger logger = LoggerFactory.getLogger(PaymentService.class);
     
+    // i2：共享 ObjectMapper 单例，避免每次调用 createPayment 都 new 一个（浪费且可能重复配置）
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+
     @Autowired
     private PaymentServiceFactory paymentServiceFactory;
     
@@ -46,7 +50,8 @@ public class PaymentService {
         payment.setOrderIdStr(order.getId().toString());
         payment.setPaymentId(response.getPaymentId());
         payment.setAmount(order.getAmount());
-        payment.setCurrency(method.isDomestic() ? "CNY" : "USD");
+        // w16：币种跟随订单币种（双币种场景），不再按 method.isDomestic() 推断
+        payment.setCurrency(order.getCurrency());
         payment.setMethod(method.name());
         payment.setStatus(response.getStatus());
         payment.setChannel(method.name());
@@ -55,8 +60,7 @@ public class PaymentService {
         if (response.getExtraParams() != null) {
             // 存储额外参数为 JSON
             try {
-                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                payment.setMetadata(mapper.writeValueAsString(response.getExtraParams()));
+                payment.setMetadata(objectMapper.writeValueAsString(response.getExtraParams()));
             } catch (Exception e) {
                 logger.warn("序列化支付元数据失败", e);
             }
@@ -106,12 +110,5 @@ public class PaymentService {
      */
     public Optional<Payment> getPaymentByPaymentId(String paymentId) {
         return paymentRepository.findByPaymentId(paymentId);
-    }
-    
-    /**
-     * 获取支付记录
-     */
-    public Optional<Payment> getPaymentByOrderId(Long orderId) {
-        return paymentRepository.findByOrderId(orderId);
     }
 }

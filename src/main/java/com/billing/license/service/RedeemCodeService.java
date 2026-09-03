@@ -2,11 +2,14 @@ package com.billing.license.service;
 
 import com.billing.license.dto.RedeemCodeRequest;
 import com.billing.license.entity.License;
+import com.billing.license.entity.Order;
+import com.billing.license.entity.OrderItem;
 import com.billing.license.entity.Product;
 import com.billing.license.entity.RedeemCode;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.infrastructure.crypto.LicenseIssuer;
 import com.billing.license.repository.LicenseRepository;
+import com.billing.license.repository.OrderRepository;
 import com.billing.license.repository.ProductRepository;
 import com.billing.license.repository.RedeemCodeRepository;
 import com.billing.license.service.risk.RateLimitService;
@@ -15,6 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -26,8 +30,15 @@ public class RedeemCodeService {
     private final RedeemCodeRepository redeemCodeRepository;
     private final LicenseRepository licenseRepository;
     private final ProductRepository productRepository;
+    private final OrderRepository orderRepository;
     private final LicenseIssuer licenseIssuer;
     private final RateLimitService rateLimitService;
+
+    // B8：使用密码学安全随机源生成兑换码，替代可预测的 Math.random()
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+
+    // i3：服务层批量生成硬上限（与 Controller 的可配置上限默认值对齐），防止超大批量写库打爆资源
+    private static final int MAX_GENERATE_COUNT = 1000;
     
     /**
      * Generate a single redeem code for an order
@@ -35,21 +46,31 @@ public class RedeemCodeService {
     @Transactional
     public String generateCode(String orderId) {
         log.info("Generating redeem code for order: {}", orderId);
-        
-        // For order-based code generation, we use a simple approach
+
+        // B10 修复：下单自动发货路径（Webhook）生成的兑换码必须绑定 product，
+        // 否则 redeem_codes.product_id NOT NULL 会崩溃，且 doRedeem 中取 product 会 NPE
+        Order order = orderRepository.findByOrderNumber(orderId)
+            .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "Order not found: " + orderId));
+        Product product = order.getOrderItems().stream()
+            .findFirst()
+            .map(OrderItem::getProduct)
+            .orElseThrow(() -> new BusinessException("NO_ORDER_ITEMS", "Order has no items: " + orderId));
+
         String code = generateCode();
-        
+
         RedeemCode redeemCode = RedeemCode.builder()
             .code(code)
+            .product(product)
+            .orderId(orderId)
             .status(RedeemCode.RedeemCodeStatus.UNUSED)
             .maxUses(1)
             .currentUses(0)
             .metadata("{\"orderId\":\"" + orderId + "\"}")
             .build();
-        
+
         redeemCodeRepository.save(redeemCode);
         log.info("Generated redeem code: {} for order: {}", code, orderId);
-        
+
         return code;
     }
 
@@ -59,7 +80,16 @@ public class RedeemCodeService {
     @Transactional
     public int generateCodes(String productSku, int count, LocalDateTime expiresAt) {
         log.info("Generating {} redeem codes for product: {}", count, productSku);
-        
+
+        // i3：防御性二次校验——即便绕过 Controller 边界，服务层也拒绝非法/超大批量
+        if (count <= 0) {
+            throw new BusinessException("INVALID_COUNT", "生成数量必须为正整数");
+        }
+        if (count > MAX_GENERATE_COUNT) {
+            throw new BusinessException("COUNT_EXCEED_LIMIT",
+                "批量生成数量超过上限（上限=" + MAX_GENERATE_COUNT + "），请分批生成");
+        }
+
         Product product = productRepository.findBySku(productSku)
             .orElseThrow(() -> new BusinessException("PRODUCT_NOT_FOUND", 
                 "Product not found: " + productSku));
@@ -197,11 +227,11 @@ public class RedeemCodeService {
         // Format: XXXX-XXXX-XXXX-XXXX (alphanumeric)
         StringBuilder sb = new StringBuilder();
         String chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // Excluding similar chars
-        
+
         for (int i = 0; i < 4; i++) {
             if (i > 0) sb.append("-");
             for (int j = 0; j < 4; j++) {
-                int idx = (int)(Math.random() * chars.length());
+                int idx = SECURE_RANDOM.nextInt(chars.length());
                 sb.append(chars.charAt(idx));
             }
         }

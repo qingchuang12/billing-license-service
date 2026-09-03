@@ -7,6 +7,7 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.web.util.HtmlUtils;
 
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
@@ -162,11 +163,50 @@ public class EmailNotificationService {
     }
     
     /**
+     * 发送退款处理通知（M5 修正：独立的退款文案，不再复用「支付失败」模板）
+     */
+    @Async
+    public void sendRefundProcessedEmail(String to, String orderNo, String detail) {
+        logger.info("发送退款通知：to={}, orderNo={}", to, orderNo);
+
+        if (!isEmailConfigured()) {
+            logger.warn("邮件服务未配置，跳过发送邮件");
+            return;
+        }
+
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+            helper.setFrom(fromAddress != null ? fromAddress : "noreply@billing.com");
+            helper.setTo(to);
+            helper.setSubject("退款已处理 - 订单 " + orderNo);
+
+            String content = buildRefundProcessedTemplate(orderNo, detail);
+            helper.setText(content, true);
+
+            mailSender.send(message);
+            logger.info("退款通知邮件发送成功：to={}", to);
+
+        } catch (MessagingException e) {
+            logger.error("发送退款通知邮件失败：to={}", to, e);
+        }
+    }
+
+    /**
      * 检查邮件服务是否已配置
      */
     private boolean isEmailConfigured() {
         return mailHost != null && !mailHost.isEmpty() && 
                mailUsername != null && !mailUsername.isEmpty();
+    }
+
+    /**
+     * i5：对邮件模板中的动态内容进行 HTML 转义，防止 orderNo / reason /
+     * licenseKey 等用户可控字段注入 HTML（钓鱼/脚本执行）。null 安全。
+     */
+    private static String esc(String s) {
+        return s == null ? "" : HtmlUtils.htmlEscape(s);
     }
     
     // ==================== 邮件模板 ====================
@@ -181,16 +221,16 @@ public class EmailNotificationService {
         html.append(".order-info{background:white;padding:15px;margin:15px 0;border-radius:5px;}");
         html.append(".footer{text-align:center;padding:20px;color:#666;font-size:12px;}</style>");
         html.append("</head><body><div class='container'>");
-        html.append("<div class='header'><h1>✅ 支付成功</h1></div>");
+        html.append("<div class='header'><h1>支付成功</h1></div>");
         html.append("<div class='content'><p>尊敬的客户，您好！</p>");
         html.append("<p>您的订单已成功支付，感谢您的购买！</p>");
         html.append("<div class='order-info'>");
-        html.append("<p><strong>订单号：</strong>").append(orderNo).append("</p>");
-        html.append("<p><strong>产品名称：</strong>").append(productName).append("</p>");
-        html.append("<p><strong>支付金额：</strong>").append(String.format("%.2f %s", amount, currency)).append("</p>");
+        html.append("<p><strong>订单号：</strong>").append(esc(orderNo)).append("</p>");
+        html.append("<p><strong>产品名称：</strong>").append(esc(productName)).append("</p>");
+        html.append("<p><strong>支付金额：</strong>").append(String.format("%.2f %s", amount, esc(currency))).append("</p>");
         html.append("</div>");
         html.append("<p>如果购买的是激活码，您将在另一封邮件中收到兑换码或 License。</p>");
-        html.append("<p>如有任何问题，请联系我们的客服：").append(supportEmail).append("</p>");
+        html.append("<p>如有任何问题，请联系我们的客服：").append(esc(supportEmail)).append("</p>");
         html.append("</div><div class='footer'><p>此邮件由系统自动发送，请勿回复。</p></div>");
         html.append("</div></body></html>");
         return html.toString();
@@ -206,12 +246,12 @@ public class EmailNotificationService {
         html.append(".order-info{background:white;padding:15px;margin:15px 0;border-radius:5px;}");
         html.append(".footer{text-align:center;padding:20px;color:#666;font-size:12px;}</style>");
         html.append("</head><body><div class='container'>");
-        html.append("<div class='header'><h1>❌ 支付失败</h1></div>");
+        html.append("<div class='header'><h1>支付失败</h1></div>");
         html.append("<div class='content'><p>尊敬的客户，您好！</p>");
         html.append("<p>很抱歉，您的订单支付未能成功。</p>");
         html.append("<div class='order-info'>");
-        html.append("<p><strong>订单号：</strong>").append(orderNo).append("</p>");
-        html.append("<p><strong>失败原因：</strong>").append(reason).append("</p>");
+        html.append("<p><strong>订单号：</strong>").append(esc(orderNo)).append("</p>");
+        html.append("<p><strong>失败原因：</strong>").append(esc(reason)).append("</p>");
         html.append("</div>");
         html.append("<p>您可以：</p><ul>");
         html.append("<li>检查您的支付方式是否有足够的余额</li>");
@@ -233,14 +273,14 @@ public class EmailNotificationService {
         html.append(".license-key{font-family:monospace;font-size:18px;background:#f0f0f0;padding:10px;word-break:break-all;}");
         html.append(".footer{text-align:center;padding:20px;color:#666;font-size:12px;}</style>");
         html.append("</head><body><div class='container'>");
-        html.append("<div class='header'><h1>🔑 License 已签发</h1></div>");
+        html.append("<div class='header'><h1>License 已签发</h1></div>");
         html.append("<div class='content'><p>尊敬的客户，您好！</p>");
         html.append("<p>您的产品 License 已生成，请妥善保存以下信息：</p>");
         html.append("<div class='license-box'>");
-        html.append("<p><strong>产品名称：</strong>").append(productName).append("</p>");
+        html.append("<p><strong>产品名称：</strong>").append(esc(productName)).append("</p>");
         html.append("<p><strong>License Key：</strong></p>");
-        html.append("<div class='license-key'>").append(licenseKey).append("</div>");
-        html.append("<p><strong>有效期至：</strong>").append(expiryDate).append("</p>");
+        html.append("<div class='license-key'>").append(esc(licenseKey)).append("</div>");
+        html.append("<p><strong>有效期至：</strong>").append(esc(expiryDate)).append("</p>");
         html.append("</div>");
         html.append("<p><strong>使用说明：</strong></p><ol>");
         html.append("<li>下载并安装客户端软件</li>");
@@ -253,6 +293,30 @@ public class EmailNotificationService {
         return html.toString();
     }
     
+    private String buildRefundProcessedTemplate(String orderNo, String detail) {
+        StringBuilder html = new StringBuilder();
+        html.append("<!DOCTYPE html><html><head>");
+        html.append("<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;}");
+        html.append(".container{max-width:600px;margin:0 auto;padding:20px;}");
+        html.append(".header{background:#2196F3;color:white;padding:20px;text-align:center;}");
+        html.append(".content{padding:20px;background:#f9f9f9;}");
+        html.append(".order-info{background:white;padding:15px;margin:15px 0;border-radius:5px;}");
+        html.append(".footer{text-align:center;padding:20px;color:#666;font-size:12px;}</style>");
+        html.append("</head><body><div class='container'>");
+        html.append("<div class='header'><h1>退款已处理</h1></div>");
+        html.append("<div class='content'><p>尊敬的客户，您好！</p>");
+        html.append("<p>您申请的退款已处理完成。</p>");
+        html.append("<div class='order-info'>");
+        html.append("<p><strong>订单号：</strong>").append(esc(orderNo)).append("</p>");
+        html.append("<p><strong>说明：</strong>").append(esc(detail)).append("</p>");
+        html.append("</div>");
+        html.append("<p>退款将原路返回，具体到账时间以支付渠道为准（通常 1-7 个工作日）。</p>");
+        html.append("<p>如有任何问题，请联系我们的客服：").append(esc(supportEmail)).append("</p>");
+        html.append("</div><div class='footer'><p>此邮件由系统自动发送，请勿回复。</p></div>");
+        html.append("</div></body></html>");
+        return html.toString();
+    }
+
     private String buildRedeemCodeTemplate(String redeemCode, String productName, String expiryDate) {
         StringBuilder html = new StringBuilder();
         html.append("<!DOCTYPE html><html><head>");
@@ -264,14 +328,14 @@ public class EmailNotificationService {
         html.append(".redeem-code{font-family:monospace;font-size:24px;background:#f0f0f0;padding:15px;text-align:center;letter-spacing:2px;}");
         html.append(".footer{text-align:center;padding:20px;color:#666;font-size:12px;}</style>");
         html.append("</head><body><div class='container'>");
-        html.append("<div class='header'><h1>🎁 您的兑换码</h1></div>");
+        html.append("<div class='header'><h1>您的兑换码</h1></div>");
         html.append("<div class='content'><p>尊敬的客户，您好！</p>");
         html.append("<p>感谢您购买我们的产品，以下是您的兑换码：</p>");
         html.append("<div class='code-box'>");
-        html.append("<p><strong>产品名称：</strong>").append(productName).append("</p>");
+        html.append("<p><strong>产品名称：</strong>").append(esc(productName)).append("</p>");
         html.append("<p><strong>兑换码：</strong></p>");
-        html.append("<div class='redeem-code'>").append(redeemCode).append("</div>");
-        html.append("<p><strong>有效期至：</strong>").append(expiryDate).append("</p>");
+        html.append("<div class='redeem-code'>").append(esc(redeemCode)).append("</div>");
+        html.append("<p><strong>有效期至：</strong>").append(esc(expiryDate)).append("</p>");
         html.append("</div>");
         html.append("<p><strong>使用步骤：</strong></p><ol>");
         html.append("<li>访问我们的官网激活页面</li>");

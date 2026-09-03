@@ -14,5 +14,7 @@ public interface LicenseRepository extends JpaRepository<License, UUID> {
     Optional<License> findByLicenseKey(String licenseKey);
     List<License> findByCustomerId(UUID customerId);
     List<License> findByOrder(Order order);
+    // B13：按订单 ID 查询已签发 License，供轮询接口幂等返回
+    List<License> findByOrderId(UUID orderId);
     boolean existsByLicenseKey(String licenseKey);
 }

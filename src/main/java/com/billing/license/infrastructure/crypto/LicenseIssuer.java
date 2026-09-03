@@ -5,6 +5,7 @@ import com.billing.license.infrastructure.kms.KmsService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -12,6 +13,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -21,10 +23,19 @@ import java.util.Map;
 @Component
 @RequiredArgsConstructor
 public class LicenseIssuer {
-    
+
     private final KmsService kmsService;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    
+
+    /**
+     * M1：kid 可配置，支持密钥轮换。
+     * 轮换方式：将 {@code billing.license-kid} 指向新密钥标识，新签发的 License 携带新 kid；
+     * 验证侧按 kid 选择对应公钥（当前 KmsService 使用单一密钥，所有 kid 映射到同一公钥，
+     * 多密钥密码学轮换需 KMS 侧密钥版本/别名支持，属基础设施层）。
+     */
+    @Value("${billing.license-kid:license-key-1}")
+    private String licenseKid;
+
     /**
      * Issue a signed license token
      */
@@ -34,13 +45,34 @@ public class LicenseIssuer {
             Map<String, Object> header = new HashMap<>();
             header.put("alg", getJwsAlgorithm());
             header.put("typ", "JWT");
-            header.put("kid", "license-key-1");
+            header.put("kid", licenseKid);
             
             // Create payload
             Map<String, Object> payload = new HashMap<>();
             payload.put("lic", license.getLicenseKey());
             payload.put("cid", license.getCustomerId().toString());
-            payload.put("sku", license.getProduct().getSku());
+            if (license.getProduct() != null) {
+                payload.put("sku", license.getProduct().getSku());
+                // B17：写入档位与权益清单，供客户端离线校验 Pro / Pro Plus 的权益差异
+                if (license.getProduct().getTier() != null) {
+                    payload.put("plan", license.getProduct().getTier().name());
+                }
+                if (license.getProduct().getFeatures() != null && !license.getProduct().getFeatures().isEmpty()) {
+                    try {
+                        payload.put("feat", objectMapper.readValue(license.getProduct().getFeatures(), List.class));
+                    } catch (Exception ignored) {
+                        // 特征字段非合法 JSON 时忽略，不影响主签发流程
+                    }
+                }
+            }
+            // B17：绑定机器码，客户端可离线校验设备授权
+            if (license.getMachineCode() != null) {
+                payload.put("mid", license.getMachineCode());
+            }
+            // B17：关联订单，便于对账与换机重发追溯
+            if (license.getOrder() != null) {
+                payload.put("oid", license.getOrder().getId().toString());
+            }
             payload.put("iat", ZonedDateTime.now().toEpochSecond());
             
             if (license.getExpiresAt() != null) {

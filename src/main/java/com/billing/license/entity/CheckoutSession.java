@@ -83,6 +83,9 @@ public class CheckoutSession {
     @Column(name = "expires_at")
     private LocalDateTime expiresAt;
 
+    @Column(name = "last_compensated_at")
+    private LocalDateTime lastCompensatedAt; // R3：上次主动对账补偿时间，用于轮询冷却窗口
+
     @Column(columnDefinition = "TEXT")
     private String metadata;
 

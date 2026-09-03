@@ -6,7 +6,9 @@ import com.alipay.api.DefaultAlipayClient;
 import com.alipay.api.request.AlipayTradePrecreateRequest;
 import com.alipay.api.request.AlipayTradePagePayRequest;
 import com.alipay.api.request.AlipayTradeQueryRequest;
+import com.alipay.api.request.AlipayTradeRefundRequest;
 import com.alipay.api.response.AlipayTradePrecreateResponse;
+import com.alipay.api.response.AlipayTradeRefundResponse;
 import com.alipay.api.response.AlipayTradePagePayResponse;
 import com.alipay.api.response.AlipayTradeQueryResponse;
 import com.alipay.api.internal.util.AlipaySignature;
@@ -16,6 +18,7 @@ import com.billing.license.service.payment.strategy.PaymentResponse;
 import com.billing.license.service.payment.strategy.PaymentStatus;
 import com.billing.license.service.payment.strategy.PaymentStrategy;
 import com.billing.license.service.payment.strategy.WebhookPayload;
+import com.billing.license.service.payment.util.FormParamParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,11 +27,9 @@ import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.TreeMap;
 
 /**
  * 支付宝支付策略实现
@@ -199,18 +200,18 @@ public class AlipayStrategy implements PaymentStrategy {
         }
         
         try {
-            // 解析回调参数
-            Map<String, String> params = parseCallbackParams(payload);
-            
-            // 移除 sign 和 sign_type 参数
-            params.remove("sign");
-            params.remove("sign_type");
-            
+            // 解析回调参数（含 sign/sign_type，保留原样）
+            Map<String, String> params = FormParamParser.parse(payload);
+
+            // 注意：不要在此处 remove("sign")/remove("sign_type")——支付宝 SDK 的
+            // rsaCheckV1 内部第一步就是从 params 取 sign，随后 getSignCheckContentV1 自行剔除。
+            // 业务侧提前 remove 会让 SDK 取到 null → 验签必然失败。
+
             // 使用支付宝 SDK 验签
             boolean isValid = AlipaySignature.rsaCheckV1(
-                params, 
-                alipayPublicKey, 
-                StandardCharsets.UTF_8.name(), 
+                params,
+                alipayPublicKey,
+                StandardCharsets.UTF_8.name(),
                 signType
             );
             
@@ -235,8 +236,8 @@ public class AlipayStrategy implements PaymentStrategy {
         WebhookPayload webhookPayload = new WebhookPayload();
         
         try {
-            Map<String, String> params = parseCallbackParams(payload);
-            
+            Map<String, String> params = FormParamParser.parse(payload);
+
             String outTradeNo = params.get("out_trade_no");
             String tradeNo = params.get("trade_no");
             String tradeStatus = params.get("trade_status");
@@ -295,29 +296,41 @@ public class AlipayStrategy implements PaymentStrategy {
     public PaymentMethod getPaymentMethod() {
         return PaymentMethod.ALIPAY;
     }
-    
+
     /**
-     * 解析支付宝回调参数（支持 form 表单和 URL 编码格式）
+     * H5：支付宝退款（统一收单交易退款接口）。
+     * 未配置或调用失败时返回 false（绝不谎报成功），由调用方决定是否标记退款。
      */
-    private Map<String, String> parseCallbackParams(String payload) {
-        Map<String, String> params = new TreeMap<>();
-        
-        if (payload == null || payload.isEmpty()) {
-            return params;
+    @Override
+    public boolean refundPayment(Order order, String paymentId, java.math.BigDecimal amount) {
+        if (!StringUtils.hasText(appId) || !StringUtils.hasText(privateKey) || !StringUtils.hasText(alipayPublicKey)) {
+            logger.warn("支付宝未配置，无法发起退款：orderNo={}", order.getOrderNo());
+            return false;
         }
-        
-        // 尝试解析 URL 编码格式
-        String[] pairs = payload.split("&");
-        for (String pair : pairs) {
-            int idx = pair.indexOf("=");
-            if (idx > 0) {
-                String key = URLDecoder.decode(pair.substring(0, idx), StandardCharsets.UTF_8);
-                String value = URLDecoder.decode(pair.substring(idx + 1), StandardCharsets.UTF_8);
-                params.put(key, value);
+        try {
+            AlipayClient client = getAlipayClient();
+            AlipayTradeRefundRequest request = new AlipayTradeRefundRequest();
+            String outTradeNo = order.getOrderNo();
+            String bizContent = String.format(
+                "{\"out_trade_no\":\"%s\",\"refund_amount\":\"%s\",\"refund_reason\":\"%s\"}",
+                outTradeNo,
+                amount.setScale(2, RoundingMode.HALF_UP).toString(),
+                "管理员退款");
+            request.setBizContent(bizContent);
+
+            AlipayTradeRefundResponse response = client.execute(request);
+            if (response != null && response.isSuccess()) {
+                logger.info("支付宝退款成功：orderNo={}, tradeNo={}", outTradeNo, response.getTradeNo());
+                return true;
             }
+            logger.error("支付宝退款失败：orderNo={}, code={}, msg={}",
+                outTradeNo, response != null ? response.getCode() : "null",
+                response != null ? response.getMsg() : "null");
+            return false;
+        } catch (AlipayApiException e) {
+            logger.error("支付宝退款异常：orderNo={}", order.getOrderNo(), e);
+            return false;
         }
-        
-        return params;
     }
     
     /**
