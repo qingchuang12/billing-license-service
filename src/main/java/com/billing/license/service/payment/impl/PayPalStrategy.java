@@ -16,6 +16,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
@@ -319,5 +320,24 @@ public class PayPalStrategy implements PaymentStrategy {
     @Override
     public PaymentMethod getPaymentMethod() {
         return PaymentMethod.PAYPAL;
+    }
+
+    /**
+     * PayPal 必备配置：Client ID、Client Secret、Webhook ID。
+     * webhook-id 缺失时回调验签会直接拒绝（见 verifyWebhookSignature 的 w10 约定）。
+     */
+    @Override
+    public List<String> missingConfig() {
+        List<String> missing = new ArrayList<>();
+        if (clientId == null || clientId.isEmpty()) {
+            missing.add("payment.paypal.client-id");
+        }
+        if (clientSecret == null || clientSecret.isEmpty()) {
+            missing.add("payment.paypal.client-secret");
+        }
+        if (webhookId == null || webhookId.isEmpty()) {
+            missing.add("payment.paypal.webhook-id");
+        }
+        return missing;
     }
 }

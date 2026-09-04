@@ -40,6 +40,23 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 处理支付渠道未启用：消息为应用可控文案（仅含渠道名），可回显。
+     * 返回 400 而非 500——这是调用方选错渠道的客户端错误，不是服务端故障。
+     */
+    @ExceptionHandler(ChannelDisabledException.class)
+    public ResponseEntity<Map<String, Object>> handleChannelDisabled(ChannelDisabledException ex) {
+        String traceId = newTraceId();
+        log.warn("[{}] 支付渠道未启用：method={}, message={}", traceId, ex.getPaymentMethod(), ex.getMessage());
+        Map<String, Object> body = new HashMap<>();
+        body.put("timestamp", LocalDateTime.now());
+        body.put("errorCode", ex.getErrorCode());
+        body.put("message", ex.getMessage());
+        body.put("traceId", traceId);
+        body.put("success", false);
+        return ResponseEntity.badRequest().body(body);
+    }
+
+    /**
      * 处理通用异常：脱敏，不明确回显内部细节；完整异常记录到服务端日志。
      */
     @ExceptionHandler(Exception.class)

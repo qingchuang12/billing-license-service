@@ -2,12 +2,14 @@ package com.billing.license.controller;
 
 import com.billing.license.dto.LicenseResponse;
 import com.billing.license.dto.OrderResponse;
+import com.billing.license.dto.PaymentChannelStatus;
 import com.billing.license.entity.License;
 import com.billing.license.entity.Order;
 import com.billing.license.exception.AdminUnauthorizedException;
 import com.billing.license.service.AdminService;
 import com.billing.license.service.AuditLogService;
 import com.billing.license.service.LicenseService;
+import com.billing.license.service.payment.impl.PaymentServiceFactory;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -39,6 +41,7 @@ public class AdminController {
     private final AdminService adminService;
     private final LicenseService licenseService;
     private final AuditLogService auditLogService;
+    private final PaymentServiceFactory paymentServiceFactory;
 
     // B7：与管理端 fail-fast 配置（application.yml 中 ${ADMIN_API_KEYS} 无默认值）保持一致，
     // 不保留弱口令默认值；环境变量未注入时应用启动即失败，避免带着 admin-key-change-me 上线
@@ -102,6 +105,22 @@ public class AdminController {
         ensureAuthorized(apiKey);
         auditLogService.audit(actorHash(apiKey), "LIST_ORDERS", "-", true, "");
         return ResponseEntity.ok(adminService.listOrders());
+    }
+
+    /**
+     * 支付渠道配置自查：返回各渠道的启用状态、配置是否齐全、缺失的配置项名。
+     *
+     * <p>用途：部署完成（填好密钥）后先调本接口确认「配得对不对」，再去做真实下单验证，
+     * 避免带着错误配置跑真实交易（回调收不到会导致收钱不发货）。
+     *
+     * <p>仅返回配置项名，不回显任何密钥值。
+     */
+    @GetMapping("/payment-channels")
+    public ResponseEntity<List<PaymentChannelStatus>> paymentChannels(
+            @RequestHeader("X-Admin-API-Key") String apiKey) {
+        ensureAuthorized(apiKey);
+        auditLogService.audit(actorHash(apiKey), "CHECK_PAYMENT_CHANNELS", "-", true, "");
+        return ResponseEntity.ok(paymentServiceFactory.getChannelStatuses());
     }
 
     @GetMapping("/orders/status/{status}")

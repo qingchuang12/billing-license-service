@@ -28,7 +28,9 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -295,6 +297,28 @@ public class AlipayStrategy implements PaymentStrategy {
     @Override
     public PaymentMethod getPaymentMethod() {
         return PaymentMethod.ALIPAY;
+    }
+
+    /**
+     * 支付宝必备配置：应用 ID、商户私钥（RSA2 签名）、支付宝公钥（回调验签）、异步通知地址。
+     * 缺任意一项都会在真实下单或回调验签时失败。
+     */
+    @Override
+    public List<String> missingConfig() {
+        List<String> missing = new ArrayList<>();
+        if (!StringUtils.hasText(appId)) {
+            missing.add("payment.alipay.app-id");
+        }
+        if (!StringUtils.hasText(privateKey)) {
+            missing.add("payment.alipay.private-key");
+        }
+        if (!StringUtils.hasText(alipayPublicKey)) {
+            missing.add("payment.alipay.public-key");
+        }
+        if (!StringUtils.hasText(notifyUrl)) {
+            missing.add("payment.alipay.notify-url");
+        }
+        return missing;
     }
 
     /**

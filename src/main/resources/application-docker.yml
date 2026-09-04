@@ -1,8 +1,15 @@
-# Docker 部署专用 profile（由 SPRING_PROFILES_ACTIVE=docker 激活）
-# 容器内 schema 由 Flyway 全权管理，Hibernate 仅做校验，禁止自动改表（避免与迁移漂移导致启动失败）
+# Docker 部署专用 profile（由 SPRING_PROFILES_ACTIVE=docker 激活，见 docker-compose.yml）
+#
+# 用途：容器环境的「安全护栏」。本文件是 profile 专属配置，会**覆盖** application.yml 的同名项，
+# 因此即便本地开发把主配置的 ddl-auto 改成 update/create，容器启动时仍会被强制为 validate，
+# 避免 Hibernate 擅自改表而与 Flyway 迁移脚本漂移（漂移会导致容器启动失败或线上数据结构不一致）。
+#
+# 说明：当前这两项的取值与 application.yml 的默认值一致（即「无增量效果」），属刻意为之——
+# 它的价值在于「防止主配置被改坏后影响生产」，不是提供额外配置。请勿因为看着重复就删除。
 spring:
   jpa:
     hibernate:
+      # 容器内 schema 由 Flyway 全权管理，Hibernate 仅做校验，禁止自动改表
       ddl-auto: validate
   flyway:
     enabled: true

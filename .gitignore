@@ -43,4 +43,4 @@ keys/
 
 # Force-include the env template (override the *.env.* ignore above)
 !.env.example
-```
+.workbuddy

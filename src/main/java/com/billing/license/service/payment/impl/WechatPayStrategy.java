@@ -33,8 +33,10 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.crypto.Cipher;
@@ -559,5 +561,33 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
     @Override
     public PaymentMethod getPaymentMethod() {
         return PaymentMethod.WECHAT_PAY;
+    }
+
+    /**
+     * 微信支付 API v3 必备配置：AppID、商户号、APIv3 密钥、商户私钥与商户证书路径、回调地址。
+     * 私钥与商户证书还需文件真实存在且可解析（加载失败见启动日志中的初始化错误）。
+     */
+    @Override
+    public List<String> missingConfig() {
+        List<String> missing = new ArrayList<>();
+        if (!StringUtils.hasText(appId)) {
+            missing.add("payment.wechat.app-id");
+        }
+        if (!StringUtils.hasText(mchId)) {
+            missing.add("payment.wechat.mch-id");
+        }
+        if (!StringUtils.hasText(apiV3Key)) {
+            missing.add("payment.wechat.api-key");
+        }
+        if (!StringUtils.hasText(privateKeyPath)) {
+            missing.add("payment.wechat.private-key-path");
+        }
+        if (!StringUtils.hasText(certificatePath)) {
+            missing.add("payment.wechat.certificate-path");
+        }
+        if (!StringUtils.hasText(notifyUrl)) {
+            missing.add("payment.wechat.notify-url");
+        }
+        return missing;
     }
 }

@@ -19,7 +19,9 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -295,5 +297,27 @@ public class StripeStrategy implements PaymentStrategy {
     @Override
     public PaymentMethod getPaymentMethod() {
         return PaymentMethod.STRIPE;
+    }
+
+    /**
+     * Stripe 必备配置：API 密钥、Webhook 签名密钥、结账成功/取消回跳地址。
+     * 缺 webhook-secret 会导致所有回调验签失败（付款成功但不发货）。
+     */
+    @Override
+    public List<String> missingConfig() {
+        List<String> missing = new ArrayList<>();
+        if (apiKey == null || apiKey.isEmpty()) {
+            missing.add("payment.stripe.api-key");
+        }
+        if (webhookSecret == null || webhookSecret.isEmpty()) {
+            missing.add("payment.stripe.webhook-secret");
+        }
+        if (successUrl == null || successUrl.isEmpty()) {
+            missing.add("payment.stripe.success-url");
+        }
+        if (cancelUrl == null || cancelUrl.isEmpty()) {
+            missing.add("payment.stripe.cancel-url");
+        }
+        return missing;
     }
 }

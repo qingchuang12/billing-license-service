@@ -2,20 +2,23 @@ package com.billing.license.service.payment.strategy;
 
 import com.billing.license.entity.Order;
 
+import java.util.List;
 import java.util.Map;
 
 /**
  * 支付策略接口 - 统一所有支付渠道的实现
- * 
+ *
  * 国内支付：
  * - 支付宝
  * - 微信支付
- * - 云闪付/银联
- * 
+ *
  * 国外支付：
  * - Paddle (Merchant of Record, 处理税务)
  * - Stripe (信用卡、Apple Pay、Google Pay)
  * - PayPal (海外钱包用户)
+ *
+ * 渠道可用性由 {@link #missingConfig()} 与 {@link #isConfigured()} 自描述，
+ * 供渠道启用开关、启动配置自检、管理端自查接口统一消费（避免各处重复判定规则）。
  */
 public interface PaymentStrategy {
 
@@ -59,6 +62,29 @@ public interface PaymentStrategy {
      * @return 支付方式枚举
      */
     PaymentMethod getPaymentMethod();
+
+    /**
+     * 缺失的关键配置项名称列表（使用完整配置项名，如 {@code payment.alipay.private-key}）。
+     *
+     * <p>实现类需声明「要真正跑通该渠道所必需」的配置：通常是密钥/商户号/应用 ID 等，
+     * 缺任意一项都会在真实调用时失败。配置齐全时返回空列表（不得返回 null）。
+     *
+     * <p>本方法是渠道可用性的唯一事实源：设为抽象方法，强制新增渠道时必须显式声明其配置项，
+     * 避免新渠道漏声明而被自动判定为「已配置」从而错误启用。
+     *
+     * @return 缺失配置项名列表；齐全时为空列表
+     */
+    List<String> missingConfig();
+
+    /**
+     * 该渠道关键配置是否齐全（可直接调用渠道 API）。基于 {@link #missingConfig()} 判定。
+     *
+     * @return true 表示配置齐全
+     */
+    default boolean isConfigured() {
+        List<String> missing = missingConfig();
+        return missing == null || missing.isEmpty();
+    }
 
     /**
      * 退款（管理员发起或平台退款回调）

@@ -12,7 +12,7 @@ spring:
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
-      # H3：生产环境 schema 由 Flyway 全权管理，Hibernate 仅做校验，禁止自动改表（避免与应用迁移漂移）
+      # H3：生产环境 schema 由 Flyway 全权管理，Hibernate 仅做校验，禁止自动改表（避免与迁移脚本漂移）
       ddl-auto: validate
     show-sql: false
     properties:
@@ -36,70 +36,107 @@ spring:
         from-address: ${MAIL_FROM_ADDRESS:noreply@billing.com}
   api-docs:
     enabled: true
-# Billing & License Configuration
+
+# 计费与 License 配置
 billing:
-  # Signature algorithm: ED25519, ES256, ES384, ES512, RS256, RS384, RS512
+  # License 签名算法：ED25519, ES256, ES384, ES512, RS256, RS384, RS512
   signature-algorithm: ED25519
-  # Private key path (for signing licenses)
+  # 私钥路径（用于签发 License）
   private-key-path: ${PRIVATE_KEY_PATH:/keys/private.key}
-  # Public key path (distributed to clients for verification)
+  # 公钥路径（分发给客户端用于验证 License）
   public-key-path: ${PUBLIC_KEY_PATH:/keys/public.key}
-  # License expiration check interval (hours)
+  # License 过期检查间隔（小时）
   license-check-interval-hours: 24
-  # Default license duration days
+  # 默认 License 有效期（天）
   default-license-duration-days: 365
   # H8：是否信任反向代理注入的 X-Forwarded-For 作为客户端真实 IP。
   # 默认 false（仅按 TCP remoteAddr 限流），避免攻击者伪造 XFF 绕过限流/风控。
   # 仅在确知前方是可信代理（如本服务的 ingress/gateway）时置 true。
   trust-x-forwarded-for: ${BILLING_TRUST_XFF:false}
   support-email: ${SUPPORT_EMAIL:support@company.com}
-# Payment Provider Configuration
-payment:
-  # Default provider: stripe, paypal, alipay, wechat_pay, paddle
-  provider: stripe
-  
-  # Alipay Configuration (Domestic China)
-  alipay:
-    app-id: ${ALIPAY_APP_ID:}
-    private-key: ${ALIPAY_PRIVATE_KEY:}
-    public-key: ${ALIPAY_PUBLIC_KEY:}
-    notify-url: ${ALIPAY_NOTIFY_URL:https://your-domain.com/api/webhooks/alipay}
-    return-url: ${ALIPAY_RETURN_URL:https://your-domain.com/payment/return}
-    gateway-url: ${ALIPAY_GATEWAY_URL:https://openapi.alipay.com/gateway.do}
-  
-  # WeChat Pay Configuration (Domestic China)
-  wechat:
-    app-id: ${WECHAT_APP_ID:}
-    mch-id: ${WECHAT_MCH_ID:}
-    api-key: ${WECHAT_API_KEY:}
-    private-key-path: ${WECHAT_PRIVATE_KEY_PATH:/keys/wechat/apiclient_key.pem}
-    certificate-path: ${WECHAT_CERT_PATH:/keys/wechat/apiclient_cert.pem}
-    notify-url: ${WECHAT_NOTIFY_URL:https://your-domain.com/api/webhooks/wechat}
-  
-  # Stripe Configuration (International)
-  stripe:
-    api-key: ${STRIPE_API_KEY:sk_test_xxx}
-    webhook-secret: ${STRIPE_WEBHOOK_SECRET:whsec_xxx}
-    success-url: ${STRIPE_SUCCESS_URL:https://your-domain.com/payment/success}
-    cancel-url: ${STRIPE_CANCEL_URL:https://your-domain.com/payment/cancel}
-  
-  # Paddle Configuration (International, SaaS subscriptions)
-  paddle:
-    vendor-id: ${PADDLE_VENDOR_ID:}
-    api-key: ${PADDLE_API_KEY:}
-    environment: ${PADDLE_ENVIRONMENT:https://sandbox-api.paddle.com}
-    webhook-secret: ${PADDLE_WEBHOOK_SECRET:}
-  
-  # PayPal Configuration (International)
-  paypal:
-    client-id: ${PAYPAL_CLIENT_ID:}
-    client-secret: ${PAYPAL_CLIENT_SECRET:}
-    environment: ${PAYPAL_ENVIRONMENT:https://api-m.sandbox.paypal.com}
-    webhook-id: ${PAYPAL_WEBHOOK_ID:}
-    return-url: ${PAYPAL_RETURN_URL:https://your-domain.com/payment/return}
-    cancel-url: ${PAYPAL_CANCEL_URL:https://your-domain.com/payment/cancel}
 
-# KMS Configuration (本地文件 / 云 KMS 按 kms.provider 切换，仅一个实现生效)
+# 支付渠道配置
+# 说明：多渠道可「同时启用并存」，互不冲突。下单时由客户端传入的 provider 决定走哪个渠道
+# （可选值：alipay / wechat_pay / stripe / paddle / paypal），
+# 各渠道的回调入口固定为 /api/webhooks/{alipay,wechat,stripe,paddle,paypal}。
+payment:
+  # 启用的支付渠道（逗号分隔，大小写不敏感，空格会被忽略）
+  # 例：PAYMENT_ENABLED_CHANNELS=stripe,alipay
+  # 留空（默认）= 自动判定：关键配置齐全的渠道自动启用，缺配置的自动禁用
+  # 显式配置时以本项为准；渠道名写错会直接启动失败（fail-fast），避免渠道莫名不可用
+  # 启动日志会打印各渠道自检报告，也可调 GET /api/admin/payment-channels 在线查询
+  enabled-channels: ${PAYMENT_ENABLED_CHANNELS:}
+
+  # 支付宝（国内）
+  alipay:
+    # 开放平台应用 ID（AppID）
+    app-id: ${ALIPAY_APP_ID:}
+    # 商户应用私钥（RSA2，PKCS8），用于下单请求签名
+    private-key: ${ALIPAY_PRIVATE_KEY:}
+    # 支付宝公钥，用于异步通知验签（不是商户公钥，勿填错）
+    public-key: ${ALIPAY_PUBLIC_KEY:}
+    # 异步通知地址：默认由 app.base-url 派生，需与支付宝后台配置的 Notify URL 一致
+    notify-url: ${ALIPAY_NOTIFY_URL:${app.base-url}/api/webhooks/alipay}
+    # 网页支付完成后的回跳地址
+    return-url: ${ALIPAY_RETURN_URL:${app.base-url}/payment/return}
+    # 网关地址（生产固定为 openapi.alipay.com；沙箱为 openapi-sandbox.dl.alipaydev.com）
+    gateway-url: ${ALIPAY_GATEWAY_URL:https://openapi.alipay.com/gateway.do}
+    # 签名类型：RSA2（SHA256withRSA），与支付宝后台保持一致
+    sign-type: ${ALIPAY_SIGN_TYPE:RSA2}
+
+  # 微信支付（国内，API v3）
+  wechat:
+    # 公众号/小程序 AppID
+    app-id: ${WECHAT_APP_ID:}
+    # 商户号（mchid）
+    mch-id: ${WECHAT_MCH_ID:}
+    # APIv3 密钥（32 字符），用于回调报文与平台证书的 AES-256-GCM 解密
+    api-key: ${WECHAT_API_KEY:}
+    # 商户 API 私钥文件路径（apiclient_key.pem），用于上行请求签名
+    private-key-path: ${WECHAT_PRIVATE_KEY_PATH:/keys/wechat/apiclient_key.pem}
+    # 商户证书文件路径（apiclient_cert.pem），用于提取商户证书序列号
+    certificate-path: ${WECHAT_CERT_PATH:/keys/wechat/apiclient_cert.pem}
+    # 回调地址：默认由 app.base-url 派生，需与商户平台配置的回调地址一致
+    notify-url: ${WECHAT_NOTIFY_URL:${app.base-url}/api/webhooks/wechat}
+
+  # Stripe（国际信用卡 / Apple Pay / Google Pay）
+  stripe:
+    # API 密钥（sk_test_xxx 测试 / sk_live_xxx 生产）
+    api-key: ${STRIPE_API_KEY:}
+    # Webhook 签名密钥（whsec_xxx），缺失会导致所有回调验签失败（收钱不发货）
+    webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
+    # 结账成功回跳地址（会自动追加 ?session_id={CHECKOUT_SESSION_ID}）
+    success-url: ${STRIPE_SUCCESS_URL:${app.base-url}/payment/success}
+    # 结账取消回跳地址
+    cancel-url: ${STRIPE_CANCEL_URL:${app.base-url}/payment/cancel}
+
+  # Paddle（国际，Merchant of Record，代收代缴税费）
+  paddle:
+    # 卖家 ID / Vendor ID
+    vendor-id: ${PADDLE_VENDOR_ID:}
+    # Paddle API Key
+    api-key: ${PADDLE_API_KEY:}
+    # API 地址（沙箱 https://sandbox-api.paddle.com / 生产 https://api.paddle.com）
+    environment: ${PADDLE_ENVIRONMENT:https://sandbox-api.paddle.com}
+    # Webhook 签名密钥，用于 HMAC-SHA256 验签（Paddle-Signature 头的 ts/h1）
+    webhook-secret: ${PADDLE_WEBHOOK_SECRET:}
+
+  # PayPal（国际钱包）
+  paypal:
+    # 应用 Client ID
+    client-id: ${PAYPAL_CLIENT_ID:}
+    # 应用 Client Secret
+    client-secret: ${PAYPAL_CLIENT_SECRET:}
+    # API 地址（沙箱 https://api-m.sandbox.paypal.com / 生产 https://api-m.paypal.com）
+    environment: ${PAYPAL_ENVIRONMENT:https://api-m.sandbox.paypal.com}
+    # Webhook ID，回调验签必需（在 PayPal 后台创建 Webhook 后获得）
+    webhook-id: ${PAYPAL_WEBHOOK_ID:}
+    # 支付完成回跳地址
+    return-url: ${PAYPAL_RETURN_URL:${app.base-url}/payment/return}
+    # 支付取消回跳地址
+    cancel-url: ${PAYPAL_CANCEL_URL:${app.base-url}/payment/cancel}
+
+# KMS 配置（本地文件 / 云 KMS 按 kms.provider 切换，仅一个实现生效）
 kms:
   # provider: local(默认) | aws | aliyun  （azure 暂未实现）
   provider: ${KMS_PROVIDER:local}
@@ -121,14 +158,17 @@ kms:
   azure:
     vault-name: ${AZURE_VAULT_NAME:}
 
-# Security
+# 安全配置
 security:
   api-key-header: X-API-Key
   # 管理端密钥：不设默认值，缺失即启动失败。多个密钥用英文逗号分隔。
   admin-api-keys: ${ADMIN_API_KEYS}
 
-# 应用对外基址，用于拼接各渠道回调/回跳地址
+# 应用对外基址
 app:
+  # 【上线必配】公网可达的对外基址，用于拼接各渠道的回调与回跳地址。
+  # 留空/仍为 localhost 时，渠道回调无法送达，会导致「用户已付款但订单不发货」。
+  # 例：APP_BASE_URL=https://pay.example.com
   base-url: ${APP_BASE_URL:https://localhost:8080}
   # H9：CORS 允许的源头（逗号分隔）。留空表示不开放跨域（纯服务端 API 默认关闭）。
   # 部署前端独立域名时再显式填入，如 https://shop.example.com

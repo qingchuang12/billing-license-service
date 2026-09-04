@@ -2,7 +2,7 @@
 
 统一的计费与许可证管理服务，基于 **Java 21 + Spring Boot 4.0.6**（JPA/Hibernate + PostgreSQL + Flyway + 5 家支付渠道 + KMS）构建，为桌面端 exe 工具提供 license 签发、兑换、换机与计费/退款后端。
 
-> 生产就绪度、整改清单与已知风险见 [`plan.md`](./plan.md)（v2.1，当前为**可发布候选**状态：P0/P1(除 H7)/M4 全绿，80 测试通过）。
+> 生产就绪度、整改清单与已知风险见 [`plan.md`](./archive/plan.md)（v2.1，当前为**可发布候选**状态：P0/P1(除 H7)/M4 全绿，98 测试通过）。
 
 ## 功能特性
 
@@ -244,7 +244,7 @@ billing-license-service/
 │   ├── application.yml       # 主配置（含 management/actuator、security、payment、kms）
 │   ├── application-docker.yml
 │   └── db/migration/         # Flyway 迁移脚本 V1–V6
-├── src/test/                 # 单元测试 + 集成测试（80 测试，含 @SpringBootTest 上下文闸门）
+├── src/test/                 # 单元测试 + 集成测试（98 测试，含 @SpringBootTest 上下文闸门）
 ├── scripts/{db,deploy,ops}/  # 运维脚本（package/run/healthcheck/show_migrations…）
 └── pom.xml                   # Maven 配置（Java 21 + Spring Boot 4.0.6）
 ```
@@ -331,4 +331,4 @@ Payload 包含：
 mvn test
 ```
 
-当前共 **80 个测试，0 失败 0 错误**（含退款、限流淘汰、支付失败反馈、异常脱敏、订单状态机、ApplicationContext 加载与 `healthEndpoint` Bean 装配）。
+当前共 **98 个测试，0 失败 0 错误**（含退款、限流淘汰、支付失败反馈、异常脱敏、订单状态机、ApplicationContext 加载与 `healthEndpoint` Bean 装配）。

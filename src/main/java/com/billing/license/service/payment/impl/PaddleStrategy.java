@@ -20,8 +20,10 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -52,6 +54,24 @@ public class PaddleStrategy implements PaymentStrategy {
         return base + path;
     }
 
+    /**
+     * H7 修复：Paddle Billing v2 的 unitPrice.amount 与退款 amount 均为「最小货币单位整数串」
+     * （如 "999" = $9.99，官方文档与多个集成指南确认）。出站必须 ×100 转整数串，
+     * 与入站 parseWebhookPayload 的 ÷100 解析保持一致。此前误用主单位小数 "9.99"，
+     * 会导致 Paddle 按 9.99 分计费或拒单。
+     */
+    private static String toMinorUnitString(BigDecimal amt) {
+        return amt.multiply(new BigDecimal("100")).setScale(0, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private static String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
     @Override
     public PaymentResponse createPayment(Order order) {
         logger.info("创建 Paddle 支付订单：orderId={}, amount={}", order.getOrderNo(), order.getAmount());
@@ -62,20 +82,7 @@ public class PaddleStrategy implements PaymentStrategy {
         response.setPaymentMethod(PaymentMethod.PADDLE.name());
 
         try {
-            Map<String, Object> items = new HashMap<>();
-            items.put("quantity", 1);
-            items.put("price", new HashMap<String, Object>() {{
-                put("description", order.getTitle() != null ? order.getTitle() : "License");
-                put("unitPrice", new HashMap<String, Object>() {{
-                    put("amount", order.getAmount().setScale(2, RoundingMode.HALF_UP).toString());
-                    put("currencyCode", order.getCurrency());
-                }});
-            }});
-            Map<String, Object> customData = new HashMap<>();
-            customData.put("order_id", order.getOrderNo());
-            Map<String, Object> body = new HashMap<>();
-            body.put("items", java.util.List.of(items));
-            body.put("customData", customData);
+            Map<String, Object> body = buildCreateTransactionBody(order);
 
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
@@ -119,6 +126,27 @@ public class PaddleStrategy implements PaymentStrategy {
         return response;
     }
 
+    /**
+     * 构建 Paddle 创建交易请求体（提取为包级可测方法，锁定金额单位为最小货币单位整数串）。
+     */
+    Map<String, Object> buildCreateTransactionBody(Order order) {
+        Map<String, Object> items = new HashMap<>();
+        items.put("quantity", 1);
+        items.put("price", new HashMap<String, Object>() {{
+            put("description", order.getTitle() != null ? order.getTitle() : "License");
+            put("unitPrice", new HashMap<String, Object>() {{
+                put("amount", toMinorUnitString(order.getAmount()));
+                put("currencyCode", order.getCurrency());
+            }});
+        }});
+        Map<String, Object> customData = new HashMap<>();
+        customData.put("order_id", order.getOrderNo());
+        Map<String, Object> body = new HashMap<>();
+        body.put("items", java.util.List.of(items));
+        body.put("customData", customData);
+        return body;
+    }
+
     @Override
     public PaymentStatus queryPayment(String paymentId) {
         logger.info("查询 Paddle 支付状态：paymentId={}", paymentId);
@@ -156,39 +184,52 @@ public class PaddleStrategy implements PaymentStrategy {
             logger.error("Paddle webhook-secret 未配置，拒绝回调（需配置后重启）");
             return false;
         }
+        // Paddle v2 将 ts 与 h1 都放在 Paddle-Signature 请求头：ts=...;h1=...
+        // WebhookController 已把该头作为 signature 参数传入；headers 仅作兜底。
+        String sigHeader = (signature != null && !signature.isEmpty()) ? signature
+                : (headers != null ? headers.get("paddle-signature") : null);
+        if (sigHeader == null || sigHeader.isEmpty()) {
+            logger.error("Paddle-Signature 头缺失，拒绝回调");
+            return false;
+        }
         try {
-            String timestamp = headers.get("Paddle-Timestamp");
-            String paddleSignature = headers.get("Paddle-Signature"); // 格式：ts=...;h1=... 或 Base64(ts + ':' + hmac)
-            if (timestamp == null || paddleSignature == null) {
+            // 解析 ts 与 h1（官方格式：ts=...;h1=<hex>）
+            String ts = null;
+            String h1 = null;
+            for (String part : sigHeader.split(";")) {
+                int eq = part.indexOf('=');
+                if (eq < 0) continue;
+                String k = part.substring(0, eq).trim();
+                String v = part.substring(eq + 1).trim();
+                if ("ts".equals(k)) ts = v;
+                else if ("h1".equals(k)) h1 = v;
+            }
+            if (ts == null || h1 == null) {
+                logger.error("Paddle-Signature 格式非法（缺 ts/h1）：{}", sigHeader);
                 return false;
             }
 
             // w8：时间戳新鲜度校验（±5min 重放防护）
             try {
-                long ts = Long.parseLong(timestamp);
+                long tsSec = Long.parseLong(ts);
                 long nowSec = System.currentTimeMillis() / 1000;
-                if (Math.abs(nowSec - ts) > 300) {
-                    logger.error("Paddle 回调时间戳过期（重放风险）：ts={}, now={}", ts, nowSec);
+                if (Math.abs(nowSec - tsSec) > 300) {
+                    logger.error("Paddle 回调时间戳过期（重放风险）：ts={}, now={}", tsSec, nowSec);
                     return false;
                 }
             } catch (NumberFormatException e) {
-                logger.error("Paddle 回调时间戳格式非法：{}", timestamp);
+                logger.error("Paddle 回调时间戳格式非法：{}", ts);
                 return false;
             }
 
-            // Paddle v2 推荐做法：timestamp + ':' + payload -> HMAC-SHA256(webhookSecret) -> Base64
-            String message = timestamp + ":" + payload;
+            // Paddle v2：HMAC-SHA256(ts:payload, webhookSecret) 的十六进制字符串，与 h1 比较
+            // 注意 h1 是 hex 而非 Base64（旧实现误用 Base64 导致所有合法回调被拒）。
+            String message = ts + ":" + payload;
             Mac mac = Mac.getInstance("HMACSHA256");
             mac.init(new SecretKeySpec(webhookSecret.getBytes(StandardCharsets.UTF_8), "HMACSHA256"));
             byte[] hash = mac.doFinal(message.getBytes(StandardCharsets.UTF_8));
-            String expected = Base64.getEncoder().encodeToString(hash);
-
-            // 兼容两种传入格式：纯 Base64 或 "ts=...;h1=..."
-            if (paddleSignature.contains("h1=")) {
-                String h1 = paddleSignature.substring(paddleSignature.indexOf("h1=") + 3).trim();
-                return h1.equals(expected);
-            }
-            return paddleSignature.equals(expected);
+            String expected = bytesToHex(hash);
+            return h1.equalsIgnoreCase(expected);
         } catch (Exception e) {
             logger.error("Paddle 签名验证异常", e);
             return false;
@@ -305,11 +346,10 @@ public class PaddleStrategy implements PaymentStrategy {
     /**
      * H5：Paddle v2 退款（POST /transactions/{id}/refund）。
      * 未配置或失败返回 false（绝不谎报成功）；渠道返回 data 视为受理成功返回 true。
-     * 注：Paddle 金额在 REST 接口以「主单位十进制字符串」表示（如 "10.00"）；
-     * H7 要求用沙箱实测退款金额格式与结果映射，本实现为最佳努力、待联调确认。
+     * 注：Paddle 退款 amount 同样为最小货币单位整数串（与创建一致），故走 toMinorUnitString。
      */
     @Override
-    public boolean refundPayment(Order order, String paymentId, java.math.BigDecimal amount) {
+    public boolean refundPayment(Order order, String paymentId, BigDecimal amount) {
         if (apiKey == null || apiKey.isEmpty()) {
             logger.warn("Paddle 未配置，无法发起退款：orderNo={}", order.getOrderNo());
             return false;
@@ -317,9 +357,7 @@ public class PaddleStrategy implements PaymentStrategy {
         try {
             String txnId = (paymentId != null && paymentId.startsWith("paddle_"))
                     ? paymentId.substring("paddle_".length()) : paymentId;
-            Map<String, Object> refundBody = new HashMap<>();
-            refundBody.put("amount", amount.setScale(2, RoundingMode.HALF_UP).toString());
-            refundBody.put("reason", "管理员退款");
+            Map<String, Object> refundBody = buildRefundBody(amount);
 
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
@@ -343,8 +381,37 @@ public class PaddleStrategy implements PaymentStrategy {
         }
     }
 
+    /**
+     * 构建 Paddle 退款请求体（提取为包级可测方法，锁定金额单位为最小货币单位整数串）。
+     */
+    Map<String, Object> buildRefundBody(BigDecimal amount) {
+        Map<String, Object> refundBody = new HashMap<>();
+        refundBody.put("amount", toMinorUnitString(amount));
+        refundBody.put("reason", "管理员退款");
+        return refundBody;
+    }
+
     @Override
     public PaymentMethod getPaymentMethod() {
         return PaymentMethod.PADDLE;
+    }
+
+    /**
+     * Paddle 必备配置：Vendor ID（或 Seller ID）、API Key、Webhook 签名密钥。
+     * webhook-secret 缺失会导致所有 Paddle 回调验签失败（ts/h1 无法计算）。
+     */
+    @Override
+    public List<String> missingConfig() {
+        List<String> missing = new ArrayList<>();
+        if (vendorId == null || vendorId.isEmpty()) {
+            missing.add("payment.paddle.vendor-id");
+        }
+        if (apiKey == null || apiKey.isEmpty()) {
+            missing.add("payment.paddle.api-key");
+        }
+        if (webhookSecret == null || webhookSecret.isEmpty()) {
+            missing.add("payment.paddle.webhook-secret");
+        }
+        return missing;
     }
 }
