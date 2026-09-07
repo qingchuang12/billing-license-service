@@ -1,5 +1,13 @@
 # 上线就绪计划 · billing-license-service v1.0.0
 
+> **[已归档 2026-09-07]** 本 plan 为 2026-08-23 的历史快照，原位于 `doc/plan-launch-1.0.md`（旧文档目录）。其全部任务卡已被后续 plan 覆盖完成：
+> - 卡1 配置与密钥治理 → `application.yml` 已无写死口令（`DB_PASSWORD` 无默认值 fail-fast）、`ddl-auto: validate`（H3）
+> - 卡2 部署可运行性 → B20 容器化（Dockerfile 多阶段 + compose 数据源/密钥清理 + application-docker.yml）
+> - 卡3 安全加固 → H8/H9/H10/H11/H13（限流淘汰、CORS/CSRF、脱敏 DTO、常量时间比较+审计、Actuator 探针）
+> - 卡4 文档校正 → docs/ 文档体系重建（`docs/README.md` 为项目入口）
+> - 卡0/卡5 基线验证与发布收尾 → `docs/archive/plan.md`（v2.2）结论：可发布候选
+> 未完成的后续验证闸门（真实沙箱联调/压测/客户端验签/渗透测试）现由活动 [`../plan.md`](../plan.md) 承接。
+
 > 主调度：WorkBuddy（idea-dev-steward）｜生成类任务首选 marscode/deepseek-v4-pro，降级 hy3（WorkBuddy 自身）；操作经 JetBrains MCP。
 > 外部模型别名待 IDEA 运行时核验；若 P1–P4 全不可达，由 hy3 生成并标注。
 > 版本：v1.0 (2026-08-23 22:39)
