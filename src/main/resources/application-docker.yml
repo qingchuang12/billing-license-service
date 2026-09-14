@@ -13,3 +13,7 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+    # 与 application.yml 保持一致：启用 baseline-on-migrate，
+    # 让已有表（无 flyway_schema_history）的库在容器启动时可 baseline 后增量迁移，而非中止。
+    # 此处同步是为兑现「docker 护栏不得与主配置漂移」的约定。
+    baseline-on-migrate: true

@@ -4,11 +4,11 @@ spring:
   application:
     name: billing-license-service
   datasource:
-    # 容器化部署时需通过 DB_URL 指向 postgres 服务名，勿用 127.0.0.1
+    # 容器化部署时需通过 DB_URL 指向 postgres 服务名，勿用 127.0.0.1  ssh -N -L 10001:127.0.0.1:1001 root@8.129.233.160 -p 33 -o ServerAliveInterval=30 -o ServerAliveCountMax=3
     url: ${DB_URL:jdbc:postgresql://127.0.0.1:10001/license}
     username: ${DB_USERNAME:license}
     # 密钥类配置不设默认值：缺失即启动失败（fail-fast），避免带着弱口令/默认口令上线
-    password: ${DB_PASSWORD}
+    password: ${DB_PASSWORD:XGTjfWhkfd3QXJA7}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -20,6 +20,10 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
   flyway:
     enabled: true
+    # 现有库由 Flyway 之外（Hibernate ddl-auto / 手工）建表、无历史表，
+    # 启动会因「非空 schema 无 history」中止。baseline 让 Flyway 记 baseline=v1、
+    # 跳过 V1、跑 V2-V7。仅在现有表与 V1 一致时干净；若漂移，V2-V7 会报列已存在/缺失。
+    baseline-on-migrate: true
     locations: classpath:db/migration
   mail:
     host: ${MAIL_HOST:smtp.gmail.com}
@@ -34,6 +38,10 @@ spring:
             enable: true
             required: true
         from-address: ${MAIL_FROM_ADDRESS:noreply@billing.com}
+
+# Springdoc OpenAPI 文档开关：必须在顶层 springdoc 命名空间下才生效；
+# 原误写在 spring: 下（变成 spring.api-docs.enabled，springdoc 不识别，等于无效配置）。
+springdoc:
   api-docs:
     enabled: true
 
@@ -62,7 +70,7 @@ billing:
 payment:
   # 启用的支付渠道（逗号分隔，大小写不敏感，空格会被忽略）
   # 例：PAYMENT_ENABLED_CHANNELS=stripe,alipay
-  # 留空（默认）= 自动判定：关键配置齐全的渠道自动启用，缺配置的自动禁用
+  # 默认留空 = 自动判定：关键配置齐全的渠道自动启用，缺配置的自动禁用（本地未配任何渠道也能启动，便于联调/查看文档）
   # 显式配置时以本项为准；渠道名写错会直接启动失败（fail-fast），避免渠道莫名不可用
   # 启动日志会打印各渠道自检报告，也可调 GET /api/admin/payment-channels 在线查询
   enabled-channels: ${PAYMENT_ENABLED_CHANNELS:}
@@ -162,7 +170,7 @@ kms:
 security:
   api-key-header: X-API-Key
   # 管理端密钥：不设默认值，缺失即启动失败。多个密钥用英文逗号分隔。
-  admin-api-keys: ${ADMIN_API_KEYS}
+  admin-api-keys: ${ADMIN_API_KEYS:sjsasdakdjalahldajsd}
 
 # 应用对外基址
 app:
