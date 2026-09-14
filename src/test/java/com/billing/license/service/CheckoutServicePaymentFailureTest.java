@@ -2,14 +2,10 @@ package com.billing.license.service;
 
 import com.billing.license.dto.SelectProviderRequest;
 import com.billing.license.entity.CheckoutSession;
+import com.billing.license.entity.Currency;
 import com.billing.license.entity.Order;
 import com.billing.license.exception.BusinessException;
-import com.billing.license.repository.CheckoutSessionRepository;
-import com.billing.license.repository.LicenseRepository;
-import com.billing.license.repository.PaymentRepository;
-import com.billing.license.repository.OrderRepository;
-import com.billing.license.repository.ProductRepository;
-import com.billing.license.repository.RedeemCodeRepository;
+import com.billing.license.repository.*;
 import com.billing.license.service.payment.PaymentService;
 import com.billing.license.service.payment.impl.PaymentServiceFactory;
 import com.billing.license.service.payment.strategy.PaymentMethod;
@@ -21,13 +17,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * CheckoutService.selectProvider 支付失败反馈测试（H6）。
@@ -60,7 +57,7 @@ class CheckoutServicePaymentFailureTest {
     @Test
     void selectProvider_shouldThrow_whenPaymentCreationFailed() {
         Order order = Order.builder().id(UUID.randomUUID()).orderNumber("ORD-1")
-                .totalAmount(new BigDecimal("99.00")).currency("CNY").build();
+                .totalAmount(new BigDecimal("99.00")).currency(Currency.CNY).build();
         CheckoutSession session = CheckoutSession.builder()
                 .checkoutId("chk_1").orderId(order.getId()).orderNumber("ORD-1").build();
 
@@ -82,7 +79,7 @@ class CheckoutServicePaymentFailureTest {
     @Test
     void selectProvider_shouldSucceed_whenPaymentCreated() {
         Order order = Order.builder().id(UUID.randomUUID()).orderNumber("ORD-1")
-                .totalAmount(new BigDecimal("99.00")).currency("CNY").build();
+                .totalAmount(new BigDecimal("99.00")).currency(Currency.CNY).build();
         CheckoutSession session = CheckoutSession.builder()
                 .checkoutId("chk_1").orderId(order.getId()).orderNumber("ORD-1").build();
 

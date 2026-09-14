@@ -23,4 +23,11 @@ public interface RedeemCodeRepository extends JpaRepository<RedeemCode, UUID> {
 
     // B13：按订单号查询已生成的兑换码，供轮询接口幂等返回
     List<RedeemCode> findByOrderId(String orderId);
+
+    /**
+     * I6：按产品 SKU + 状态检索兑换码（参数传 null 表示该维度不过滤），供管理端导出与对账。
+     */
+    @Query("SELECT r FROM RedeemCode r WHERE (:sku IS NULL OR r.product.sku = :sku) "
+        + "AND (:status IS NULL OR r.status = :status) ORDER BY r.createdAt DESC")
+    List<RedeemCode> search(@Param("sku") String sku, @Param("status") RedeemCode.RedeemCodeStatus status);
 }

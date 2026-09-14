@@ -5,18 +5,21 @@ import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentResponse;
 import com.billing.license.service.payment.strategy.PaymentStatus;
 import com.billing.license.service.payment.strategy.WebhookPayload;
-import java.math.RoundingMode;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
-import jakarta.annotation.PostConstruct;
-
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 import java.io.ByteArrayInputStream;
 import java.math.BigDecimal;
-import java.math.BigInteger;
+import java.math.RoundingMode;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -33,17 +36,8 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import javax.crypto.Cipher;
-import javax.crypto.spec.GCMParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * 微信支付策略实现 (API v3)
@@ -61,7 +55,7 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
     private static final Logger logger = LoggerFactory.getLogger(WechatPayStrategy.class);
     private static final ObjectMapper objectMapper = new ObjectMapper();
     private static final String WECHAT_PAY_URL = "https://api.mch.weixin.qq.com/v3/pay/transactions/native";
-    private static final String WECHAT_QUERY_URL = "https://api.mch.weixin.qq.com/v3/pay/transactions/out-trade-no/%s/query";
+    private static final String WECHAT_QUERY_URL = "https://api.mch.weixin.qq.com/v3/pay/transactions/out-trade-no/%s";
     private static final String WECHAT_CERT_URL = "https://api.mch.weixin.qq.com/v3/certificates";
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX");
     /** 回调验签时间戳允许的最大偏移（±5 分钟，防重放），单位毫秒 */
@@ -246,8 +240,11 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
         try {
             String outTradeNo = paymentId.replaceFirst("wechat_", "");
             HttpClient client = HttpClient.newHttpClient();
+            // C4：微信查单接口为 GET /v3/pay/transactions/out-trade-no/{out_trade_no}?mchid={mchId}
+            // （无 /query 后缀，官方文档核实）；签名串须含查询参数。
+            String queryPath = "/v3/pay/transactions/out-trade-no/" + outTradeNo + "?mchid=" + mchId;
             String queryUrl = String.format(WECHAT_QUERY_URL, outTradeNo);
-            String auth = buildAuthorization("GET", "/v3/pay/transactions/out-trade-no/" + outTradeNo + "/query", "");
+            String auth = buildAuthorization("GET", queryPath, "");
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(queryUrl + "?mchid=" + mchId))

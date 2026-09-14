@@ -6,10 +6,8 @@ import com.billing.license.entity.PaymentEvent;
 import com.billing.license.repository.OrderRepository;
 import com.billing.license.repository.PaymentEventRepository;
 import com.billing.license.repository.PaymentRepository;
-
 import com.billing.license.service.CheckoutService;
 import com.billing.license.service.LicenseService;
-import com.billing.license.service.subscription.SubscriptionService;
 import com.billing.license.service.RedeemCodeService;
 import com.billing.license.service.notification.EmailNotificationService;
 import com.billing.license.service.payment.impl.PaymentServiceFactory;
@@ -17,6 +15,10 @@ import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentStatus;
 import com.billing.license.service.payment.strategy.WebhookPayload;
 import com.billing.license.service.payment.util.AmountValidator;
+import com.billing.license.service.subscription.SubscriptionService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,13 +27,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * 统一 Webhook 控制器 - 处理所有支付渠道的回调
  */
+@Tag(name = "支付回调", description = "各渠道支付/订阅回调（公开端点，由各渠道策略自行验签、幂等、金额校验）")
 @RestController
 @RequestMapping("/api/webhooks")
 public class WebhookController {
@@ -80,10 +81,11 @@ public class WebhookController {
     /**
      * 支付宝回调
      */
+    @Operation(summary = "支付宝回调", description = "支付宝异步通知（sign 在表单参数中）；验签/金额校验失败返回对应 4xx")
     @PostMapping("/alipay")
     public ResponseEntity<String> alipayWebhook(
-            @RequestBody String payload,
-            @RequestHeader Map<String, String> headers) {
+            @Parameter(description = "支付宝原始回调报文（form-urlencoded）") @RequestBody String payload,
+            @Parameter(hidden = true) @RequestHeader Map<String, String> headers) {
         
         logger.info("收到支付宝 Webhook 回调");
 
@@ -99,10 +101,11 @@ public class WebhookController {
     /**
      * 微信支付回调
      */
+    @Operation(summary = "微信支付回调", description = "微信支付异步通知；成功返回 {\"code\":\"SUCCESS\"}，失败透传 4xx")
     @PostMapping("/wechat")
     public ResponseEntity<String> wechatWebhook(
-            @RequestBody String payload,
-            @RequestHeader Map<String, String> headers) {
+            @Parameter(description = "微信支付原始回调报文") @RequestBody String payload,
+            @Parameter(hidden = true) @RequestHeader Map<String, String> headers) {
 
         logger.info("收到微信 Webhook 回调");
 
@@ -123,11 +126,12 @@ public class WebhookController {
     /**
      * Stripe 回调
      */
+    @Operation(summary = "Stripe 回调", description = "Stripe 事件通知（Stripe-Signature 验签）；幂等、金额校验")
     @PostMapping("/stripe")
     public ResponseEntity<String> stripeWebhook(
-            @RequestBody String payload,
-            @RequestHeader(value = "Stripe-Signature", required = false) String signature,
-            @RequestHeader Map<String, String> headers) {
+            @Parameter(description = "Stripe 原始事件 JSON") @RequestBody String payload,
+            @Parameter(description = "Stripe-Signature 签名头") @RequestHeader(value = "Stripe-Signature", required = false) String signature,
+            @Parameter(hidden = true) @RequestHeader Map<String, String> headers) {
 
         logger.info("收到 Stripe Webhook 回调");
 
@@ -138,11 +142,12 @@ public class WebhookController {
     /**
      * Paddle 回调
      */
+    @Operation(summary = "Paddle 回调", description = "Paddle 事件通知（Paddle-Signature 验签）；含订阅生命周期事件")
     @PostMapping("/paddle")
     public ResponseEntity<String> paddleWebhook(
-            @RequestBody String payload,
-            @RequestHeader(value = "Paddle-Signature", required = false) String signature,
-            @RequestHeader Map<String, String> headers) {
+            @Parameter(description = "Paddle 原始事件 JSON") @RequestBody String payload,
+            @Parameter(description = "Paddle-Signature 签名头") @RequestHeader(value = "Paddle-Signature", required = false) String signature,
+            @Parameter(hidden = true) @RequestHeader Map<String, String> headers) {
 
         logger.info("收到 Paddle Webhook 回调");
 
@@ -153,11 +158,12 @@ public class WebhookController {
     /**
      * PayPal 回调
      */
+    @Operation(summary = "PayPal 回调", description = "PayPal 事件通知（Paypal-Transmission-Id 验签）")
     @PostMapping("/paypal")
     public ResponseEntity<String> paypalWebhook(
-            @RequestBody String payload,
-            @RequestHeader(value = "Paypal-Transmission-Id", required = false) String signature,
-            @RequestHeader Map<String, String> headers) {
+            @Parameter(description = "PayPal 原始事件 JSON") @RequestBody String payload,
+            @Parameter(description = "Paypal-Transmission-Id 传输 ID") @RequestHeader(value = "Paypal-Transmission-Id", required = false) String signature,
+            @Parameter(hidden = true) @RequestHeader Map<String, String> headers) {
 
         logger.info("收到 PayPal Webhook 回调");
 
@@ -233,7 +239,7 @@ public class WebhookController {
         if (payment == null) {
             logger.warn("支付记录不存在，尝试按订单号创建：paymentId={}", webhookData.getPaymentId());
         } else {
-            payment.setMethod(method.name());
+            payment.setMethod(method);
             paymentRepository.save(payment);
         }
 

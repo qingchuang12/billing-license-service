@@ -1,9 +1,9 @@
 package com.billing.license.dto;
 
-import lombok.Data;
-import lombok.Builder;
-import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 /**
  * 兑换码请求 DTO
@@ -24,6 +24,8 @@ public class RedeemCodeRequest {
     /** 客户端机器码（兑换时绑定到 License，架构十一.4） */
     private String machineId;
 
-    /** 客户端 IP（风控：高频兑换/暴力猜测限流，架构十七） */
+    /** 客户端 IP（风控：高频兑换/暴力猜测限流，架构十七）。
+     *  C10：禁止从请求体反序列化，避免攻击者伪造 IP 绕过限流；由 Controller 无条件用服务端解析值覆盖。 */
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String clientIp;
 }

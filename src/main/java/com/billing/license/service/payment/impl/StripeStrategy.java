@@ -77,7 +77,7 @@ public class StripeStrategy implements PaymentStrategy {
                     .addLineItem(SessionCreateParams.LineItem.builder()
                             .setQuantity(1L)
                             .setPriceData(SessionCreateParams.LineItem.PriceData.builder()
-                                    .setCurrency(order.getCurrency().toLowerCase())
+                                    .setCurrency(order.getCurrency().name().toLowerCase())
                                     .setUnitAmount(unitAmount)
                                     .setProductData(SessionCreateParams.LineItem.PriceData.ProductData.builder()
                                             .setName(order.getTitle() != null ? order.getTitle() : "License")

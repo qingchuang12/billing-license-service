@@ -4,11 +4,11 @@ spring:
   application:
     name: billing-license-service
   datasource:
-    # 容器化部署时需通过 DB_URL 指向 postgres 服务名，勿用 127.0.0.1  ssh -N -L 10001:127.0.0.1:1001 root@8.129.233.160 -p 33 -o ServerAliveInterval=30 -o ServerAliveCountMax=3
-    url: ${DB_URL:jdbc:postgresql://127.0.0.1:10001/license}
+    # 容器化部署时需通过 DB_URL 指向 postgres 服务名（compose 内为 postgres:5432），勿用 127.0.0.1
+    url: ${DB_URL:jdbc:postgresql://127.0.0.1:5432/license}
     username: ${DB_USERNAME:license}
     # 密钥类配置不设默认值：缺失即启动失败（fail-fast），避免带着弱口令/默认口令上线
-    password: ${DB_PASSWORD:XGTjfWhkfd3QXJA7}
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -22,7 +22,7 @@ spring:
     enabled: true
     # 现有库由 Flyway 之外（Hibernate ddl-auto / 手工）建表、无历史表，
     # 启动会因「非空 schema 无 history」中止。baseline 让 Flyway 记 baseline=v1、
-    # 跳过 V1、跑 V2-V7。仅在现有表与 V1 一致时干净；若漂移，V2-V7 会报列已存在/缺失。
+    # 跳过 V1、跑 V2-V8。仅在现有表与 V1 一致时干净；若漂移，V2-V8 会报列已存在/缺失。
     baseline-on-migrate: true
     locations: classpath:db/migration
   mail:
@@ -44,10 +44,18 @@ spring:
 springdoc:
   api-docs:
     enabled: true
+  swagger-ui:
+    # 禁止回退到内置 petstore 示例地址（配置拉取异常时 UI 会默认加载 petstore.json）
+    disable-swagger-default-url: true
+    # 显式指定文档地址，避免依赖 configUrl 发现
+    url: /v3/api-docs
 
 # 计费与 License 配置
 billing:
-  # License 签名算法：ED25519, ES256, ES384, ES512, RS256, RS384, RS512
+  # License 签名算法（实际支持集合，与 LocalKmsService / LicenseIssuer 实现对齐）：
+  #   local:  ED25519（默认，需 DER 包装的原始密钥，见 C11）、ES256（EC）、RS256（RSA）
+  #   aws:    ES256/ES384（需密钥类型与算法匹配，P-521 暂不支持，见 W17）
+  # 注：ES384/ES512/RS384/RS512 当前实现未覆盖，声明即失效，故不在此列出（w13 收敛）
   signature-algorithm: ED25519
   # 私钥路径（用于签发 License）
   private-key-path: ${PRIVATE_KEY_PATH:/keys/private.key}
@@ -170,7 +178,7 @@ kms:
 security:
   api-key-header: X-API-Key
   # 管理端密钥：不设默认值，缺失即启动失败。多个密钥用英文逗号分隔。
-  admin-api-keys: ${ADMIN_API_KEYS:sjsasdakdjalahldajsd}
+  admin-api-keys: ${ADMIN_API_KEYS}
 
 # 应用对外基址
 app:

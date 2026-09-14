@@ -52,9 +52,9 @@ public class PaymentService {
         payment.setAmount(order.getAmount());
         // w16：币种跟随订单币种（双币种场景），不再按 method.isDomestic() 推断
         payment.setCurrency(order.getCurrency());
-        payment.setMethod(method.name());
-        payment.setStatus(response.getStatus());
-        payment.setChannel(method.name());
+        payment.setMethod(method);
+        payment.setStatus(toStatus(response.getStatus()));
+        payment.setChannel(method);
         payment.setCreatedAt(LocalDateTime.now());
         
         if (response.getExtraParams() != null) {
@@ -89,7 +89,7 @@ public class PaymentService {
         
         if (paymentOpt.isPresent()) {
             Payment payment = paymentOpt.get();
-            payment.setStatus(status.name());
+            payment.setStatus(status);
             
             if (transactionId != null) {
                 payment.setTransactionId(transactionId);
@@ -110,5 +110,17 @@ public class PaymentService {
      */
     public Optional<Payment> getPaymentByPaymentId(String paymentId) {
         return paymentRepository.findByPaymentId(paymentId);
+    }
+
+    /** 渠道返回的状态字符串 → 枚举；未知/空返回 null（不阻断落库） */
+    private static PaymentStatus toStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return null;
+        }
+        try {
+            return PaymentStatus.valueOf(status);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 }

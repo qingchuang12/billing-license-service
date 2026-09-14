@@ -1,10 +1,10 @@
 package com.billing.license.entity;
 
 import jakarta.persistence.*;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -33,6 +33,7 @@ public class RedeemCode {
     
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
+    @Builder.Default
     private RedeemCodeStatus status = RedeemCodeStatus.UNUSED;
     
     @Column(name = "used_by")
@@ -45,9 +46,11 @@ public class RedeemCode {
     private LocalDateTime expiresAt;
     
     @Column(nullable = false)
+    @Builder.Default
     private Integer maxUses = 1;
     
     @Column(nullable = false)
+    @Builder.Default
     private Integer currentUses = 0;
     
     @Column(columnDefinition = "TEXT")

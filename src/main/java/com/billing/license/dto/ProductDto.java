@@ -1,9 +1,11 @@
 package com.billing.license.dto;
 
-import lombok.Data;
-import lombok.Builder;
-import lombok.NoArgsConstructor;
+import com.billing.license.entity.Currency;
+import com.billing.license.entity.Product;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 
@@ -30,10 +32,10 @@ public class ProductDto {
     private BigDecimal price;
     
     /** 货币类型，如 USD、CNY */
-    private String currency;
+    private Currency currency;
     
     /** 计费周期：ONE_TIME, MONTHLY, QUARTERLY, YEARLY, LIFETIME */
-    private String billingCycle;
+    private Product.BillingCycle billingCycle;
     
     /** License 有效期天数 */
     private Integer licenseDurationDays;

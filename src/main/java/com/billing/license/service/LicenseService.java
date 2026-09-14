@@ -156,16 +156,6 @@ public class LicenseService {
     }
     
     /**
-     * Get licenses by customer ID
-     */
-    public List<LicenseResponse> getLicensesByCustomer(UUID customerId) {
-        List<License> licenses = licenseRepository.findByCustomerId(customerId);
-        return licenses.stream()
-            .map(this::mapToResponse)
-            .collect(Collectors.toList());
-    }
-    
-    /**
      * Revoke a license
      */
     @Transactional
@@ -217,8 +207,9 @@ public class LicenseService {
         }
 
         // 原 License 标记为 REISSUED
-        original.setStatus(License.LicenseStatus.REVOKED);
-        original.setRevokedAt(LocalDateTime.now());
+        // D3（2026-09-14）：换机失效与退款吊销语义不同，改用 REISSUED（原先误置 REVOKED，
+        // 与注释矛盾且会让售后/审计无法区分换机与退款）；换机不写 revokedAt。
+        original.setStatus(License.LicenseStatus.REISSUED);
         licenseRepository.save(original);
         recordLicenseEvent(original, LicenseEvent.EventType.REISSUED, newMachineId,
             "Reissued to new machine. reason=" + (reason != null ? reason : ""));
@@ -311,7 +302,8 @@ public class LicenseService {
             .status(license.getStatus().name())
             .issuedAt(license.getIssuedAt())
             .expiresAt(license.getExpiresAt())
-            .activatedAt(license.getActivatedAt())
+            .lastVerifiedAt(license.getLastVerifiedAt())
+            .reissuedFrom(license.getReissuedFrom())
             .signedToken(license.getSignedToken())
             .build();
     }

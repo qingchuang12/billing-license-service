@@ -1,5 +1,6 @@
 package com.billing.license.entity;
 
+import com.billing.license.service.payment.strategy.PaymentMethod;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -43,15 +44,18 @@ public class CheckoutSession {
     @Column(name = "order_number")
     private String orderNumber;
 
+    @Enumerated(EnumType.STRING)
     @Column
-    private String provider;
+    private PaymentMethod provider;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
+    @Builder.Default
     private Status status = Status.CREATED;
 
+    @Enumerated(EnumType.STRING)
     @Column(length = 3)
-    private String currency;
+    private Currency currency;
 
     @Column
     private BigDecimal amount;

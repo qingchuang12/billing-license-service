@@ -1,13 +1,16 @@
 package com.billing.license.infrastructure.kms;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
-import lombok.extern.slf4j.Slf4j;
 
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.security.*;
+import java.security.KeyFactory;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.Signature;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 
@@ -64,10 +67,13 @@ public class LocalKmsService implements KmsService {
         PrivateKey privateKey;
         PublicKey publicKey;
         if (privateKeyBytes.length == 32 || publicKeyBytes.length == 32) {
+            // C11：Ed25519 私钥/公钥为 32 字节裸数据；JDK 的 PKCS8EncodedKeySpec / X509EncodedKeySpec
+            // 要求 DER 结构，裸字节会抛 InvalidKeySpecException（默认签名算法 ED25519 首次签发 100% 失败）。
+            // 手工包装标准 DER 前缀后构造。
             algorithm = "Ed25519";
             KeyFactory keyFactory = KeyFactory.getInstance("Ed25519");
-            privateKey = keyFactory.generatePrivate(new PKCS8EncodedKeySpec(privateKeyBytes));
-            publicKey = keyFactory.generatePublic(new X509EncodedKeySpec(publicKeyBytes));
+            privateKey = keyFactory.generatePrivate(new PKCS8EncodedKeySpec(wrapEd25519PrivateKey(privateKeyBytes)));
+            publicKey = keyFactory.generatePublic(new X509EncodedKeySpec(wrapEd25519PublicKey(publicKeyBytes)));
         } else {
             algorithm = detectAlgorithm(publicKeyBytes);
             KeyFactory keyFactory = KeyFactory.getInstance(algorithm);
@@ -75,6 +81,25 @@ public class LocalKmsService implements KmsService {
             publicKey = keyFactory.generatePublic(new X509EncodedKeySpec(publicKeyBytes));
         }
         return new KeyPair(algorithm, privateKey, publicKey);
+    }
+
+    /** Ed25519 裸 32 字节私钥 → PKCS#8 PrivateKeyInfo DER（RFC 8410, version 0） */
+    private static byte[] wrapEd25519PrivateKey(byte[] raw) {
+        byte[] prefix = { 0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70,
+                0x04, 0x22, 0x04, 0x20 };
+        byte[] out = new byte[prefix.length + raw.length];
+        System.arraycopy(prefix, 0, out, 0, prefix.length);
+        System.arraycopy(raw, 0, out, prefix.length, raw.length);
+        return out;
+    }
+
+    /** Ed25519 裸 32 字节公钥 → X.509 SubjectPublicKeyInfo DER（BIT STRING 封装） */
+    private static byte[] wrapEd25519PublicKey(byte[] raw) {
+        byte[] prefix = { 0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00 };
+        byte[] out = new byte[prefix.length + raw.length];
+        System.arraycopy(prefix, 0, out, 0, prefix.length);
+        System.arraycopy(raw, 0, out, prefix.length, raw.length);
+        return out;
     }
 
     private static final class KeyPair {

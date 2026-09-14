@@ -10,6 +10,8 @@ RUN mvn -B -e clean package -DskipTests
 
 # ---------- Runtime stage ----------
 FROM eclipse-temurin:21-jre
+# i11/W22：健康检查依赖 curl（基础 jre 镜像不含 wget/curl）
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 # 以非 root 用户运行，缩小容器攻击面（遵循最小权限）
 RUN groupadd -r appuser && useradd -r -g appuser appuser

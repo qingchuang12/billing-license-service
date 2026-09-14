@@ -16,11 +16,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * PayPal 支付策略实现（国际钱包用户）
@@ -78,11 +74,13 @@ public class PayPalStrategy implements PaymentStrategy {
             String accessToken = getAccessToken();
 
             Map<String, Object> amount = new HashMap<>();
-            amount.put("currency_code", order.getCurrency());
+            amount.put("currency_code", order.getCurrency().code());
             amount.put("value", value);
 
             Map<String, Object> purchaseUnit = new HashMap<>();
-            purchaseUnit.put("reference_id", order.getOrderNo());
+            // C1：PayPal 官方结构下 capture resource 无 reference_id/purchase_units；订单号须经
+            // purchase_units[].custom_id 携带，回调从 resource.custom_id / supplementary_data.related_ids.order_id 读回。
+            purchaseUnit.put("custom_id", order.getOrderNo());
             purchaseUnit.put("description", order.getTitle() != null ? order.getTitle() : "License");
             purchaseUnit.put("amount", amount);
 
@@ -211,19 +209,23 @@ public class PayPalStrategy implements PaymentStrategy {
 
             JsonNode resource = root.has("resource") ? root.get("resource") : null;
             if (resource != null) {
-                String paypalOrderId = resource.has("id") ? resource.get("id").asText() : null;
-                String orderId = resource.has("reference_id") ? resource.get("reference_id").asText() : null;
-                String captureId = null;
-                if (resource.has("purchase_units")) {
-                    JsonNode pu = resource.get("purchase_units").get(0);
-                    if (pu.has("payments") && pu.get("payments").has("captures")) {
-                        captureId = pu.get("payments").get("captures").get(0).get("id").asText();
-                    }
+                String captureId = resource.has("id") ? resource.get("id").asText() : null;
+                // C1：订单号优先取顶层 custom_id（下单时写入），回退 supplementary_data.related_ids.order_id，
+                // 再回退 purchase_units[0].custom_id；真实 capture resource 无 reference_id / purchase_units。
+                String orderId = null;
+                if (resource.has("custom_id")) {
+                    orderId = resource.get("custom_id").asText();
+                } else if (resource.has("supplementary_data") && resource.get("supplementary_data").has("related_ids")
+                        && resource.get("supplementary_data").get("related_ids").has("order_id")) {
+                    orderId = resource.get("supplementary_data").get("related_ids").get("order_id").asText();
+                } else if (resource.has("purchase_units") && resource.get("purchase_units").size() > 0
+                        && resource.get("purchase_units").get(0).has("custom_id")) {
+                    orderId = resource.get("purchase_units").get(0).get("custom_id").asText();
                 }
 
                 webhookPayload.setOrderId(orderId);
-                webhookPayload.setPaymentId(paypalOrderId);
-                webhookPayload.setTransactionId(captureId != null ? captureId : paypalOrderId);
+                webhookPayload.setPaymentId(captureId);
+                webhookPayload.setTransactionId(captureId);
 
                 if (resource.has("amount")) {
                     JsonNode amt = resource.get("amount");
@@ -269,7 +271,7 @@ public class PayPalStrategy implements PaymentStrategy {
             }
             String value = amount.setScale(2, RoundingMode.HALF_UP).toString();
             Map<String, Object> amt = new HashMap<>();
-            amt.put("currency_code", order.getCurrency());
+            amt.put("currency_code", order.getCurrency().code());
             amt.put("value", value);
             Map<String, Object> refundBody = new HashMap<>();
             refundBody.put("amount", amt);

@@ -1,9 +1,10 @@
 package com.billing.license.dto;
 
-import lombok.Data;
-import lombok.Builder;
-import lombok.NoArgsConstructor;
+import com.billing.license.entity.Currency;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -32,7 +33,7 @@ public class OrderResponse {
     private BigDecimal totalAmount;
     
     /** 货币类型，如 USD、CNY */
-    private String currency;
+    private Currency currency;
     
     /** 订单状态：PENDING, CONFIRMED, PROCESSING, COMPLETED, CANCELLED, REFUNDED, PAID */
     private String status;

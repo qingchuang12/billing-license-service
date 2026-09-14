@@ -1,6 +1,7 @@
 package com.billing.license.service;
 
 import com.billing.license.dto.OrderResponse;
+import com.billing.license.entity.Currency;
 import com.billing.license.entity.License;
 import com.billing.license.entity.Order;
 import com.billing.license.entity.Payment;
@@ -57,12 +58,12 @@ class AdminServiceRefundTest {
                 paymentServiceFactory, paymentService, emailNotificationService, paymentRepository);
     }
 
-    private Order paidOrder(String provider) {
+    private Order paidOrder(PaymentMethod provider) {
         return Order.builder()
                 .id(UUID.randomUUID())
                 .orderNumber("ORD-REF-1")
                 .totalAmount(new BigDecimal("10.00"))
-                .currency("USD")
+                .currency(Currency.USD)
                 .paymentProvider(provider)
                 .email("buyer@example.com")
                 .status(Order.OrderStatus.PAID)
@@ -72,7 +73,7 @@ class AdminServiceRefundTest {
 
     @Test
     void refundOrder_shouldThrowRefundFailed_whenChannelReturnsFalse() {
-        Order order = paidOrder("STRIPE");
+        Order order = paidOrder(PaymentMethod.STRIPE);
         when(orderRepository.findByOrderNumber("ORD-REF-1")).thenReturn(Optional.of(order));
         PaymentStrategy strategy = mock(PaymentStrategy.class);
         when(strategy.refundPayment(any(), any(), any())).thenReturn(false);
@@ -92,7 +93,7 @@ class AdminServiceRefundTest {
 
     @Test
     void refundOrder_shouldUsePaymentEntityTransactionId() {
-        Order order = paidOrder("STRIPE");
+        Order order = paidOrder(PaymentMethod.STRIPE);
         when(orderRepository.findByOrderNumber("ORD-REF-1")).thenReturn(Optional.of(order));
         PaymentStrategy strategy = mock(PaymentStrategy.class);
         when(strategy.refundPayment(any(), any(), any())).thenReturn(false);
@@ -111,7 +112,7 @@ class AdminServiceRefundTest {
 
     @Test
     void refundOrder_shouldMarkRefunded_andRevokeLicenses_whenChannelSucceeds() {
-        Order order = paidOrder("ALIPAY");
+        Order order = paidOrder(PaymentMethod.ALIPAY);
         when(orderRepository.findByOrderNumber("ORD-REF-1")).thenReturn(Optional.of(order));
         PaymentStrategy strategy = mock(PaymentStrategy.class);
         when(strategy.refundPayment(any(), any(), any())).thenReturn(true);
@@ -141,7 +142,7 @@ class AdminServiceRefundTest {
         // C2 兜底：存量订单 paymentProvider 为 NULL，应从 Payment.method 回补渠道
         Order order = paidOrder(null); // 模拟存量订单：从未落库 provider
         when(orderRepository.findByOrderNumber("ORD-REF-1")).thenReturn(Optional.of(order));
-        Payment payment = Payment.builder().paymentId("ch_real_abc123").method("STRIPE").build();
+        Payment payment = Payment.builder().paymentId("ch_real_abc123").method(PaymentMethod.STRIPE).build();
         when(paymentRepository.findByOrderIdStr(order.getId().toString())).thenReturn(Optional.of(payment));
 
         PaymentStrategy strategy = mock(PaymentStrategy.class);

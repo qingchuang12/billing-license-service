@@ -1,13 +1,14 @@
 package com.billing.license.entity;
 
+import com.billing.license.exception.BusinessException;
 import jakarta.persistence.*;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
@@ -37,8 +38,10 @@ public class Product {
     @Column(nullable = false)
     private BigDecimal price;
     
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private String currency = "USD";
+    @Builder.Default
+    private Currency currency = Currency.USD;
 
     /**
      * 人民币定价（国内下单使用）。双币种定价（B19）：与 {@link #priceUsd} 二选一按区域取用。
@@ -54,6 +57,7 @@ public class Product {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
+    @Builder.Default
     private BillingCycle billingCycle = BillingCycle.ONE_TIME;
 
     /**
@@ -63,6 +67,7 @@ public class Product {
      */
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
+    @Builder.Default
     private PlanTier tier = PlanTier.PRO;
 
     /**
@@ -73,9 +78,11 @@ public class Product {
     private String features;
 
     @Column(nullable = false)
+    @Builder.Default
     private Integer licenseDurationDays = 365;
     
     @Column(nullable = false)
+    @Builder.Default
     private Boolean active = true;
     
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -108,20 +115,18 @@ public class Product {
      * 国内优先取 {@link #priceCny}（CNY），国际优先取 {@link #priceUsd}（USD）；
      * 缺失时回退另一档，最后兜底 {@link #price} 原字段，避免取到 null。
      */
+    // C6：双币种定价——目标档位缺失即拒绝下单，禁止跨币种回退（金额取对侧、币种按区域 = 静默资损）。
     public BigDecimal getPriceForRegion(boolean domestic) {
-        BigDecimal primary = domestic ? priceCny : priceUsd;
-        if (primary != null) {
-            return primary;
-        }
-        BigDecimal secondary = domestic ? priceUsd : priceCny;
-        if (secondary != null) {
-            return secondary;
+        BigDecimal price = domestic ? priceCny : priceUsd;
+        if (price == null) {
+            throw new BusinessException("PRICE_NOT_CONFIGURED",
+                "产品未配置" + (domestic ? "国内(CNY)" : "国际(USD)") + "价格，无法下单");
         }
         return price;
     }
 
-    /** 双币种定价（B19）：下单币种随区域走，与 {@link #getPriceForRegion} 配套 */
-    public String getCurrencyForRegion(boolean domestic) {
-        return domestic ? "CNY" : "USD";
+    /** 双币种定价（B19）：下单币种随区域走，与 {@link #getPriceForRegion} 配套（币种与价格同源判定） */
+    public Currency getCurrencyForRegion(boolean domestic) {
+        return domestic ? Currency.CNY : Currency.USD;
     }
 }

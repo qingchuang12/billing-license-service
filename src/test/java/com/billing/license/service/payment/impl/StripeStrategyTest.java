@@ -1,5 +1,6 @@
 package com.billing.license.service.payment.impl;
 
+import com.billing.license.entity.Currency;
 import com.billing.license.entity.Order;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentStatus;
@@ -8,7 +9,8 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
  * Stripe 支付策略单元测试 - 覆盖 Webhook 签名验证与回调解析（外围接口实现）
@@ -21,7 +23,7 @@ class StripeStrategyTest {
         return Order.builder()
             .orderNumber("ORD-TEST-001")
             .totalAmount(java.math.BigDecimal.valueOf(14.99))
-            .currency("USD")
+            .currency(Currency.USD)
             .title("Pro License")
             .build();
     }

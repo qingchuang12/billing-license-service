@@ -2,24 +2,34 @@ package com.billing.license.controller;
 
 import com.billing.license.dto.RedeemCodeRequest;
 import com.billing.license.entity.License;
-import com.billing.license.exception.BusinessException;
 import com.billing.license.service.RedeemCodeService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 兑换码控制器
- * 提供兑换码生成、兑换和撤销功能
+ * 兑换码控制器：仅保留**公开兑换**端点。
+ *
+ * <p>I5（2026-09-14）接口简化：兑换码的生成与撤销属管理动作，已收敛到管理端
+ * （{@code POST /api/admin/redeem-codes/generate}、{@code POST /api/admin/redeem-codes/revoke/{code}}），
+ * 避免同类管理动作分散在两个前缀、两套鉴权表述下。
+ * 本控制器只负责客户端公开兑换（{@code POST /api/redeem/redeem}）。
  */
+@Tag(name = "兑换码", description = "兑换码兑换（公开端点）")
 @RestController
-@RequestMapping("/api/v1/redeem")
+@RequestMapping("/api/redeem")
 @RequiredArgsConstructor
 public class RedeemCodeController {
     
@@ -34,56 +44,23 @@ public class RedeemCodeController {
     private boolean trustXForwardedFor;
 
     /**
-     * i3：批量生成兑换码数量上限，防止超大 count 打爆 DB / 线程（DoS）。
-     * 默认 1000，可通过 billing.redeem-code.max-generate 调整。
-     */
-    @Value("${billing.redeem-code.max-generate:1000}")
-    private int maxGenerateCount;
-
-    /**
-     * 批量生成兑换码（管理员权限）
-     * @param productSku 产品 SKU
-     * @param count 生成数量
-     * @param expiresAt 过期时间（可选）
-     * @return 生成的兑换码数量
-     */
-    @PostMapping("/generate")
-    public ResponseEntity<Map<String, Object>> generateCodes(
-            @RequestParam String productSku,
-            @RequestParam int count,
-            @RequestParam(required = false) LocalDateTime expiresAt) {
-
-        // i3：数量边界校验——非正或超上限一律拒绝，避免无脑循环写库造成资源耗尽
-        if (count <= 0) {
-            throw new BusinessException("INVALID_COUNT", "生成数量必须为正整数");
-        }
-        if (count > maxGenerateCount) {
-            throw new BusinessException("COUNT_EXCEED_LIMIT",
-                "批量生成数量超过上限（上限=" + maxGenerateCount + "），请分批生成");
-        }
-
-        int created = redeemCodeService.generateCodes(productSku, count, expiresAt);
-        
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", true);
-        response.put("count", created);
-        return ResponseEntity.ok(response);
-    }
-    
-    /**
      * 兑换兑换码获取 License
-     * @param request 兑换请求，包含兑换码和客户 ID
+     * @param request 兑换请求，包含兑换码、客户 ID 与机器码
      * @return 兑换成功后返回 License 信息
      */
+    @Operation(summary = "兑换兑换码（公开）",
+            description = "使用兑换码换取 License；服务端按真实客户端 IP 做频控（忽略请求体伪造的 clientIp）")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "兑换成功"),
+            @ApiResponse(responseCode = "400", description = "兑换码无效 / 已使用 / 已过期 / 触发频控")
+    })
     @PostMapping("/redeem")
     public ResponseEntity<Map<String, Object>> redeemCode(
             @RequestBody RedeemCodeRequest request,
             HttpServletRequest httpRequest) {
-        // 解析客户端真实 IP（支持反向代理 X-Forwarded-For）
+        // C10：无条件使用服务端解析的真实 IP，忽略请求体可能伪造的 clientIp（@JsonIgnore 已禁止反序列化）
         String clientIp = parseClientIp(httpRequest);
-        if (request.getClientIp() == null) {
-            request.setClientIp(clientIp);
-        }
+        request.setClientIp(clientIp);
         License license = redeemCodeService.redeemCode(request);
         
         Map<String, Object> response = new HashMap<>();
@@ -91,20 +68,6 @@ public class RedeemCodeController {
         response.put("licenseKey", license.getLicenseKey());
         response.put("signedToken", license.getSignedToken());
         response.put("expiresAt", license.getExpiresAt());
-        return ResponseEntity.ok(response);
-    }
-    
-    /**
-     * 撤销兑换码（管理员权限）
-     * @param code 要撤销的兑换码
-     * @return 操作结果
-     */
-    @PostMapping("/revoke/{code}")
-    public ResponseEntity<Map<String, Object>> revokeCode(@PathVariable String code) {
-        redeemCodeService.revokeCode(code);
-        
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", true);
         return ResponseEntity.ok(response);
     }
 

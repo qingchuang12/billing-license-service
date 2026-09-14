@@ -11,7 +11,8 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 /**
  * w11：兑换码场景 License.order=null 必须可持久化（实体 order_id 已改 nullable=true，与 V1 迁移一致）。
@@ -32,7 +33,7 @@ class LicenseNullOrderTest {
             .sku("null-order-sku")
             .name("null-order-product")
             .price(new BigDecimal("9.90"))
-            .currency("USD")
+            .currency(Currency.USD)
             .licenseDurationDays(365)
             .billingCycle(Product.BillingCycle.ONE_TIME)
             .tier(com.billing.license.entity.PlanTier.PRO)

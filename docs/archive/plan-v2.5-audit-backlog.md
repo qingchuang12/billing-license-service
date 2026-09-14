@@ -14,7 +14,7 @@
 ### i1（info · 低）测试计数口径对齐
 - **问题**：README 写 80 个测试、审计报告 i1 称「实际 77」，但 2026-09-04 实跑 `mvn test` = **98 tests, 0 failures, 0 errors**（plan-2.3 已判定 77 不属实；80 为 UnionPay 删除前旧口径，删除后旧报告残留 + 后续 info 级用例新增导致真实数已升至 98）；`target/surefire-reports` 残留历史报告文件。
 - **范围**：`README.md`、`docs/plan.md`（已归档）、`target/surefire-reports`
-- **修复**：`docs/README.md` 三处测试数 80→98，并修正 `plan.md` 链接为 `./archive/plan.md`；清理 surefire 历史残留；后续以 `mvn test` 实跑数为准（已验证 = 98）。
+- **修复**：`docs/README.md` 三处测试数 80→98，并修正 `plan.md` 链接为 `./archive/plan-v2.2-readiness.md`；清理 surefire 历史残留；后续以 `mvn test` 实跑数为准（已验证 = 98）。
 - **优先级**：低（纯文档校正）
 
 ### T1（上线前 · 高）支付渠道真实沙箱 / 生产联调
@@ -44,9 +44,9 @@
 | 编号 | 状态 | 证据 / commit |
 |---|---|---|
 | i1 | ✅ 已处理 | 2026-09-04 实跑 `mvn test` = 98/0/0；docs/README.md 三处 80→98 + plan.md 链接修正；surefire 34 个 dumpstream 已清，2 个过期报告（UnionPayStrategyTest/AuditVerifyTmpTest）因 IDE 持有句柄未删，无害残留 |
-| T1 | 🔧 代码层审计全绿（5 渠道无「绿但坏」缺陷）· 全链路待真实密钥 | Paddle 3 缺陷已修 101/0/0；Alipay(rsaCheckV1+URL解码)/WeChat(平台证书SHA256-RSA+分)/Stripe(SDK+分)/PayPal(verify端点+全header) 代码层审计通过；`@RequestHeader Map` 大小写不敏感已验证非缺陷（见 plan-t1-channel-verify.md §二、§三） |
+| T1 | 🔧 代码层审计全绿（5 渠道无「绿但坏」缺陷）· 全链路待真实密钥 | Paddle 3 缺陷已修 101/0/0；Alipay(rsaCheckV1+URL解码)/WeChat(平台证书SHA256-RSA+分)/Stripe(SDK+分)/PayPal(verify端点+全header) 代码层审计通过；`@RequestHeader Map` 大小写不敏感已验证非缺陷（见 plan-v2.5-t1-channel-verify.md §二、§三） |
 | T2 | ⬜ 待处理 | — |
 | T3 | ⬜ 待处理 | — |
 | T4 | ⬜ 待处理 | — |
 
-> 说明：w1–w17 与多数 info 在 `docs/archive/plan-2.4.md` 标注已实施，且已抽样核对代码（w14 Swagger 放行、w7 限流淘汰、w10 渠道 fail-fast 均在库）；如后续需正式验收，可单独发起一轮「已归档项复验」，不列入本未处理 plan。
+> 说明：w1–w17 与多数 info 在 `docs/archive/plan-v2.4.md` 标注已实施，且已抽样核对代码（w14 Swagger 放行、w7 限流淘汰、w10 渠道 fail-fast 均在库）；如后续需正式验收，可单独发起一轮「已归档项复验」，不列入本未处理 plan。

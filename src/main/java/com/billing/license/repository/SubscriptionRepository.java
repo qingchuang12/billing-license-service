@@ -1,6 +1,7 @@
 package com.billing.license.repository;
 
 import com.billing.license.entity.Subscription;
+import com.billing.license.service.payment.strategy.PaymentMethod;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -11,7 +12,7 @@ import java.util.UUID;
 @Repository
 public interface SubscriptionRepository extends JpaRepository<Subscription, UUID> {
 
-    Optional<Subscription> findByProviderAndProviderSubscriptionId(String provider, String providerSubscriptionId);
+    Optional<Subscription> findByProviderAndProviderSubscriptionId(PaymentMethod provider, String providerSubscriptionId);
 
     Optional<Subscription> findByLicenseId(UUID licenseId);
 

@@ -52,7 +52,7 @@ public class SubscriptionService {
         }
 
         Subscription sub = subscriptionRepository
-            .findByProviderAndProviderSubscriptionId(method.name(), subId)
+            .findByProviderAndProviderSubscriptionId(method, subId)
             .orElse(null);
 
         String eventType = payload.getEventType() != null ? payload.getEventType() : "";
@@ -81,7 +81,7 @@ public class SubscriptionService {
                 .orderId(order.getId())
                 .customerId(order.getCustomerId())
                 .productId(productId)
-                .provider(method.name())
+                .provider(method)
                 .providerSubscriptionId(subId)
                 .status(Subscription.SubscriptionStatus.PENDING)
                 .build();

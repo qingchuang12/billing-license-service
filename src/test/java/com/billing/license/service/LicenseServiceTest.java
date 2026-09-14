@@ -1,12 +1,7 @@
 package com.billing.license.service;
 
 import com.billing.license.config.BillingProperties;
-import com.billing.license.dto.LicenseResponse;
-import com.billing.license.entity.License;
-import com.billing.license.entity.LicenseEvent;
-import com.billing.license.entity.Order;
-import com.billing.license.entity.OrderItem;
-import com.billing.license.entity.Product;
+import com.billing.license.entity.*;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.infrastructure.crypto.LicenseIssuer;
 import com.billing.license.infrastructure.kms.KmsService;
@@ -172,9 +167,9 @@ class LicenseServiceTest {
 
         licenseService.reissueLicense("LIC-OLD", "MACHINE-NEW", "changed_pc");
 
-        // 原 License 被标记 REISSUED
-        assertEquals(License.LicenseStatus.REVOKED, original.getStatus());
-        assertNotNull(original.getRevokedAt());
+        // 原 License 被标记 REISSUED（D3：换机失效 ≠ 退款吊销，且不写 revokedAt）
+        assertEquals(License.LicenseStatus.REISSUED, original.getStatus());
+        assertNull(original.getRevokedAt());
         // 应记录至少 REISSUED + 新 LICENSE ISSUED 两条事件
         verify(licenseEventRepository, atLeast(2)).save(any(LicenseEvent.class));
         verify(licenseEventRepository).save(argThat(e ->

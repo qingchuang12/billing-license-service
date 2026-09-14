@@ -1,6 +1,6 @@
 package com.billing.license.controller.webhook;
 
-import com.billing.license.entity.License;
+import com.billing.license.entity.Currency;
 import com.billing.license.entity.Order;
 import com.billing.license.entity.Payment;
 import com.billing.license.entity.PaymentEvent;
@@ -10,7 +10,6 @@ import com.billing.license.repository.PaymentRepository;
 import com.billing.license.service.CheckoutService;
 import com.billing.license.service.LicenseService;
 import com.billing.license.service.RedeemCodeService;
-import com.billing.license.service.subscription.SubscriptionService;
 import com.billing.license.service.notification.EmailNotificationService;
 import com.billing.license.service.payment.PaymentService;
 import com.billing.license.service.payment.impl.PaymentServiceFactory;
@@ -19,6 +18,7 @@ import com.billing.license.service.payment.strategy.PaymentStatus;
 import com.billing.license.service.payment.strategy.PaymentStrategy;
 import com.billing.license.service.payment.strategy.WebhookPayload;
 import com.billing.license.service.payment.util.AmountValidator;
+import com.billing.license.service.subscription.SubscriptionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
@@ -141,7 +141,7 @@ class WebhookControllerTest {
         when(paymentEventRepository.existsByProviderAndEventId(anyString(), anyString())).thenReturn(false);
 
         Order order = Order.builder().orderNumber("ORD-1").machineCode("M1")
-            .totalAmount(new BigDecimal("99.00")).currency("CNY").email("u@e.com").build();
+            .totalAmount(new BigDecimal("99.00")).currency(Currency.CNY).email("u@e.com").build();
         when(orderRepository.findByOrderNumber("ORD-1")).thenReturn(Optional.of(order));
         when(amountValidator.validateAmount(any(Order.class), any())).thenReturn(true);
         Payment payment = new Payment();
@@ -155,7 +155,7 @@ class WebhookControllerTest {
         assertEquals("Success", resp.getBody());
         // 已绑定机器码 → 签发 License
         verify(licenseService).issueLicense("ORD-1", "M1");
-        verify(emailService).sendPaymentSuccessEmail(eq("u@e.com"), anyString(), anyString(), anyDouble(), anyString());
+        verify(emailService).sendPaymentSuccessEmail(eq("u@e.com"), anyString(), anyString(), anyDouble(), any());
         // 记录支付事件（已处理）
         verify(paymentEventRepository).save(argThat(e -> Boolean.TRUE.equals(e.getProcessed())));
     }
@@ -167,7 +167,7 @@ class WebhookControllerTest {
         when(paymentEventRepository.existsByProviderAndEventId(anyString(), anyString())).thenReturn(false);
 
         Order order = Order.builder().orderNumber("ORD-1").machineCode("M1")
-            .totalAmount(new BigDecimal("99.00")).currency("CNY").build();
+            .totalAmount(new BigDecimal("99.00")).currency(Currency.CNY).build();
         when(orderRepository.findByOrderNumber("ORD-1")).thenReturn(Optional.of(order));
         when(amountValidator.validateAmount(any(Order.class), any())).thenReturn(false);
 

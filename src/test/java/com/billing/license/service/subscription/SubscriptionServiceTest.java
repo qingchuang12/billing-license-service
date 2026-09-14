@@ -1,10 +1,6 @@
 package com.billing.license.service.subscription;
 
-import com.billing.license.entity.License;
-import com.billing.license.entity.Order;
-import com.billing.license.entity.PlanTier;
-import com.billing.license.entity.Product;
-import com.billing.license.entity.Subscription;
+import com.billing.license.entity.*;
 import com.billing.license.repository.LicenseRepository;
 import com.billing.license.repository.OrderRepository;
 import com.billing.license.repository.ProductRepository;
@@ -24,7 +20,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 /**
@@ -61,7 +57,7 @@ class SubscriptionServiceTest {
 
     private Product buildProduct(int durationDays) {
         return Product.builder().id(productId).sku("pro-subscription")
-            .name("订阅 Pro").price(java.math.BigDecimal.valueOf(19)).currency("USD")
+            .name("订阅 Pro").price(java.math.BigDecimal.valueOf(19)).currency(Currency.USD)
             .licenseDurationDays(durationDays).tier(PlanTier.PRO).build();
     }
 
@@ -100,7 +96,7 @@ class SubscriptionServiceTest {
 
     @Test
     void firstCharge_shouldCreateSubscriptionAndBindLicense() {
-        when(subscriptionRepository.findByProviderAndProviderSubscriptionId(PaymentMethod.PADDLE.name(), subId))
+        when(subscriptionRepository.findByProviderAndProviderSubscriptionId(PaymentMethod.PADDLE, subId))
             .thenReturn(Optional.empty());
         when(orderRepository.findByOrderNumber("ORD-SUB-1")).thenReturn(Optional.of(buildOrder()));
         when(licenseRepository.findByOrderId(orderId)).thenReturn(List.of(buildLicense(31)));
@@ -116,7 +112,7 @@ class SubscriptionServiceTest {
         assertEquals(licenseId, saved.getLicenseId());
         assertEquals(orderId, saved.getOrderId());
         assertEquals(subId, saved.getProviderSubscriptionId());
-        assertEquals(PaymentMethod.PADDLE.name(), saved.getProvider());
+        assertEquals(PaymentMethod.PADDLE, saved.getProvider());
         // 首充不应延长有效期
         verify(licenseRepository, never()).save(any(License.class));
     }
@@ -124,10 +120,10 @@ class SubscriptionServiceTest {
     @Test
     void renewal_shouldExtendLicenseExpiry() {
         Subscription existing = Subscription.builder().id(UUID.randomUUID()).orderId(orderId)
-            .customerId(customerId).provider(PaymentMethod.STRIPE.name())
+            .customerId(customerId).provider(PaymentMethod.STRIPE)
             .providerSubscriptionId(subId).status(Subscription.SubscriptionStatus.ACTIVE)
             .licenseId(licenseId).build();
-        when(subscriptionRepository.findByProviderAndProviderSubscriptionId(PaymentMethod.STRIPE.name(), subId))
+        when(subscriptionRepository.findByProviderAndProviderSubscriptionId(PaymentMethod.STRIPE, subId))
             .thenReturn(Optional.of(existing));
         License license = buildLicense(10); // 当前剩余 10 天
         when(licenseRepository.findByOrderId(orderId)).thenReturn(List.of(license));
@@ -147,10 +143,10 @@ class SubscriptionServiceTest {
     @Test
     void cancellation_shouldExpireLicense() {
         Subscription existing = Subscription.builder().id(UUID.randomUUID()).orderId(orderId)
-            .customerId(customerId).provider(PaymentMethod.PADDLE.name())
+            .customerId(customerId).provider(PaymentMethod.PADDLE)
             .providerSubscriptionId(subId).status(Subscription.SubscriptionStatus.ACTIVE)
             .licenseId(licenseId).build();
-        when(subscriptionRepository.findByProviderAndProviderSubscriptionId(PaymentMethod.PADDLE.name(), subId))
+        when(subscriptionRepository.findByProviderAndProviderSubscriptionId(PaymentMethod.PADDLE, subId))
             .thenReturn(Optional.of(existing));
         License license = buildLicense(100);
         when(licenseRepository.findById(licenseId)).thenReturn(Optional.of(license));
@@ -169,7 +165,7 @@ class SubscriptionServiceTest {
 
     @Test
     void missingOrderAndNoExistingSubscription_shouldNotCreate() {
-        when(subscriptionRepository.findByProviderAndProviderSubscriptionId(PaymentMethod.PADDLE.name(), subId))
+        when(subscriptionRepository.findByProviderAndProviderSubscriptionId(PaymentMethod.PADDLE, subId))
             .thenReturn(Optional.empty());
         WebhookPayload p = new WebhookPayload();
         p.setSubscriptionId(subId);

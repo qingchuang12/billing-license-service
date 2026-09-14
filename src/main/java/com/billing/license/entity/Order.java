@@ -1,13 +1,14 @@
 package com.billing.license.entity;
 
+import com.billing.license.service.payment.strategy.PaymentMethod;
 import jakarta.persistence.*;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
@@ -34,22 +35,27 @@ public class Order {
     @Column(nullable = false)
     private BigDecimal totalAmount;
     
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private String currency = "USD";
+    @Builder.Default
+    private Currency currency = Currency.USD;
     
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
+    @Builder.Default
     private OrderStatus status = OrderStatus.PENDING;
     
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
+    @Builder.Default
     private PaymentStatus paymentStatus = PaymentStatus.UNPAID;
     
     @Column(name = "payment_intent_id")
     private String paymentIntentId;
     
+    @Enumerated(EnumType.STRING)
     @Column(name = "payment_provider")
-    private String paymentProvider;
+    private PaymentMethod paymentProvider;
     
     @Column(columnDefinition = "TEXT")
     private String metadata;

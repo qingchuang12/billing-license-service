@@ -2,7 +2,7 @@
 
 > **[已归档 2026-09-07]** 可本地验证部分（Paddle 3 缺陷修复 + 5 渠道代码层审计）已全部完成并单测锁定；未完成的「真实沙箱全链路联调」（前置阻塞 + 联调步骤，见本文件 §2.3）已合并进活动 [`../plan.md`](../plan.md)（v2.5）的 T1。本文件保留为联调时的操作手册。
 
-- **关联**：`docs/plan-audit-backlog.md` 的 T1（上线门禁 · 高）
+- **关联**：`docs/plan-v2.5-audit-backlog.md` 的 T1（上线门禁 · 高）
 - **生成日期**：2026-09-04
 - **当前状态**：Paddle 代码层缺陷已定位并修复（单测锁定，101/0/0 全绿）；其余渠道 + Paddle 真实沙箱全链路仍待真实密钥。
 - **唯一事实源**：本文件 + `src/main/java/.../payment/impl/*`、`WebhookController.java`、`PaddleStrategyTest.java`

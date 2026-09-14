@@ -1,52 +1,16 @@
 package com.billing.license.controller;
 
-import com.billing.license.dto.CreateOrderRequest;
-import com.billing.license.dto.OrderResponse;
-import com.billing.license.service.OrderService;
-import lombok.RequiredArgsConstructor;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
-import java.util.UUID;
-
-/**
- * 订单控制器
- * 提供订单创建和查询功能
- */
-@RestController
-@RequestMapping("/api/v1/orders")
-@RequiredArgsConstructor
-public class OrderController {
-    
-    private final OrderService orderService;
-    
-    /**
-     * 创建订单
-     * @param request 订单创建请求，包含客户 ID 和订单项列表
-     * @return 创建的订单信息
-     */
-    @PostMapping
-    public ResponseEntity<OrderResponse> createOrder(@RequestBody CreateOrderRequest request) {
-        return ResponseEntity.ok(orderService.createOrder(request));
-    }
-    
-    /**
-     * 根据订单 ID 查询订单
-     * @param orderId 订单 UUID
-     * @return 订单详细信息
-     */
-    @GetMapping("/{orderId}")
-    public ResponseEntity<OrderResponse> getOrder(@PathVariable UUID orderId) {
-        return ResponseEntity.ok(orderService.getOrder(orderId));
-    }
-    
-    /**
-     * 根据订单号查询订单
-     * @param orderNumber 业务订单号
-     * @return 订单详细信息
-     */
-    @GetMapping("/number/{orderNumber}")
-    public ResponseEntity<OrderResponse> getOrderByNumber(@PathVariable String orderNumber) {
-        return ResponseEntity.ok(orderService.getOrderByNumber(orderNumber));
-    }
-}
+// ============================================================================
+// I2（2026-09-14）接口合并简化：本控制器已整体下线，订单查询统一由 AdminController 提供。
+//
+// 端点迁移映射：
+//   GET /api/orders/{orderId}             → GET /api/admin/orders?orderId={uuid}
+//   GET /api/orders/number/{orderNumber}  → GET /api/admin/orders?orderNumber={number}
+//
+// 下线原因：与 /api/admin/orders（列表 + 过滤）职责重叠——同一资源存在 by-id / by-number
+// 两个键，同一列表存在"全量 / 按状态"两个端点；对外部客户端查询支付状态请使用
+// GET /api/checkout/{checkoutId}/status。
+//
+// 本文件不含任何类型声明（不产生 class、不暴露端点），待物理删除：
+//   Remove-Item 'd:\workspace\billing-license-service\src\main\java\com\billing\license\controller\OrderController.java'
+// ============================================================================

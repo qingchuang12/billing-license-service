@@ -1,5 +1,6 @@
 package com.billing.license.service.payment.util;
 
+import com.billing.license.entity.Currency;
 import com.billing.license.entity.Order;
 import com.billing.license.service.payment.strategy.WebhookPayload;
 import org.slf4j.Logger;
@@ -42,7 +43,7 @@ public class AmountValidator {
         
         BigDecimal orderAmount = order.getTotalAmount();
         BigDecimal webhookAmount = payload.getAmount();
-        String orderCurrency = order.getCurrency();
+        String orderCurrency = order.getCurrency() != null ? order.getCurrency().code() : null;
         String webhookCurrency = payload.getCurrency();
         
         // 验证货币类型
@@ -145,12 +146,14 @@ public class AmountValidator {
         if (currency == null) {
             return 2; // 默认 2 位小数
         }
-        
+
+        // F5：领域内已知货币由 Currency.minorUnits 驱动（含 JPY/KRW/VND=0）
+        Currency known = Currency.fromCodeOrNull(currency);
+        if (known != null) {
+            return known.minorUnits();
+        }
+
         switch (currency.toUpperCase().trim()) {
-            case "JPY":
-            case "KRW":
-            case "VND":
-                return 0; // 无小数位
             case "BHD":
             case "IQD":
             case "JOD":

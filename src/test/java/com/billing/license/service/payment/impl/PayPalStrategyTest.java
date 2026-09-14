@@ -11,7 +11,8 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
  * PayPal 支付策略单元测试 - 覆盖回调解析与验签分支（外围接口实现）
@@ -93,18 +94,21 @@ class PayPalStrategyTest {
 
     @Test
     void parseWebhookPayload_shouldParseCaptureCompleted() {
+        // C1：真实 PAYMENT.CAPTURE.COMPLETED resource 无 reference_id / purchase_units；
+        // 订单号经 custom_id（或 supplementary_data.related_ids.order_id）携带，resource.id 为 capture ID。
         String payload = "{"
             + "\"event_type\":\"PAYMENT.CAPTURE.COMPLETED\","
             + "\"resource\":{"
-            + "\"id\":\"pay_123\","
-            + "\"reference_id\":\"ORD-PP-1\","
-            + "\"amount\":{\"value\":\"19.99\",\"currency_code\":\"USD\"},"
-            + "\"purchase_units\":[{\"payments\":{\"captures\":[{\"id\":\"cap_1\"}]}}]"
+            + "\"id\":\"cap_1\","
+            + "\"custom_id\":\"ORD-PP-1\","
+            + "\"supplementary_data\":{\"related_ids\":{\"order_id\":\"ORD-PP-1\"}},"
+            + "\"status\":\"COMPLETED\","
+            + "\"amount\":{\"value\":\"19.99\",\"currency_code\":\"USD\"}"
             + "}}";
 
         WebhookPayload result = strategy.parseWebhookPayload(payload);
         assertEquals("ORD-PP-1", result.getOrderId());
-        assertEquals("pay_123", result.getPaymentId());
+        assertEquals("cap_1", result.getPaymentId());
         assertEquals("cap_1", result.getTransactionId());
         assertEquals("USD", result.getCurrency());
         assertEquals(0, result.getAmount().compareTo(new java.math.BigDecimal("19.99")));
@@ -115,7 +119,7 @@ class PayPalStrategyTest {
     void parseWebhookPayload_shouldParseCaptureRefunded() {
         String payload = "{"
             + "\"event_type\":\"PAYMENT.CAPTURE.REFUNDED\","
-            + "\"resource\":{\"id\":\"pay_2\",\"reference_id\":\"ORD-PP-2\"}"
+            + "\"resource\":{\"id\":\"cap_2\",\"custom_id\":\"ORD-PP-2\"}"
             + "}";
 
         WebhookPayload result = strategy.parseWebhookPayload(payload);

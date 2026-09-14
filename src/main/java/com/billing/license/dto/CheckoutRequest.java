@@ -1,5 +1,6 @@
 package com.billing.license.dto;
 
+import com.billing.license.entity.Currency;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -20,7 +21,7 @@ public class CheckoutRequest {
     private String productId;
 
     /** 货币：CNY / USD */
-    private String currency;
+    private Currency currency;
 
     /** 语言区域，如 zh-CN / en-US */
     private String locale;
@@ -39,4 +40,12 @@ public class CheckoutRequest {
 
     /** 客户标识（可选，未传则生成匿名客户） */
     private UUID customerId;
+
+    /**
+     * I7（2026-09-14）：支付渠道（可选）。传入则**一步完成**「创建会话 + 创建支付」，
+     * 直接返回二维码/跳转链接；不传则先返回可用支付方式列表，再由
+     * {@code POST /api/checkout/{checkoutId}/select-provider} 二次选择。
+     * 取值：alipay / wechat_pay / stripe / paddle / paypal
+     */
+    private String provider;
 }

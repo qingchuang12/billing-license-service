@@ -21,7 +21,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -130,20 +129,24 @@ public class PaddleStrategy implements PaymentStrategy {
      * 构建 Paddle 创建交易请求体（提取为包级可测方法，锁定金额单位为最小货币单位整数串）。
      */
     Map<String, Object> buildCreateTransactionBody(Order order) {
+        // C2：Paddle Billing v2 请求体字段为 snake_case（unit_price/currency_code/custom_data），
+        // 与旧 camelCase 不符会被 422 拒单；ad-hoc price 需声明 tax_mode。
+        Map<String, Object> unitPrice = new HashMap<>();
+        unitPrice.put("amount", toMinorUnitString(order.getAmount()));
+        unitPrice.put("currency_code", order.getCurrency().code());
+        Map<String, Object> price = new HashMap<>();
+        price.put("description", order.getTitle() != null ? order.getTitle() : "License");
+        price.put("unit_price", unitPrice);
         Map<String, Object> items = new HashMap<>();
         items.put("quantity", 1);
-        items.put("price", new HashMap<String, Object>() {{
-            put("description", order.getTitle() != null ? order.getTitle() : "License");
-            put("unitPrice", new HashMap<String, Object>() {{
-                put("amount", toMinorUnitString(order.getAmount()));
-                put("currencyCode", order.getCurrency());
-            }});
-        }});
+        items.put("price", price);
         Map<String, Object> customData = new HashMap<>();
         customData.put("order_id", order.getOrderNo());
         Map<String, Object> body = new HashMap<>();
         body.put("items", java.util.List.of(items));
-        body.put("customData", customData);
+        body.put("custom_data", customData);
+        // ad-hoc 价格必须声明 tax_mode（Paddle 代收代缴模式用 external；如需 Paddle 计税改为 automatic）
+        body.put("tax_mode", "external");
         return body;
     }
 
@@ -262,8 +265,8 @@ public class PaddleStrategy implements PaymentStrategy {
                     webhookPayload.setSubscriptionId(data.get("subscription_id").asText());
                 }
 
-                if (data.has("customData") && data.get("customData").has("order_id")) {
-                    webhookPayload.setOrderId(data.get("customData").get("order_id").asText());
+                if (data.has("custom_data") && data.get("custom_data").has("order_id")) {
+                    webhookPayload.setOrderId(data.get("custom_data").get("order_id").asText());
                 }
 
                 if (data.has("details") && data.get("details").has("totals")) {
@@ -275,8 +278,8 @@ public class PaddleStrategy implements PaymentStrategy {
                         webhookPayload.setAmount(amount);
                     }
                 }
-                if (data.has("currencyCode")) {
-                    webhookPayload.setCurrency(data.get("currencyCode").asText());
+                if (data.has("currency_code")) {
+                    webhookPayload.setCurrency(data.get("currency_code").asText());
                 }
 
                 // B18：订阅事件（subscription.*）解析订阅 ID 与周期
@@ -284,10 +287,10 @@ public class PaddleStrategy implements PaymentStrategy {
                     if (data.has("id")) {
                         webhookPayload.setSubscriptionId(data.get("id").asText());
                     }
-                    if (data.has("customData") && data.get("customData").has("order_id")) {
-                        webhookPayload.setOrderId(data.get("customData").get("order_id").asText());
+                    if (data.has("custom_data") && data.get("custom_data").has("order_id")) {
+                        webhookPayload.setOrderId(data.get("custom_data").get("order_id").asText());
                     }
-                    if (data.has("current_period")) {
+                    if (data.has("current_billing_period")) {
                         JsonNode period = data.get("current_period");
                         if (period.has("starts_at")) {
                             webhookPayload.setCurrentPeriodStart(parsePaddleDateTime(period.get("starts_at").asText()));

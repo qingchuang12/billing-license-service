@@ -156,15 +156,11 @@ public class LicenseIssuer {
     
     private String getJwsAlgorithm() {
         String alg = kmsService.getAlgorithm();
-        switch (alg) {
-            case "Ed25519":
-                return "EdDSA";
-            case "EC":
-                return "ES256";
-            case "RSA":
-                return "RS256";
-            default:
-                return "ES256";
-        }
+        return switch (alg) {
+            case "Ed25519" -> "EdDSA";
+            case "EC" -> "ES256";   // 本地/阿里云 EC 默认 ES256
+            case "RSA" -> "RS256";
+            default -> alg;          // AWS 直接返回精确 JWS alg（ES256/ES384/ES512/RS256，见 W17）
+        };
     }
 }

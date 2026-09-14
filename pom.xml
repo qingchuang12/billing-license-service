@@ -272,6 +272,14 @@
             <version>3.1.0</version>
         </dependency>
 
+        <!-- AOP：@Audit 切面（方案 B 审计统一落库）依赖 AspectJ 织入。
+             Spring Boot 4.0.6 的 dependencies BOM 未托管 spring-boot-starter-aop（离线不可用），
+             直接引入其托管的 aspectjweaver（@Aspect / ProceedingJoinPoint 运行时所需，版本由 BOM 管理）。 -->
+        <dependency>
+            <groupId>org.aspectj</groupId>
+            <artifactId>aspectjweaver</artifactId>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

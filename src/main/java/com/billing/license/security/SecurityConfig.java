@@ -23,8 +23,8 @@ import java.util.List;
  * 1. 支付回调 /api/webhooks/** 全部放行——各渠道策略自行校验签名，不应被框架拦截导致收不到款。
  * 2. 客户端可公开访问的端点（收银台创建/状态轮询、License 离线校验、凭兑换码兑换）放行，
  *    其安全性依赖签名 License + 限流（RateLimitService），后续可按需收紧。
- * 3. 管理端与特权操作（/api/admin/**、/api/v1/licenses/**、/api/v1/orders/**、
- *    兑换码生成/吊销）必须携带合法 X-API-Key（ROLE_ADMIN），否则 401。
+ * 3. 管理端与全部管理动作（/api/admin/**：订单签发/退款、License 作废/换机、兑换码生成/撤销）
+ *    必须携带合法 X-API-Key（ROLE_ADMIN），否则 401。鉴权模型共两档：公开 / X-API-Key（I1 收敛）。
  * 4. 其余一切请求默认拒绝（denyAll），避免遗漏暴露。
  * 5. 无状态（STATELESS）+ 关闭 CSRF（纯 API、令牌鉴权，无浏览器会话，CSRF 不适用）。
  * 6. H9：CORS 按配置白名单开放（默认不开放跨域），仅在部署独立前端域名时显式配置。
@@ -58,15 +58,13 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                 // w14：放行 Swagger/OpenAPI 文档（开发联调用，生产可按需收紧）
                 .requestMatchers("/v3/api-docs", "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                // 公开端点：收银台、支付回调、License 在线校验、兑换码兑换
                 .requestMatchers("/api/webhooks/**", "/api/checkout/**",
-                    "/api/v1/licenses/verify/**", "/api/v1/redeem/redeem").permitAll()
-                // i7：管理端鉴权收敛为单 header。AdminController 自身已用 X-Admin-API-Key 校验，
-                // 故 SecurityConfig 不再对 /api/admin/** 要求 ROLE_ADMIN（避免管理端点需同时带两个 header）。
-                // 其余特权端点仍由 ApiKeyAuthFilter 要求 X-API-Key + ROLE_ADMIN。
-                .requestMatchers("/api/admin/**").permitAll()
-                .requestMatchers("/api/v1/licenses/**",
-                    "/api/v1/orders/**", "/api/v1/redeem/generate",
-                    "/api/v1/redeem/revoke/**").hasAuthority("ROLE_ADMIN")
+                    "/api/licenses/verify/**", "/api/redeem/redeem").permitAll()
+                // I1（2026-09-14）鉴权收敛为两档：管理端与全部管理动作统一要求 X-API-Key + ROLE_ADMIN。
+                // 原 /api/admin/** 由 AdminController 用 X-Admin-API-Key 自校验，而该 header 与 X-API-Key
+                // 校验的是同一份 security.admin-api-keys（纯冗余），故收敛为单 header、统一在此鉴权。
+                .requestMatchers("/api/admin/**").hasAuthority("ROLE_ADMIN")
                 .anyRequest().denyAll())
             .exceptionHandling(ex -> ex.authenticationEntryPoint(
                 new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
@@ -89,7 +87,7 @@ public class SecurityConfig {
         }
         // 仅允许已配置源头；明确约束方法、头部与是否带凭证
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-API-Key", "X-Admin-API-Key"));
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-API-Key"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

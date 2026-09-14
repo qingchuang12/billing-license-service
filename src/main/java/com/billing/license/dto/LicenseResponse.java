@@ -1,10 +1,10 @@
 package com.billing.license.dto;
 
 import com.billing.license.entity.License;
-import lombok.Data;
-import lombok.Builder;
-import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -31,7 +31,7 @@ public class LicenseResponse {
     /** 产品 SKU（库存量单位） */
     private String productSku;
     
-    /** License 状态：ACTIVE, EXPIRED, REVOKED, SUSPENDED, PENDING_ACTIVATION */
+    /** License 状态：ACTIVE, EXPIRED, REVOKED, REISSUED（D3） */
     private String status;
     
     /** License 签发时间 */
@@ -40,8 +40,11 @@ public class LicenseResponse {
     /** License 过期时间 */
     private LocalDateTime expiresAt;
     
-    /** License 激活时间 */
-    private LocalDateTime activatedAt;
+    /** 最近校验时间（verify 时更新） */
+    private LocalDateTime lastVerifiedAt;
+    
+    /** 换机重发时指向的原 License ID（仅 REISSUED 记录的后续新证会带值） */
+    private UUID reissuedFrom;
     
     /** 签名的 License Token，用于离线验证 */
     private String signedToken;
@@ -59,7 +62,8 @@ public class LicenseResponse {
             .status(license.getStatus() != null ? license.getStatus().name() : null)
             .issuedAt(license.getIssuedAt())
             .expiresAt(license.getExpiresAt())
-            .activatedAt(license.getActivatedAt())
+            .lastVerifiedAt(license.getLastVerifiedAt())
+            .reissuedFrom(license.getReissuedFrom())
             .build();
     }
 }

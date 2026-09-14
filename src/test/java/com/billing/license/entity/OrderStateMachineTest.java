@@ -18,7 +18,7 @@ class OrderStateMachineTest {
                 .id(UUID.randomUUID())
                 .orderNumber("ORD-SM-1")
                 .totalAmount(new BigDecimal("10.00"))
-                .currency("USD")
+                .currency(Currency.USD)
                 .status(Order.OrderStatus.PENDING)
                 .paymentStatus(Order.PaymentStatus.UNPAID)
                 .build();

@@ -1,5 +1,6 @@
 package com.billing.license.service.payment.impl;
 
+import com.billing.license.entity.Currency;
 import com.billing.license.entity.Order;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import org.junit.jupiter.api.Test;
@@ -25,7 +26,7 @@ class RefundStrategyContractTest {
         return Order.builder()
                 .orderNumber("ORD-TEST-1")
                 .totalAmount(new BigDecimal("10.00"))
-                .currency("USD")
+                .currency(Currency.USD)
                 .build();
     }
 

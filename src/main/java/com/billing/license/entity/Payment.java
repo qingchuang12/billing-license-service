@@ -1,10 +1,12 @@
 package com.billing.license.entity;
 
+import com.billing.license.service.payment.strategy.PaymentMethod;
+import com.billing.license.service.payment.strategy.PaymentStatus;
 import jakarta.persistence.*;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -51,17 +53,25 @@ public class Payment {
     @Column(name = "amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal amount;
     
+    /** 币种（ISO 4217，枚举化） */
+    @Enumerated(EnumType.STRING)
     @Column(name = "currency", length = 3)
-    private String currency;
+    private Currency currency;
     
+    /** 支付方式（支付渠道，枚举化） */
+    @Enumerated(EnumType.STRING)
     @Column(name = "method", length = 32)
-    private String method;
+    private PaymentMethod method;
     
+    /** 支付状态（枚举化） */
+    @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 32, nullable = false)
-    private String status;
+    private PaymentStatus status;
     
+    /** 支付渠道（与 method 同源，枚举化） */
+    @Enumerated(EnumType.STRING)
     @Column(name = "channel", length = 32)
-    private String channel;
+    private PaymentMethod channel;
     
     @Column(name = "metadata", columnDefinition = "TEXT")
     private String metadata;

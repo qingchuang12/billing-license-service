@@ -1,5 +1,6 @@
 package com.billing.license.service.payment.util;
 
+import com.billing.license.entity.Currency;
 import com.billing.license.entity.Order;
 import com.billing.license.service.payment.strategy.WebhookPayload;
 import org.junit.jupiter.api.Test;
@@ -15,7 +16,7 @@ class AmountValidatorTest {
 
     private final AmountValidator validator = new AmountValidator();
 
-    private Order buildOrder(String currency, String amount) {
+    private Order buildOrder(Currency currency, String amount) {
         Order order = new Order();
         order.setCurrency(currency);
         order.setTotalAmount(new BigDecimal(amount));
@@ -24,7 +25,7 @@ class AmountValidatorTest {
 
     @Test
     void validateAmount_shouldPass_whenAmountsMatch() {
-        Order order = buildOrder("USD", "14.99");
+        Order order = buildOrder(Currency.USD, "14.99");
         WebhookPayload payload = new WebhookPayload();
         payload.setCurrency("USD");
         payload.setAmount(new BigDecimal("14.99"));
@@ -34,7 +35,7 @@ class AmountValidatorTest {
 
     @Test
     void validateAmount_shouldPass_withinTolerance() {
-        Order order = buildOrder("USD", "14.99");
+        Order order = buildOrder(Currency.USD, "14.99");
         WebhookPayload payload = new WebhookPayload();
         payload.setCurrency("USD");
         payload.setAmount(new BigDecimal("14.9901")); // 差 0.0001 < 0.01 容忍
@@ -44,7 +45,7 @@ class AmountValidatorTest {
 
     @Test
     void validateAmount_shouldFail_whenAmountDiffers() {
-        Order order = buildOrder("USD", "14.99");
+        Order order = buildOrder(Currency.USD, "14.99");
         WebhookPayload payload = new WebhookPayload();
         payload.setCurrency("USD");
         payload.setAmount(new BigDecimal("9.99"));
@@ -54,7 +55,7 @@ class AmountValidatorTest {
 
     @Test
     void validateAmount_shouldFail_whenCurrencyMismatch() {
-        Order order = buildOrder("USD", "14.99");
+        Order order = buildOrder(Currency.USD, "14.99");
         WebhookPayload payload = new WebhookPayload();
         payload.setCurrency("CNY");
         payload.setAmount(new BigDecimal("14.99"));
@@ -64,7 +65,7 @@ class AmountValidatorTest {
 
     @Test
     void validateAmount_shouldAcceptCnyRmbAlias() {
-        Order order = buildOrder("CNY", "99.00");
+        Order order = buildOrder(Currency.CNY, "99.00");
         WebhookPayload payload = new WebhookPayload();
         payload.setCurrency("RMB");
         payload.setAmount(new BigDecimal("99.00"));
@@ -74,7 +75,7 @@ class AmountValidatorTest {
 
     @Test
     void validateAmount_shouldFail_whenPayloadNull() {
-        assertFalse(validator.validateAmount(buildOrder("USD", "1.00"), null));
+        assertFalse(validator.validateAmount(buildOrder(Currency.USD, "1.00"), null));
     }
 
     @Test

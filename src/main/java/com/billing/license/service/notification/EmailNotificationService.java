@@ -1,5 +1,7 @@
 package com.billing.license.service.notification;
 
+import com.billing.license.entity.Currency;
+import jakarta.mail.internet.MimeMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -8,9 +10,6 @@ import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.util.HtmlUtils;
-
-import jakarta.mail.MessagingException;
-import jakarta.mail.internet.MimeMessage;
 
 /**
  * 邮件通知服务 - 发送支付成功/失败、License 签发等通知
@@ -42,7 +41,7 @@ public class EmailNotificationService {
      * 发送支付成功通知
      */
     @Async
-    public void sendPaymentSuccessEmail(String to, String orderNo, String productName, double amount, String currency) {
+    public void sendPaymentSuccessEmail(String to, String orderNo, String productName, double amount, Currency currency) {
         logger.info("发送支付成功邮件：to={}, orderNo={}", to, orderNo);
         
         if (!isEmailConfigured()) {
@@ -58,13 +57,14 @@ public class EmailNotificationService {
             helper.setTo(to);
             helper.setSubject("支付成功 - 订单 " + orderNo);
             
-            String content = buildPaymentSuccessTemplate(orderNo, productName, amount, currency);
+            String content = buildPaymentSuccessTemplate(orderNo, productName, amount,
+                currency != null ? currency.code() : null);
             helper.setText(content, true);
             
             mailSender.send(message);
             logger.info("支付成功邮件发送成功：to={}", to);
             
-        } catch (MessagingException e) {
+        } catch (Exception e) {
             logger.error("发送支付成功邮件失败：to={}", to, e);
         }
     }
@@ -95,7 +95,7 @@ public class EmailNotificationService {
             mailSender.send(message);
             logger.info("支付失败邮件发送成功：to={}", to);
             
-        } catch (MessagingException e) {
+        } catch (Exception e) {
             logger.error("发送支付失败邮件失败：to={}", to, e);
         }
     }
@@ -126,7 +126,7 @@ public class EmailNotificationService {
             mailSender.send(message);
             logger.info("License 签发邮件发送成功：to={}", to);
             
-        } catch (MessagingException e) {
+        } catch (Exception e) {
             logger.error("发送 License 签发邮件失败：to={}", to, e);
         }
     }
@@ -157,7 +157,7 @@ public class EmailNotificationService {
             mailSender.send(message);
             logger.info("兑换码邮件发送成功：to={}", to);
             
-        } catch (MessagingException e) {
+        } catch (Exception e) {
             logger.error("发送兑换码邮件失败：to={}", to, e);
         }
     }
@@ -188,7 +188,7 @@ public class EmailNotificationService {
             mailSender.send(message);
             logger.info("退款通知邮件发送成功：to={}", to);
 
-        } catch (MessagingException e) {
+        } catch (Exception e) {
             logger.error("发送退款通知邮件失败：to={}", to, e);
         }
     }

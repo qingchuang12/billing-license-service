@@ -1,5 +1,6 @@
 package com.billing.license.service.payment.impl;
 
+import com.billing.license.entity.Currency;
 import com.billing.license.entity.Order;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentStatus;
@@ -106,15 +107,19 @@ class PaddleStrategyTest {
         order.setOrderNumber("ORD-PADDLE-1");
         order.setTitle("License");
         order.setTotalAmount(new BigDecimal("9.99"));
-        order.setCurrency("USD");
+        order.setCurrency(Currency.USD);
 
         Map<String, Object> body = strategy.buildCreateTransactionBody(order);
         List<Map<String, Object>> items = (List<Map<String, Object>>) body.get("items");
         Map<String, Object> price = (Map<String, Object>) items.get(0).get("price");
-        Map<String, Object> unitPrice = (Map<String, Object>) price.get("unitPrice");
+        // C2：出站字段为 snake_case（unit_price / currency_code）
+        Map<String, Object> unitPrice = (Map<String, Object>) price.get("unit_price");
 
         assertEquals("999", unitPrice.get("amount"));
-        assertEquals("USD", unitPrice.get("currencyCode"));
+        assertEquals("USD", unitPrice.get("currency_code"));
+        // 顶层 custom_data 与必填 tax_mode
+        assertEquals("ORD-PADDLE-1", ((Map<?, ?>) body.get("custom_data")).get("order_id"));
+        assertEquals("external", body.get("tax_mode"));
     }
 
     @Test
@@ -131,8 +136,8 @@ class PaddleStrategyTest {
             + "\"event_type\":\"transaction.completed\","
             + "\"data\":{"
             + "\"id\":\"txn_123\","
-            + "\"currencyCode\":\"USD\","
-            + "\"customData\":{\"order_id\":\"ORD-PADDLE-1\"},"
+            + "\"currency_code\":\"USD\","
+            + "\"custom_data\":{\"order_id\":\"ORD-PADDLE-1\"},"
             + "\"details\":{\"totals\":{\"total\":\"1499\"}}"
             + "}}";
 

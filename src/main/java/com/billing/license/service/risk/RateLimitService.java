@@ -66,13 +66,15 @@ public class RateLimitService {
     /**
      * 仅计数（不抛异常），用于记录兑换失败次数。
      */
-    public int countOnly(String namespace, String key, int windowMinutes) {
+    public int countOnly(String namespace, String key, int windowMinutes, int capacity) {
         if (key == null || key.isEmpty()) return 0;
         evictStaleWindows();
         String composite = namespace + ":" + key.toLowerCase();
         long now = Instant.now().toEpochMilli();
         long windowMillis = (long) windowMinutes * 60_000L;
-        TimestampRing ring = windows.computeIfAbsent(composite, k -> new TimestampRing(Integer.MAX_VALUE));
+        // C9：环形缓冲容量由调用方传入有限值（redeemFailureMax+1），避免 Integer.MAX_VALUE+1 溢出被钳为 8
+        // 导致暴力猜测锁永不触发。
+        TimestampRing ring = windows.computeIfAbsent(composite, k -> new TimestampRing(capacity));
         return ring.record(now, windowMillis);
     }
 
@@ -95,7 +97,7 @@ public class RateLimitService {
 
     public int recordRedeemFailure(String ip) {
         BillingProperties.Risk risk = billingProperties.getRisk();
-        int count = countOnly("redeem-fail", ip, risk.getRedeemFailureWindowMinutes());
+        int count = countOnly("redeem-fail", ip, risk.getRedeemFailureWindowMinutes(), risk.getRedeemFailureMax() + 1);
         if (count > risk.getRedeemFailureMax()) {
             log.warn("风控触发：兑换暴力猜测 namespace=redeem-fail, ip={}, count={}", ip, count);
             throw new RateLimitExceededException("redeem-fail", ip, count, risk.getRedeemFailureMax());
@@ -135,8 +137,10 @@ public class RateLimitService {
         private final AtomicLong lastAccess = new AtomicLong(0);
 
         TimestampRing(int capacity) {
-            // 容量+1 作为环形缓冲大小（允许瞬间峰值稍大于 max 再被 check 拦下）
-            this.stamps = new java.util.concurrent.atomic.AtomicLongArray(Math.max(8, capacity + 1));
+            // C9：容量+1 作为环形缓冲大小；用 long 防 Integer.MAX_VALUE+1 溢出被钳为 8 导致风控失效
+            long size = (long) capacity + 1;
+            this.stamps = new java.util.concurrent.atomic.AtomicLongArray(
+                    (int) Math.max(8, Math.min(size, Integer.MAX_VALUE - 8L)));
         }
 
         int record(long now, long windowMillis) {

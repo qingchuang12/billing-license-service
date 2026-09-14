@@ -1,5 +1,6 @@
 package com.billing.license.entity;
 
+import com.billing.license.service.payment.strategy.PaymentMethod;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -38,8 +39,9 @@ public class Subscription {
     @Column(name = "product_id")
     private UUID productId;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private String provider; // PADDLE / STRIPE
+    private PaymentMethod provider; // PADDLE / STRIPE
 
     @Column(name = "provider_subscription_id", nullable = false, unique = true)
     private String providerSubscriptionId;

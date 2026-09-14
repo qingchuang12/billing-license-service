@@ -1,13 +1,13 @@
 package com.billing.license.entity;
 
 import jakarta.persistence.*;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
@@ -34,6 +34,7 @@ public class OrderItem {
     private Product product;
     
     @Column(nullable = false)
+    @Builder.Default
     private Integer quantity = 1;
     
     @Column(nullable = false)

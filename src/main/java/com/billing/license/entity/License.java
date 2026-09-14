@@ -1,10 +1,10 @@
 package com.billing.license.entity;
 
 import jakarta.persistence.*;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -48,9 +48,6 @@ public class License {
     
     @Column(name = "expires_at")
     private LocalDateTime expiresAt;
-    
-    @Column(name = "activated_at")
-    private LocalDateTime activatedAt;
     
     @Column(name = "last_verified_at")
     private LocalDateTime lastVerifiedAt;
@@ -96,10 +93,13 @@ public class License {
     }
     
     public enum LicenseStatus {
+        /** 有效 */
         ACTIVE,
+        /** 已过期（verify 时判定超期后落库） */
         EXPIRED,
+        /** 已吊销（退款/违规，由管理端发起） */
         REVOKED,
-        SUSPENDED,
-        PENDING_ACTIVATION
+        /** 已换机重发（旧 License 退出使用，新 License 通过 reissuedFrom 指回本记录） */
+        REISSUED
     }
 }

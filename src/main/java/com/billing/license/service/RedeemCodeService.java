@@ -1,11 +1,7 @@
 package com.billing.license.service;
 
 import com.billing.license.dto.RedeemCodeRequest;
-import com.billing.license.entity.License;
-import com.billing.license.entity.Order;
-import com.billing.license.entity.OrderItem;
-import com.billing.license.entity.Product;
-import com.billing.license.entity.RedeemCode;
+import com.billing.license.entity.*;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.infrastructure.crypto.LicenseIssuer;
 import com.billing.license.repository.LicenseRepository;
@@ -20,6 +16,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @Slf4j
@@ -46,6 +44,14 @@ public class RedeemCodeService {
     @Transactional
     public String generateCode(String orderId) {
         log.info("Generating redeem code for order: {}", orderId);
+
+        // C5：按 orderId 幂等——同一订单已生成过兑换码则直接返回已有码，避免 Webhook 迟到与
+        // 补偿并发导致「一笔付款发两个兑换码」的资损。
+        var existing = redeemCodeRepository.findByOrderId(orderId);
+        if (!existing.isEmpty()) {
+            log.info("订单 {} 已存在兑换码，幂等返回：{}", orderId, existing.get(0).getCode());
+            return existing.get(0).getCode();
+        }
 
         // B10 修复：下单自动发货路径（Webhook）生成的兑换码必须绑定 product，
         // 否则 redeem_codes.product_id NOT NULL 会崩溃，且 doRedeem 中取 product 会 NPE
@@ -75,10 +81,13 @@ public class RedeemCodeService {
     }
 
     /**
-     * Generate a batch of redeem codes
+     * Generate a batch of redeem codes.
+     *
+     * <p>I5（2026-09-14）：返回**生成的码明文列表**。原实现只返回数量，导致管理端生成后
+     * 无法通过 API 取回码明文（"批量生成导入发卡平台"实际不可用）。
      */
     @Transactional
-    public int generateCodes(String productSku, int count, LocalDateTime expiresAt) {
+    public List<String> generateCodes(String productSku, int count, LocalDateTime expiresAt) {
         log.info("Generating {} redeem codes for product: {}", count, productSku);
 
         // i3：防御性二次校验——即便绕过 Controller 边界，服务层也拒绝非法/超大批量
@@ -94,7 +103,7 @@ public class RedeemCodeService {
             .orElseThrow(() -> new BusinessException("PRODUCT_NOT_FOUND", 
                 "Product not found: " + productSku));
         
-        int created = 0;
+        List<String> codes = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             String code = generateCode();
             
@@ -108,11 +117,27 @@ public class RedeemCodeService {
                 .build();
             
             redeemCodeRepository.save(redeemCode);
-            created++;
+            codes.add(code);
         }
         
-        log.info("Generated {} redeem codes", created);
-        return created;
+        log.info("Generated {} redeem codes", codes.size());
+        return codes;
+    }
+
+    /**
+     * I6：按产品 SKU + 状态检索兑换码（参数为空表示不过滤），供管理端导出与对账。
+     */
+    public List<RedeemCode> listCodes(String productSku, String status) {
+        RedeemCode.RedeemCodeStatus target = null;
+        if (status != null && !status.isBlank()) {
+            try {
+                target = RedeemCode.RedeemCodeStatus.valueOf(status.trim().toUpperCase());
+            } catch (IllegalArgumentException e) {
+                throw new BusinessException("INVALID_CODE_STATUS", "非法的兑换码状态值: " + status);
+            }
+        }
+        String sku = (productSku == null || productSku.isBlank()) ? null : productSku.trim();
+        return redeemCodeRepository.search(sku, target);
     }
     
     /**
@@ -167,7 +192,15 @@ public class RedeemCodeService {
                 "This code has expired");
         }
 
-        UUID customerId = UUID.fromString(request.getCustomerId());
+        // w5：customerId 可能为空或非法格式，裸 UUID.fromString 会抛 IllegalArgumentException → 500。
+        // 收敛为业务异常并给友好提示；缺省时生成随机 UUID 保持兼容。
+        UUID customerId;
+        try {
+            customerId = (request.getCustomerId() == null || request.getCustomerId().isBlank())
+                    ? UUID.randomUUID() : UUID.fromString(request.getCustomerId());
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("INVALID_CUSTOMER_ID", "非法的 customerId: " + request.getCustomerId());
+        }
 
         // Create license
         String licenseKey = generateLicenseKey();

@@ -1,5 +1,6 @@
 package com.billing.license.service;
 
+import com.billing.license.dto.LicenseResponse;
 import com.billing.license.dto.OrderResponse;
 import com.billing.license.entity.License;
 import com.billing.license.entity.Order;
@@ -17,9 +18,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -45,21 +46,62 @@ public class AdminService {
     private static final ObjectMapper METADATA_MAPPER = new ObjectMapper();
 
     /**
-     * 列出全部订单
+     * 订单查询（I2 收敛）：支持按状态 / 订单号 / 订单 ID 过滤，三者全部留空即全量列表。
+     * 一个端点替代原 {@code listOrders} + {@code listOrdersByStatus} + OrderController 的 by-id/by-number 四个入口。
      */
-    public List<OrderResponse> listOrders() {
-        return orderRepository.findAll().stream()
-            .map(orderService::mapToResponse)
-            .collect(Collectors.toList());
+    public List<OrderResponse> listOrders(Order.OrderStatus status, String orderNumber, String orderId) {
+        List<Order> orders;
+        if (orderNumber != null && !orderNumber.isBlank()) {
+            orders = orderRepository.findByOrderNumber(orderNumber.trim())
+                .map(o -> List.of(o)).orElse(List.of());
+        } else if (orderId != null && !orderId.isBlank()) {
+            UUID id;
+            try {
+                id = UUID.fromString(orderId.trim());
+            } catch (IllegalArgumentException e) {
+                throw new BusinessException("INVALID_ORDER_ID", "非法的订单 ID: " + orderId);
+            }
+            orders = orderRepository.findById(id).map(o -> List.of(o)).orElse(List.of());
+        } else if (status != null) {
+            orders = orderRepository.findByStatus(status);
+        } else {
+            orders = orderRepository.findAll();
+        }
+        return orders.stream().map(orderService::mapToResponse).collect(Collectors.toList());
+    }
+
+    /** 按订单号取订单实体（供签发等管理动作复用） */
+    public Order getOrderByNumber(String orderNumber) {
+        return orderRepository.findByOrderNumber(orderNumber)
+            .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "Order not found: " + orderNumber));
     }
 
     /**
-     * 按状态筛选订单
+     * License 查询（I3 收敛）：支持按客户 ID / 订单号 / 状态过滤，三者全部留空即全量；
+     * 返回脱敏管理视图（不回显 signedToken）。一个端点替代原
+     * {@code /api/licenses/customer/{cid}} 与 {@code /api/admin/orders/{n}/licenses}。
      */
-    public List<OrderResponse> listOrdersByStatus(Order.OrderStatus status) {
-        return orderRepository.findByStatus(status).stream()
-            .map(orderService::mapToResponse)
-            .collect(Collectors.toList());
+    public List<LicenseResponse> listLicenses(UUID customerId, String orderNumber, String status) {
+        List<License> licenses;
+        if (orderNumber != null && !orderNumber.isBlank()) {
+            licenses = licenseRepository.findByOrder(getOrderByNumber(orderNumber.trim()));
+        } else if (customerId != null) {
+            licenses = licenseRepository.findByCustomerId(customerId);
+        } else {
+            licenses = licenseRepository.findAll();
+        }
+        if (status != null && !status.isBlank()) {
+            License.LicenseStatus target;
+            try {
+                target = License.LicenseStatus.valueOf(status.trim().toUpperCase());
+            } catch (IllegalArgumentException e) {
+                throw new BusinessException("INVALID_LICENSE_STATUS", "非法的 License 状态值: " + status);
+            }
+            licenses = licenses.stream()
+                .filter(l -> l.getStatus() == target)
+                .collect(Collectors.toList());
+        }
+        return licenses.stream().map(LicenseResponse::adminView).collect(Collectors.toList());
     }
 
     /**
@@ -81,7 +123,7 @@ public class AdminService {
         }
 
         // 调用支付渠道退款
-        PaymentMethod method = resolveMethod(order.getPaymentProvider());
+        PaymentMethod method = order.getPaymentProvider();
 
         // C2 兜底：存量订单（provider 为 NULL）从已落库的 Payment.method 回补渠道，
         // 避免线上历史 PAID 订单退款依旧 100% 失败。Payment.method 由 createPayment 写入，比 Order 字段更权威。
@@ -89,7 +131,7 @@ public class AdminService {
             try {
                 Payment payment = paymentRepository.findByOrderIdStr(order.getId().toString()).orElse(null);
                 if (payment != null && payment.getMethod() != null) {
-                    method = resolveMethod(payment.getMethod());
+                    method = payment.getMethod();
                     if (method != null) {
                         log.info("存量订单渠道兜底：从 Payment.method 回补 provider={}, orderNumber={}", method, orderNumber);
                     }
@@ -127,10 +169,13 @@ public class AdminService {
         }
 
         if (!channelRefunded) {
-            // H4：渠道退款未成功——绝不能标记 REFUNDED。置内部退款失败态，保留 PAID。
-            order.markRefundFailed();
-            order.setMetadata(appendMetadata(order.getMetadata(), "refundReason", reason));
-            orderRepository.save(order);
+            // C8：退款失败态必须在独立事务（REQUIRES_NEW）中落库，否则随外层 @Transactional 回滚，
+            // 导致 DB 永远 PAID、运营看不到待处理清单。内层提交后外层再抛异常回滚不影响已落库的失败态。
+            try {
+                persistRefundFailed(order, reason);
+            } catch (Exception ex) {
+                log.error("标记退款失败态异常（内层事务）：orderNumber={}", orderNumber, ex);
+            }
             throw new BusinessException("REFUND_FAILED",
                 "支付渠道退款未成功（订单保持已支付）。请到支付渠道控制台手动退款，或确认渠道配置后重试。orderNumber=" + orderNumber);
         }
@@ -161,6 +206,17 @@ public class AdminService {
     }
 
     /**
+     * C8：在独立事务中持久化退款失败态（markRefundFailed + 记录原因），
+     * 避免被外层退款事务回滚。重新按 id 加载，避免修改外层受管实体。
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void persistRefundFailed(Order order, String reason) {
+        order.markRefundFailed();
+        order.setMetadata(appendMetadata(order.getMetadata(), "refundReason", reason));
+        orderRepository.save(order);
+    }
+
+    /**
      * 作废指定 License
      */
     @Transactional
@@ -174,12 +230,16 @@ public class AdminService {
     }
 
     /**
-     * 查询订单下全部 License
+     * H-C2：按 License 密钥查询详情（管理端）。
+     *
+     * <p>补齐管理端查询缺口：公开端点 {@code GET /api/licenses/verify/{licenseKey}} 对
+     * EXPIRED / REVOKED / REISSUED 会直接抛业务异常（400），而售后排查恰恰要看**失效件**
+     * （为何失效、何时被吊销、换机重发到哪条）。本方法**不过滤状态**，返回脱敏管理视图。
      */
-    public List<License> listLicensesByOrder(String orderNumber) {
-        Order order = orderRepository.findByOrderNumber(orderNumber)
-            .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "Order not found: " + orderNumber));
-        return licenseRepository.findByOrder(order);
+    public LicenseResponse getLicenseDetail(String licenseKey) {
+        License license = licenseRepository.findByLicenseKey(licenseKey)
+            .orElseThrow(() -> new BusinessException("LICENSE_NOT_FOUND", "License not found: " + licenseKey));
+        return LicenseResponse.adminView(license);
     }
 
     private PaymentMethod resolveMethod(String provider) {

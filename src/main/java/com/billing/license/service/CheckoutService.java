@@ -3,18 +3,9 @@ package com.billing.license.service;
 import com.billing.license.dto.CheckoutRequest;
 import com.billing.license.dto.CheckoutResponse;
 import com.billing.license.dto.SelectProviderRequest;
-import com.billing.license.entity.CheckoutSession;
-import com.billing.license.entity.Order;
-import com.billing.license.entity.OrderItem;
-import com.billing.license.entity.Payment;
-import com.billing.license.entity.Product;
+import com.billing.license.entity.*;
 import com.billing.license.exception.BusinessException;
-import com.billing.license.repository.CheckoutSessionRepository;
-import com.billing.license.repository.LicenseRepository;
-import com.billing.license.repository.OrderRepository;
-import com.billing.license.repository.PaymentRepository;
-import com.billing.license.repository.ProductRepository;
-import com.billing.license.repository.RedeemCodeRepository;
+import com.billing.license.repository.*;
 import com.billing.license.service.payment.PaymentService;
 import com.billing.license.service.payment.impl.PaymentServiceFactory;
 import com.billing.license.service.payment.strategy.PaymentMethod;
@@ -97,7 +88,7 @@ public class CheckoutService {
 
         // 双币种定价（B19）：金额与币种随区域取用，国内走 CNY/priceCny，国际走 USD/priceUsd
         BigDecimal orderAmount = product.getPriceForRegion(domestic);
-        String orderCurrency = product.getCurrencyForRegion(domestic);
+        Currency orderCurrency = product.getCurrencyForRegion(domestic);
 
         // 构建订单
         Order order = Order.builder()
@@ -142,12 +133,23 @@ public class CheckoutService {
             .build();
         checkoutSessionRepository.save(session);
 
+        // I7（2026-09-14）一步下单：请求带 provider 时直接创建支付并返回二维码/跳转链接，
+        // 免去前端「create → select-provider」两次往返；不带则维持两步（先返回可用支付方式列表）。
+        // 注：同类内部调用，复用外层 createCheckout 的既有事务。
+        if (request.getProvider() != null && !request.getProvider().isBlank()) {
+            SelectProviderRequest selectRequest = new SelectProviderRequest();
+            selectRequest.setProvider(request.getProvider().trim());
+            CheckoutResponse paid = selectProvider(checkoutId, selectRequest);
+            paid.setPaymentMethods(methods.stream().map(Enum::name).collect(Collectors.toList()));
+            return paid;
+        }
+
         return CheckoutResponse.builder()
             .checkoutId(checkoutId)
             .orderNumber(order.getOrderNumber())
             .status(session.getStatus().name())
             .paymentMethods(methods.stream().map(Enum::name).collect(Collectors.toList()))
-            .payUrl("")  // 选择支付方式后再生成
+            .payUrl("")  // 未传 provider：选择支付方式后再生成
             .expiresAt(session.getExpiresAt() != null ? session.getExpiresAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() : null)
             .build();
     }
@@ -171,7 +173,7 @@ public class CheckoutService {
         // H5 修复：落库订单所选支付渠道，供管理端退款 resolveMethod(order.getPaymentProvider()) 使用。
         // 全工程此前无任何 setPaymentProvider 调用点 → 退款恒走 REFUND_FAILED。
         // 仅当渠道支付创建成功（未抛 PAYMENT_CREATE_FAILED）后才落库，避免脏状态。
-        order.setPaymentProvider(method.name());
+        order.setPaymentProvider(method);
         orderRepository.save(order);
 
         // H6：支付创建失败（渠道未配置/网络异常/参数错误等）必须向前端显式反馈，
@@ -184,7 +186,7 @@ public class CheckoutService {
         }
 
         // 更新收银台会话
-        session.setProvider(method.name());
+        session.setProvider(method);
         session.setStatus(CheckoutSession.Status.PENDING);
         session.setProviderSessionId(paymentResponse.getPaymentId());
         if (paymentResponse.getPayUrl() != null) session.setPayUrl(paymentResponse.getPayUrl());
@@ -309,16 +311,44 @@ public class CheckoutService {
             if (payment == null || payment.getMethod() == null) {
                 return;
             }
-            PaymentMethod method = resolveMethod(payment.getMethod());
+            PaymentMethod method = payment.getMethod();
             PaymentStatus status = paymentService.queryPaymentStatus(payment.getPaymentId(), method);
             if (PaymentStatus.SUCCESS == status) {
-                log.info("主动对账补偿：渠道确认已支付，标记会话 PAID：checkoutId={}", session.getCheckoutId());
-                session.setStatus(CheckoutSession.Status.PAID);
-                checkoutSessionRepository.save(session);
+                // C5：统一发货入口——会话与订单同置 PAID，复用与 fulfillOrder 等价的发放逻辑（幂等），
+                // 避免「只改会话不发货 / 订单恒 PENDING」导致 Webhook 迟到二次发放或永远拿不到 License。
+                synchronized (orderLock(session.getOrderNumber())) {
+                    session.setStatus(CheckoutSession.Status.PAID);
+                    checkoutSessionRepository.save(session);
+                    Order order = orderRepository.findById(session.getOrderId()).orElse(null);
+                    if (order != null && order.canFulfill()) {
+                        order.markPaid();
+                        orderRepository.save(order);
+                        fulfillSession(session);
+                    }
+                }
+                log.info("主动对账补偿：渠道确认已支付，已标记会话/订单 PAID 并发货：checkoutId={}", session.getCheckoutId());
             }
         } catch (Exception e) {
             // 补偿失败不应影响轮询返回；记录日志，等待 Webhook 或下次轮询重试
             log.warn("主动对账补偿失败（非致命）：checkoutId={}", session.getCheckoutId(), e);
+        }
+    }
+
+    /**
+     * C5：统一发放逻辑（与 getStatus 的 PAID 分支一致），按订单幂等：
+     * 机器码订单签发 License，无机器码订单生成兑换码；已存在则直接复用，不重复发放。
+     */
+    private void fulfillSession(CheckoutSession session) {
+        if (session.getMachineId() != null && !session.getMachineId().isEmpty()) {
+            var existing = licenseRepository.findByOrderId(session.getOrderId());
+            if (existing.isEmpty()) {
+                licenseService.issueLicensesForOrder(session.getOrderId());
+            }
+        } else {
+            var existing = redeemCodeRepository.findByOrderId(session.getOrderNumber());
+            if (existing.isEmpty()) {
+                redeemCodeService.generateCode(session.getOrderNumber());
+            }
         }
     }
 
@@ -333,8 +363,8 @@ public class CheckoutService {
         });
     }
 
-    private boolean isDomestic(String currency, String locale) {
-        if (currency != null && currency.equalsIgnoreCase("CNY")) return true;
+    private boolean isDomestic(Currency currency, String locale) {
+        if (currency == Currency.CNY) return true;
         if (locale != null && locale.toLowerCase().startsWith("zh")) return true;
         return false;
     }
