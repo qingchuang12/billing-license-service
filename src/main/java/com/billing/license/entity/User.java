@@ -1,0 +1,103 @@
+package com.billing.license.entity;
+
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+/**
+ * 终端用户账号（plan v2.10）。
+ *
+ * <p><b>{@code id} 直接承载 {@code Order.customerId}</b>（决策 1）：登录用户下单即以 userId 作为
+ * customerId，天然打通「用户 → 订单 → License」；匿名订单的 customerId 为随机 UUID，
+ * 不对应任何 User。由于后者存在，本表不建到 orders 的外键。
+ *
+ * <p><b>{@code tokenVersion} 是令牌失效开关</b>（决策 2）：登出 / 改密 / 重置密码时 +1，
+ * 使该用户所有已签发的令牌立即失效，由 {@code JwtAuthFilter} 每请求校验。
+ */
+@Data
+@Entity
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+@Table(name = "users")
+public class User {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    /** 邮箱（登录标识）；写入前须经 {@link #normalizeEmail()} 归一化为小写 */
+    @Column(nullable = false, unique = true)
+    private String email;
+
+    /** BCrypt 密文（长度固定 60 字符，列宽 100 留冗余） */
+    @Column(name = "password_hash", nullable = false)
+    private String passwordHash;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private UserStatus status = UserStatus.ACTIVE;
+
+    @Column(name = "email_verified", nullable = false)
+    @Builder.Default
+    private boolean emailVerified = false;
+
+    /** 令牌版本号；递增后该用户所有旧令牌失效 */
+    @Column(name = "token_version", nullable = false)
+    @Builder.Default
+    private int tokenVersion = 0;
+
+    /** 连续登录失败次数；登录成功时清零 */
+    @Column(name = "failed_login_count", nullable = false)
+    @Builder.Default
+    private int failedLoginCount = 0;
+
+    /** 锁定截止时刻；为空或已过期表示未锁定 */
+    @Column(name = "locked_until")
+    private LocalDateTime lockedUntil;
+
+    @Column(name = "last_login_at")
+    private LocalDateTime lastLoginAt;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = LocalDateTime.now();
+    }
+
+    /** 邮箱归一化为小写并去空白，避免同一邮箱因大小写不同被判定为两个账号 */
+    public void normalizeEmail() {
+        if (email != null) {
+            this.email = email.trim().toLowerCase();
+        }
+    }
+
+    /** 当前是否处于锁定状态（锁定窗口未过） */
+    public boolean isLocked() {
+        return lockedUntil != null && lockedUntil.isAfter(LocalDateTime.now());
+    }
+
+    public enum UserStatus {
+        /** 正常可登录 */
+        ACTIVE,
+        /** 已停用（管理员操作），不可登录 */
+        DISABLED
+    }
+}

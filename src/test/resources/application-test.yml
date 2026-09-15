@@ -23,9 +23,14 @@ spring:
     username: test
     password: test
 
-# 补齐生产必填项（无默认值）：管理端密钥与 DB 口令
+# 补齐生产必填项（无默认值）：管理端密钥、账号令牌签名密钥与 DB 口令
 security:
   admin-api-keys: test-admin-key-0001
+
+# v2.10：account.jwt-secret 无默认值、缺失即启动失败（fail-fast），
+# 故测试环境必须显式提供（≥32 字节，仅用于测试，禁止复用到生产）
+account:
+  jwt-secret: test-only-jwt-secret-for-unit-tests-0123456789abcdef
 
 # H13：测试中放开健康详情，便于断言探针状态
 management:

@@ -6,6 +6,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -78,6 +80,23 @@ public class RateLimitService {
         return ring.record(now, windowMillis);
     }
 
+    /**
+     * 统计窗口内已有事件数（**不新增计数、不抛异常**）。
+     *
+     * <p>用于「先判是否已超限，再决定要不要受理」的场景——例如登录接口要在校验密码前
+     * 判断该 IP 的失败次数是否已触顶；若用 {@link #checkAndCount} 会把本次合法请求也算进去。
+     */
+    public int peekCount(String namespace, String key, int windowMinutes) {
+        if (key == null || key.isEmpty()) {
+            return 0;
+        }
+        TimestampRing ring = windows.get(namespace + ":" + key.toLowerCase());
+        if (ring == null) {
+            return 0;
+        }
+        return ring.countWithin(Instant.now().toEpochMilli(), (long) windowMinutes * 60_000L);
+    }
+
     // ============ 业务封装方法 ============
 
     public int checkEmailPurchase(String email) {
@@ -129,32 +148,42 @@ public class RateLimitService {
     }
 
     /**
-     * 滑动窗口环形计数：保留窗口内的时间戳，统计窗口内事件数。
+     * 滑动窗口计数：按写入顺序保留窗口内的时间戳（队头最老）。
+     *
+     * <p>**实现取舍**：原实现按 `capacity+1` 预分配 `AtomicLongArray`，内存占用与 max 成正比——
+     * max 稍大（如 10 万）时单个 key 就是 800KB，高频 key 下会直接撑爆堆。
+     * 改为按需增长的队列后，内存只与「实际落在窗口内的事件数」成正比；
+     * 顺带省掉对空闲槽位的全量扫描（原 `countWithin` 恒为 O(capacity)，现为 O(窗口内事件数)）。
      */
     private static class TimestampRing {
-        private final java.util.concurrent.atomic.AtomicLongArray stamps;
-        private final AtomicLong idx = new AtomicLong(0);
+        private final Deque<Long> stamps = new ArrayDeque<>();
+        /** 队列长度上界，等价于原环形缓冲大小 */
+        private final int capacity;
         private final AtomicLong lastAccess = new AtomicLong(0);
 
         TimestampRing(int capacity) {
-            // C9：容量+1 作为环形缓冲大小；用 long 防 Integer.MAX_VALUE+1 溢出被钳为 8 导致风控失效
+            // C9：容量+1 作为上界；用 long 防 Integer.MAX_VALUE+1 溢出被钳为 8 导致风控失效
             long size = (long) capacity + 1;
-            this.stamps = new java.util.concurrent.atomic.AtomicLongArray(
-                    (int) Math.max(8, Math.min(size, Integer.MAX_VALUE - 8L)));
+            this.capacity = (int) Math.max(8, Math.min(size, Integer.MAX_VALUE - 8L));
         }
 
-        int record(long now, long windowMillis) {
-            long pos = idx.getAndIncrement() % stamps.length();
-            stamps.set((int) pos, now);
-            lastAccess.set(now);
-            // 统计窗口内（now - windowMillis, now] 的时间戳数量
-            int count = 0;
-            long lower = now - windowMillis;
-            for (int i = 0; i < stamps.length(); i++) {
-                long t = stamps.get(i);
-                if (t > lower) count++;
+        synchronized int record(long now, long windowMillis) {
+            stamps.addLast(now);
+            // 超过上界即从队头淘汰最老的，等价于原环形缓冲的覆盖写
+            while (stamps.size() > capacity) {
+                stamps.pollFirst();
             }
-            return count;
+            lastAccess.set(now);
+            return countWithin(now, windowMillis);
+        }
+
+        /** 统计窗口内（now - windowMillis, now] 的事件数，并顺带清理已过期的时间戳 */
+        synchronized int countWithin(long now, long windowMillis) {
+            long lower = now - windowMillis;
+            while (!stamps.isEmpty() && stamps.peekFirst() <= lower) {
+                stamps.pollFirst();
+            }
+            return stamps.size();
         }
 
         long getLastAccess() {

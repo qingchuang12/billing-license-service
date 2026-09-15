@@ -4,11 +4,11 @@ spring:
   application:
     name: billing-license-service
   datasource:
-    # 容器化部署时需通过 DB_URL 指向 postgres 服务名（compose 内为 postgres:5432），勿用 127.0.0.1
-    url: ${DB_URL:jdbc:postgresql://127.0.0.1:5432/license}
+    # 容器化部署时需通过 DB_URL 指向 postgres 服务名（compose 内为 postgres:5432），勿用 127.0.0.1    ssh -N -L 10001:127.0.0.1:1001 root@8.129.233.160 -p 33 -o ServerAliveInterval=30 -o ServerAliveCountMax=3
+    url: ${DB_URL:jdbc:postgresql://127.0.0.1:10001/license}
     username: ${DB_USERNAME:license}
     # 密钥类配置不设默认值：缺失即启动失败（fail-fast），避免带着弱口令/默认口令上线
-    password: ${DB_PASSWORD}
+    password: ${DB_PASSWORD:XGTjfWhkfd3QXJA7}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -73,7 +73,6 @@ billing:
 
 # 支付渠道配置
 # 说明：多渠道可「同时启用并存」，互不冲突。下单时由客户端传入的 provider 决定走哪个渠道
-# （可选值：alipay / wechat_pay / stripe / paddle / paypal），
 # 各渠道的回调入口固定为 /api/webhooks/{alipay,wechat,stripe,paddle,paypal}。
 payment:
   # 启用的支付渠道（逗号分隔，大小写不敏感，空格会被忽略）
@@ -81,7 +80,8 @@ payment:
   # 默认留空 = 自动判定：关键配置齐全的渠道自动启用，缺配置的自动禁用（本地未配任何渠道也能启动，便于联调/查看文档）
   # 显式配置时以本项为准；渠道名写错会直接启动失败（fail-fast），避免渠道莫名不可用
   # 启动日志会打印各渠道自检报告，也可调 GET /api/admin/payment-channels 在线查询
-  enabled-channels: ${PAYMENT_ENABLED_CHANNELS:}
+  # （可选值：alipay / wechat_pay / stripe / paddle / paypal）
+  enabled-channels: ${PAYMENT_ENABLED_CHANNELS:ALIPAY,WECHAT_PAY}
 
   # 支付宝（国内）
   alipay:
@@ -174,11 +174,50 @@ kms:
   azure:
     vault-name: ${AZURE_VAULT_NAME:}
 
+# 账号体系配置（plan v2.10）
+account:
+  # 用户令牌签名密钥（HS256，对称）：不设默认值，缺失即启动失败（fail-fast）
+  jwt-secret: ${ACCOUNT_JWT_SECRET:}
+  # 令牌有效期（小时），默认 7 天
+  token-ttl-hours: ${ACCOUNT_TOKEN_TTL_HOURS:168}
+  # 注册是否强制邮箱验证码（联调期可临时置 false）
+  require-email-verification: ${ACCOUNT_REQUIRE_EMAIL_VERIFICATION:true}
+  # 验证码位数与有效期
+  code-length: ${ACCOUNT_CODE_LENGTH:6}
+  code-ttl-minutes: ${ACCOUNT_CODE_TTL_MINUTES:10}
+  # 验证码哈希 pepper：生产必配（库被读时防止 6 位数字被彩虹表反查）
+  code-pepper: ${ACCOUNT_CODE_PEPPER:}
+  # 联调模式：验证码仅写日志不发邮件（绕过未配置的 SMTP，避免注册/找回链路被阻塞）
+  code-log-only: ${ACCOUNT_CODE_LOG_ONLY:false}
+  # 密码策略
+  password-min-length: ${ACCOUNT_PASSWORD_MIN_LENGTH:8}
+  password-require-alnum: ${ACCOUNT_PASSWORD_REQUIRE_ALNUM:true}
+  # 风控阈值（与 plan v2.10 第五节矩阵一一对应）
+  risk:
+    login-account-fail-max: ${ACCOUNT_LOGIN_ACCOUNT_FAIL_MAX:5}
+    login-account-lock-minutes: ${ACCOUNT_LOGIN_ACCOUNT_LOCK_MINUTES:15}
+    login-ip-fail-max: ${ACCOUNT_LOGIN_IP_FAIL_MAX:20}
+    login-ip-fail-window-minutes: ${ACCOUNT_LOGIN_IP_FAIL_WINDOW_MINUTES:10}
+    # 发送冷却单位为秒（RateLimitService 窗口以分钟计，调用处向上取整换算）
+    code-send-cooldown-seconds: ${ACCOUNT_CODE_SEND_COOLDOWN_SECONDS:60}
+    code-send-email-max: ${ACCOUNT_CODE_SEND_EMAIL_MAX:5}
+    code-send-email-window-minutes: ${ACCOUNT_CODE_SEND_WINDOW_MINUTES:60}
+    code-send-ip-max: ${ACCOUNT_CODE_SEND_IP_MAX:10}
+    code-verify-fail-max: ${ACCOUNT_CODE_VERIFY_FAIL_MAX:5}
+    register-ip-max: ${ACCOUNT_REGISTER_IP_MAX:5}
+    register-email-max: ${ACCOUNT_REGISTER_EMAIL_MAX:3}
+    register-window-minutes: ${ACCOUNT_REGISTER_WINDOW_MINUTES:60}
+    reset-email-max: ${ACCOUNT_RESET_EMAIL_MAX:5}
+    reset-ip-max: ${ACCOUNT_RESET_IP_MAX:10}
+    reset-window-minutes: ${ACCOUNT_RESET_WINDOW_MINUTES:60}
+    change-password-user-max: ${ACCOUNT_CHANGE_PWD_USER_MAX:3}
+    change-password-window-minutes: ${ACCOUNT_CHANGE_PWD_WINDOW_MINUTES:60}
+
 # 安全配置
 security:
   api-key-header: X-API-Key
   # 管理端密钥：不设默认值，缺失即启动失败。多个密钥用英文逗号分隔。
-  admin-api-keys: ${ADMIN_API_KEYS}
+  admin-api-keys: ${ADMIN_API_KEYS:123456}
 
 # 应用对外基址
 app:

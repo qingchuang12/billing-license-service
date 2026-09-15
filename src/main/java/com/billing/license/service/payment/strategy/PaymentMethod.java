@@ -7,15 +7,15 @@ package com.billing.license.service.payment.strategy;
  */
 public enum PaymentMethod {
     /** 支付宝 - 国内主流支付方式 */
-    ALIPAY("支付宝", "国内"),
+    ALIPAY("支付宝", "CHINA"),
     /** 微信支付 - 国内主流支付方式 */
-    WECHAT_PAY("微信支付", "国内"),
+    WECHAT_PAY("微信支付", "CHINA"),
     /** Stripe - 国际信用卡支付 */
-    STRIPE("Stripe", "国际"),
+    STRIPE("Stripe", "GLOBAL"),
     /** Paddle - 国际 SaaS 订阅支付（Merchant of Record） */
-    PADDLE("Paddle", "国际"),
+    PADDLE("Paddle", "GLOBAL"),
     /** PayPal - 国际钱包支付 */
-    PAYPAL("PayPal", "国际");
+    PAYPAL("PayPal", "GLOBAL");
     
     /** 支付方式中文名称 */
     private final String name;
@@ -49,7 +49,7 @@ public enum PaymentMethod {
      * @return true-国内，false-国际
      */
     public boolean isDomestic() {
-        return "国内".equals(region);
+        return "CHINA".equals(region);
     }
     
     /**
@@ -57,6 +57,6 @@ public enum PaymentMethod {
      * @return true-国际，false-国内
      */
     public boolean isInternational() {
-        return "国际".equals(region);
+        return "GLOBAL".equals(region);
     }
 }

@@ -1,6 +1,7 @@
 package com.billing.license.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.LocalDateTime;
 
@@ -11,12 +12,26 @@ import java.time.LocalDateTime;
  * {@code ApiResponseAdvice} 自动包裹普通返回值。
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
+@Schema(description = "统一响应壳；除支付回调（/api/webhooks/**）外，所有端点响应均由 ApiResponseAdvice 包裹为本结构")
 public record ApiResponse<T>(
+        @Schema(description = "是否成功：true=成功，false=失败", example = "true")
         boolean success,
+
+        @Schema(description = "业务码：成功固定为 SUCCESS，失败为业务错误码", example = "SUCCESS")
         String code,
+
+        @Schema(description = "错误描述；成功时为 null（NON_NULL 序列化下不出现）",
+                example = "收银台不存在")
         String message,
+
+        @Schema(description = "业务数据；失败时为 null（NON_NULL 序列化下不出现）")
         T data,
+
+        @Schema(description = "请求追踪 ID，与响应头 X-Trace-Id 一致",
+                example = "8f3c1d2e-9a4b-4c6d-8e1f-2b3a4c5d6e7f")
         String traceId,
+
+        @Schema(description = "响应时间（ISO-8601，无时区）", example = "2026-09-14T22:49:37")
         LocalDateTime timestamp
 ) {
     public static <T> ApiResponse<T> ok(T data) {

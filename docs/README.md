@@ -101,10 +101,15 @@ docker compose logs -f app
 
 > **路径约定（D1，2026-09-14）**：端点前缀统一为 `/api/**`，**不再使用 `/api/v1`**。
 
-> **鉴权收敛为两档（I1，2026-09-14）**：**公开**端点（`/api/checkout/**`、`/api/redeem/redeem`、`/api/licenses/verify/**`、`/api/webhooks/**`、`/v3/api-docs`）无需鉴权；**其余全部管理动作**（`/api/admin/**`：订单查询/签发/退款、License 查询/作废/换机重发、兑换码生成/导出/撤销）统一携带请求头 **`X-API-Key`**（值须在 `security.admin-api-keys` 中，等价于 `ROLE_ADMIN`），由 `SecurityConfig` 统一鉴权。
+> **鉴权为三档（v2.10，2026-09-15）**：
+> 1. **公开**：`/api/checkout/**`、`/api/redeem/redeem`、`/api/licenses/verify/**`、`/api/webhooks/**`、`/v3/api-docs`，以及账号的 `POST /api/account/verification-code`、`register`、`login`、`password/reset`；
+> 2. **用户（v2.10 新增）**：`Authorization: Bearer <JWT>` → `ROLE_USER`，适用于 `POST /api/account/logout`、`GET /api/account/me`、`POST /api/account/password/change`；
+> 3. **特权**：`/api/admin/**` 全部管理动作携带请求头 **`X-API-Key`**（值须在 `security.admin-api-keys` 中，等价于 `ROLE_ADMIN`）。
+>
 > 原 `X-Admin-API-Key`（`AdminController` 自校验）已删除——它与 `X-API-Key` 校验的是**同一份密钥**，属纯冗余；公开端点依赖签名 License + 限流保护。
+> **权限域严格隔离**：用户令牌不能访问 `/api/admin/**`；管理员 `X-API-Key` 也不用于账号端点（登出/me/改密依赖「当前用户」上下文，管理员令牌无此上下文）。
 
-### 端点总览（共 21 个：公开 10 + 管理端 11）
+### 端点总览（共 28 个：公开 14 + 管理端 11 + 账号需登录 3）
 
 | 分组 | 方法与路径 | 鉴权 |
 |---|---|---|
@@ -125,10 +130,72 @@ docker compose logs -f app
 | | `GET /api/admin/redeem-codes?productSku=&status=` | `X-API-Key` |
 | | `POST /api/admin/redeem-codes/revoke/{code}` | `X-API-Key` |
 | 运维 | `GET /api/admin/payment-channels` | `X-API-Key` |
+| 账号 | `POST /api/account/verification-code` | 公开 |
+| | `POST /api/account/register` | 公开 |
+| | `POST /api/account/login` | 公开 |
+| | `POST /api/account/password/reset` | 公开 |
+| | `POST /api/account/logout` | 用户令牌 |
+| | `GET /api/account/me` | 用户令牌 |
+| | `POST /api/account/password/change` | 用户令牌 |
 
 > **接口合并简化（主题 I，2026-09-14）**：相比改造前的 24 个端点——**删除 6 个重复入口**（订单 by-id / by-number、订单按状态、订单下 License 列表、按客户查 License、`/api/licenses/issue`），**新增 3 个**（参数化 License 查询、订单签发归口、兑换码导出），**迁移 2 类**（签发与兑换码生成/撤销收进 `/api/admin/**`）；收银台支持带 `provider` 一步下单。
 
 > **下单入口唯一（D4，2026-09-14）**：原 `POST /api/orders` 创建入口已删除（与收银台职责重叠，且其计价会产出「币种 CNY + 金额 USD」的资损级不一致），下单统一走 `POST /api/checkout/create`。
+
+### 账号体系（v2.10，2026-09-15）
+
+终端用户账号：注册 / 登录 / 登出 / 当前用户 / 改密 / 找回密码 / 邮箱验证码。
+
+**令牌**：JWT（HS256），签名密钥来自 `account.jwt-secret`（**不设默认值，缺失即启动失败**）；有效期默认 7 天（`account.token-ttl-hours`）。
+登出、改密、重置密码都会使 `users.token_version` +1，**该用户所有已签发令牌立即失效**。令牌只经 `Authorization: Bearer <token>` 传输，不落 Cookie（服务端无会话）。
+
+```bash
+# ① 发送邮箱验证码（purpose=REGISTER | RESET_PASSWORD）
+curl -X POST http://localhost:8080/api/account/verification-code \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","purpose":"REGISTER"}'
+
+# ② 注册（emailCode 必填；成功即返回令牌，无需再登录）
+curl -X POST http://localhost:8080/api/account/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"Passw0rd2026","emailCode":"483920"}'
+
+# ③ 登录
+curl -X POST http://localhost:8080/api/account/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"Passw0rd2026"}'
+# → data: {"accessToken":"eyJhbGciOi...","expiresIn":604800,"user":{...}}
+
+# ④ 当前用户 / ⑤ 登出 / ⑥ 改密（均需登录）
+curl http://localhost:8080/api/account/me -H "Authorization: Bearer <token>"
+curl -X POST http://localhost:8080/api/account/logout -H "Authorization: Bearer <token>"
+curl -X POST http://localhost:8080/api/account/password/change -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"oldPassword":"Passw0rd2026","newPassword":"NewPassw0rd2026"}'
+
+# ⑦ 找回密码（公开；凭验证码重置，不需要旧密码）
+curl -X POST http://localhost:8080/api/account/password/reset \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","code":"483920","newPassword":"NewPassw0rd2026"}'
+```
+
+**限流**（复用 `RateLimitService`，阈值见 `application.yml` 的 `account.risk`）：
+
+| 维度 | 阈值 |
+|---|---|
+| 验证码发送 | 邮箱冷却 60 秒；邮箱 5 次/60 分钟；IP 10 次/60 分钟 |
+| 注册 | IP 5 次/60 分钟；邮箱 3 次/60 分钟 |
+| 登录失败 | 账号 5 次 → 锁定 15 分钟（**落库，跨重启有效**）；IP 20 次/10 分钟 |
+| 改密 | 3 次/60 分钟（按用户） |
+| 找回密码 | 邮箱 5 次/60 分钟；IP 10 次/60 分钟 |
+| 验证码校验 | 单码连续错 5 次即作废 |
+
+**新增错误码**：`EMAIL_ALREADY_REGISTERED`、`EMAIL_CODE_REQUIRED`、`INVALID_CREDENTIALS`（邮箱/密码错误统一文案，防账号枚举）、`ACCOUNT_LOCKED`、`ACCOUNT_DISABLED`、`ACCOUNT_NOT_FOUND`、`LOGIN_IP_LIMIT`、`REGISTER_LIMIT`、`RESET_LIMIT`、`CHANGE_PASSWORD_LIMIT`、`CODE_SEND_TOO_FREQUENT`、`CODE_INVALID` / `CODE_EXPIRED` / `CODE_TOO_MANY_ATTEMPTS`、`PASSWORD_POLICY_VIOLATION`、`OLD_PASSWORD_MISMATCH`、`TOKEN_INVALID`、`VALIDATION_ERROR`。
+
+> ⚠️ **邮件通道**：SMTP 未配置时验证码邮件会被**静默跳过**（仅 warn 日志），注册与找回密码将不可用且难以察觉。
+> 联调阶段请设置 `ACCOUNT_CODE_LOG_ONLY=true` 把验证码输出到日志；**上线前必须配置真实 SMTP 并实测可达**。
+>
+> ⚠️ **`customerId` 语义（决策 1）**：`users.id` 直接承载 `orders.customer_id`——登录用户下单即以 `userId` 作为 `customerId`；匿名订单的 `customerId` 仍为随机 UUID，不对应任何 `User`。因此「按 customerId 查单」等价于「按 userId 查单」，但**匿名订单查不到任何账号**。
 
 ### 响应结构（统一响应壳）
 
@@ -234,6 +301,10 @@ curl -X POST "http://localhost:8080/api/admin/licenses/{licenseKey}/reissue?newM
 ```
 
 ### 兑换码
+
+> 兑换与批量生成两个端点的 `data` 已由匿名 `Map` 改为类型化 DTO（J3，2026-09-14）：
+> `dto/RedeemResponse`（success / licenseKey / signedToken / expiresAt）、
+> `dto/GenerateRedeemCodesResponse`（success / count / codes）。字段名与取值不变，仅补上可生成的 OpenAPI Schema。
 
 ```bash
 # 批量生成（I5：归口到管理端，且**返回码明文列表**——原实现只返回数量，生成后无法取回）

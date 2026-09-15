@@ -194,6 +194,45 @@ public class EmailNotificationService {
     }
 
     /**
+     * 发送邮箱验证码（plan v2.10 / A3）。
+     *
+     * <p>与其余通知一致：SMTP 未配置时<b>静默跳过</b>（仅 warn）。
+     * 这意味着「注册 / 找回密码」会因收不到验证码而不可用，且服务端不报错 ——
+     * 联调阶段请开启 {@code account.code-log-only=true} 把验证码输出到日志，
+     * 生产上线前必须配置真实 SMTP 并实测可达（否则用户永远收不到码）。
+     */
+    @Async
+    public void sendVerificationCodeEmail(String to, String code, String purpose, int ttlMinutes) {
+        logger.info("发送验证码邮件：to={}, purpose={}", to, purpose);
+
+        if (!isEmailConfigured()) {
+            logger.warn("邮件服务未配置，跳过发送验证码邮件（可开启 account.code-log-only 走日志联调）");
+            return;
+        }
+
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+            helper.setFrom(fromAddress != null ? fromAddress : "noreply@billing.com");
+            helper.setTo(to);
+            helper.setSubject("您的验证码 - " + purposeLabel(purpose));
+
+            helper.setText(buildVerificationCodeTemplate(code, purposeLabel(purpose), ttlMinutes), true);
+
+            mailSender.send(message);
+            logger.info("验证码邮件发送成功：to={}", to);
+        } catch (Exception e) {
+            logger.error("发送验证码邮件失败：to={}", to, e);
+        }
+    }
+
+    /** 用途枚举名 → 中文说明（仅用于邮件文案） */
+    private static String purposeLabel(String purpose) {
+        return "RESET_PASSWORD".equalsIgnoreCase(purpose) ? "找回密码" : "注册验证";
+    }
+
+    /**
      * 检查邮件服务是否已配置
      */
     private boolean isEmailConfigured() {
@@ -343,6 +382,29 @@ public class EmailNotificationService {
         html.append("<li>点击\"激活\"按钮完成兑换</li>");
         html.append("</ol>");
         html.append("<p>注意：每个兑换码只能使用一次，请妥善保管。</p>");
+        html.append("</div><div class='footer'><p>此邮件由系统自动发送，请勿回复。</p></div>");
+        html.append("</div></body></html>");
+        return html.toString();
+    }
+
+    private String buildVerificationCodeTemplate(String code, String purposeLabel, int ttlMinutes) {
+        StringBuilder html = new StringBuilder();
+        html.append("<!DOCTYPE html><html><head>");
+        html.append("<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;}");
+        html.append(".container{max-width:600px;margin:0 auto;padding:20px;}");
+        html.append(".header{background:#607D8B;color:white;padding:20px;text-align:center;}");
+        html.append(".content{padding:20px;background:#f9f9f9;}");
+        html.append(".code-box{background:white;padding:15px;margin:15px 0;border-radius:5px;border-left:4px solid #607D8B;}");
+        html.append(".verify-code{font-family:monospace;font-size:28px;background:#f0f0f0;padding:15px;text-align:center;letter-spacing:4px;}");
+        html.append(".footer{text-align:center;padding:20px;color:#666;font-size:12px;}</style>");
+        html.append("</head><body><div class='container'>");
+        html.append("<div class='header'><h1>").append(esc(purposeLabel)).append("</h1></div>");
+        html.append("<div class='content'><p>您好！</p>");
+        html.append("<p>您正在进行<strong>").append(esc(purposeLabel)).append("</strong>操作，验证码如下：</p>");
+        html.append("<div class='code-box'><div class='verify-code'>").append(esc(code)).append("</div></div>");
+        html.append("<p>验证码 <strong>").append(ttlMinutes).append(" 分钟</strong>内有效，且仅可使用一次。</p>");
+        html.append("<p>如果这不是您本人的操作，请忽略本邮件，您的账号仍然是安全的。</p>");
+        html.append("<p>如有任何问题，请联系我们的客服：").append(esc(supportEmail)).append("</p>");
         html.append("</div><div class='footer'><p>此邮件由系统自动发送，请勿回复。</p></div>");
         html.append("</div></body></html>");
         return html.toString();

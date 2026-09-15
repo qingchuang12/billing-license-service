@@ -1,6 +1,7 @@
 package com.billing.license.controller;
 
 import com.billing.license.annotation.Audit;
+import com.billing.license.dto.GenerateRedeemCodesResponse;
 import com.billing.license.dto.LicenseResponse;
 import com.billing.license.dto.OrderResponse;
 import com.billing.license.dto.PaymentChannelStatus;
@@ -22,9 +23,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -218,7 +217,7 @@ public class AdminController {
     })
     @Audit(action = "GENERATE_REDEEM_CODES", target = "#productSku")
     @PostMapping("/redeem-codes/generate")
-    public ResponseEntity<Map<String, Object>> generateRedeemCodes(
+    public ResponseEntity<GenerateRedeemCodesResponse> generateRedeemCodes(
             @Parameter(description = "产品 SKU", required = true) @RequestParam String productSku,
             @Parameter(description = "生成数量（正整数，≤ 配置上限）", required = true) @RequestParam int count,
             @Parameter(description = "过期时间（可选，ISO-8601）") @RequestParam(required = false) LocalDateTime expiresAt) {
@@ -231,12 +230,7 @@ public class AdminController {
                 "批量生成数量超过上限（上限=" + maxGenerateCount + "），请分批生成");
         }
         List<String> codes = redeemCodeService.generateCodes(productSku, count, expiresAt);
-
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", true);
-        response.put("count", codes.size());
-        response.put("codes", codes);
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(GenerateRedeemCodesResponse.of(codes));
     }
 
     /**

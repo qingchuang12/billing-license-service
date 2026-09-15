@@ -147,3 +147,28 @@
    ```
 2. **破坏性契约变更**（客户端/前端需同步）：`X-Admin-API-Key` → `X-API-Key`；订单查询 `/api/orders/**` → `/api/admin/orders?...`；签发 `/api/licenses/issue/{orderId}` → `/api/admin/orders/{orderNumber}/issue`；兑换码生成/撤销 → `/api/admin/redeem-codes/**`（且生成返回明文）。
 3. 未做（本期范围外）：`GET /api/licenses/verify` 为 GET 但会写 `lastVerifiedAt`（REST 语义瑕疵，可考虑改 POST）；多实例限流/锁仍为单实例实现。
+
+---
+
+# 主题 J/K · DTO 契约文档化与时序图入参示例（2026-09-14 完成，2026-09-15 归档）
+
+> 来源：活动 plan `docs/plan-2.9.md` 的主题 J、K（TODOS 中原记为已完成 `[x]`）。
+> 归档时间：2026-09-15
+> 归档原因：J1–J3、K1–K3 全部完成，按归档规则「已完成项不留活动 plan」整批移出。
+
+## 一、完成记录
+
+| 项 | 内容 | 产出（文件） |
+|---|---|---|
+| J1 | 10 个接口出入参 DTO 补齐 `@Schema`（类级描述 + 字段级 `description`/`example`/`allowableValues`，枚举取值与实体枚举逐一对齐） | `dto/` 下 10 个 DTO |
+| J1a | `RedeemCodeRequest.clientIp` 同步标 `@Schema(hidden = true)`（服务端强制覆盖、不反序列化） | `dto/RedeemCodeRequest.java` |
+| J2 | 验证：`javac --release 21` 编译 10 个 DTO 通过；`javap -v` 确认 `@Schema` 以 `RuntimeVisibleAnnotations` 落入字节码（springdoc 反射可读） | — |
+| J3 | 两处匿名 `Map<String, Object>` 响应类型化为 `RedeemResponse`、`GenerateRedeemCodesResponse`，字段名/取值逐一对齐，对外契约不变 | `dto/RedeemResponse.java`、`dto/GenerateRedeemCodesResponse.java`、`controller/RedeemCodeController.java`、`controller/AdminController.java` |
+| K1 | `接口调用时序图.md` 新增 §1.7「接口调用顺序（端到端总览）」：2 张 Mermaid 时序图 + 管理端 7 条运维调用次序表 | `docs/接口调用时序图.md` |
+| K2 | 新增第四章「接口入参示例」：21 个端点全覆盖（字段表 + curl + webhook 各渠道签名位置说明） | `docs/接口调用时序图.md` |
+| K3 | 原「四、附录」顺延为「五、附录」，并补交叉导航 | `docs/接口调用时序图.md` |
+
+## 二、后续变更（v2.10）
+
+- 账号体系新增 7 个 `/api/account/**` 端点，端点总数 **21 → 28**，鉴权扩为三档（公开 / 用户令牌 / `X-API-Key`）；既有 21 个端点路径与权限未变。
+- `docs/接口调用时序图.md` 相应新增 §1.7.3 账号链路图、§2.1 过滤链加入 `JwtAuthFilter`、§4.8 账号相关端点入参示例。

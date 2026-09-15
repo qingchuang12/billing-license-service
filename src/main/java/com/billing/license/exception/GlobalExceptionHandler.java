@@ -3,6 +3,7 @@ package com.billing.license.exception;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -10,6 +11,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * 全局异常处理器
@@ -72,6 +74,33 @@ public class GlobalExceptionHandler {
         body.put("traceId", traceId);
         body.put("success", false);
         return ResponseEntity.internalServerError().body(body);
+    }
+
+    /**
+     * 处理请求体参数校验失败（{@code @Valid}）。
+     *
+     * <p>仅回显我们自己写在注解上的中文提示，不回显字段名以外的内部信息；
+     * 缺省文案兜底，避免注解漏写 message 时把默认英文串（如 "must not be blank"）暴露出去。
+     */
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
+        String traceId = newTraceId();
+        String message = ex.getBindingResult().getFieldErrors().stream()
+            .map(f -> f.getDefaultMessage())
+            .filter(m -> m != null && !m.isEmpty())
+            .distinct()
+            .collect(Collectors.joining("；"));
+        if (message.isEmpty()) {
+            message = "请求参数校验失败";
+        }
+        log.warn("[{}] 请求参数校验失败：{}", traceId, message);
+        Map<String, Object> body = new HashMap<>();
+        body.put("timestamp", LocalDateTime.now());
+        body.put("errorCode", "VALIDATION_ERROR");
+        body.put("message", message);
+        body.put("traceId", traceId);
+        body.put("success", false);
+        return ResponseEntity.badRequest().body(body);
     }
 
     /**

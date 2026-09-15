@@ -22,6 +22,9 @@ class RateLimitServiceEvictionTest {
     void setUp() throws Exception {
         BillingProperties props = new BillingProperties();
         BillingProperties.Risk risk = new BillingProperties.Risk();
+        // 阈值刻意取大值：这是 v2.10 收尾修掉的内存隐患的**回归防护**——
+        // 旧实现按 capacity+1 预分配数组，max=100000 时单窗口 800KB × 5000 key ≈ 4GB，必 OOM；
+        // 现 TimestampRing 按需增长，内存只与窗口内实际事件数成正比。
         risk.setEmailPurchaseMax(100000);
         risk.setEmailPurchaseWindowMinutes(60);
         risk.setMachineReissueMax(100000);
