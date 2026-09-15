@@ -1,6 +1,12 @@
 server:
   port: 8080
 spring:
+  # 本地/联调配置源：加载项目根目录的 .env（已被 .gitignore 忽略，不入库）。
+  # [.properties] 是官方 extension hint —— 让无扩展名的 .env 按 properties 格式解析；
+  # optional: 保证该文件缺失时静默跳过，不影响容器 / CD 环境启动。
+  # 详见项目根目录 .env 末尾的「怎么让它真正生效」说明。
+  config:
+    import: optional:file:.env[.properties]
   application:
     name: billing-license-service
   datasource:
@@ -69,7 +75,7 @@ billing:
   # 默认 false（仅按 TCP remoteAddr 限流），避免攻击者伪造 XFF 绕过限流/风控。
   # 仅在确知前方是可信代理（如本服务的 ingress/gateway）时置 true。
   trust-x-forwarded-for: ${BILLING_TRUST_XFF:false}
-  support-email: ${SUPPORT_EMAIL:support@company.com}
+  support-email: ${SUPPORT_EMAIL:service@ywhome.top}
 
 # 支付渠道配置
 # 说明：多渠道可「同时启用并存」，互不冲突。下单时由客户端传入的 provider 决定走哪个渠道
@@ -217,7 +223,9 @@ account:
 security:
   api-key-header: X-API-Key
   # 管理端密钥：不设默认值，缺失即启动失败。多个密钥用英文逗号分隔。
-  admin-api-keys: ${ADMIN_API_KEYS:123456}
+  # 2026-09-16：移除弱默认值 123456 —— 原注释声明 fail-fast，实际却有默认值，语义自相矛盾。
+  # 本地/联调值见项目根目录 .env；测试值见 src/test/resources/application-test.yml。
+  admin-api-keys: ${ADMIN_API_KEYS}
 
 # 应用对外基址
 app:

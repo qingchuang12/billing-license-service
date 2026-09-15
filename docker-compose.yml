@@ -11,6 +11,9 @@ services:
       - DB_USERNAME=${DB_USERNAME:-postgres}
       - DB_PASSWORD=${DB_PASSWORD}
       - ADMIN_API_KEYS=${ADMIN_API_KEYS}
+      # 账号体系（v2.10）：无默认值，缺失时 JwtTokenService 会 fail-fast 拒启。
+      # 运行镜像内不含 .env（Dockerfile 只把 app.jar 放进 /app），故必须经此处显式注入。
+      - ACCOUNT_JWT_SECRET=${ACCOUNT_JWT_SECRET}
       - KMS_PROVIDER=${KMS_PROVIDER:-local}
       - PRIVATE_KEY_PATH=/keys/private.key
       - PUBLIC_KEY_PATH=/keys/public.key
