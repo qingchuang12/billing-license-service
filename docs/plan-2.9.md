@@ -61,8 +61,9 @@ T1（先 Stripe）→ T2/T3 并行 → T4 最后。任一闸门发现问题回�
 - [ ] T4 渗透测试：Webhook 验签 / admin 鉴权 / 限流 / CORS / Actuator 暴露面，发现项回流本 plan
 
 ### L. v2.10 结转遗留项（2026-09-15 并入，来源：[`archive/plan-v2.10.md`](./archive/plan-v2.10.md)）
-- [ ] L1 `RateLimitService.TimestampRing` 占用内存与 `max` 成正比（按 `capacity+1` 预分配 `AtomicLongArray`），大 `max` 配置会撑爆堆 → 重构为动态容器 + 容量上限裁剪；用 `RateLimitServiceEvictionTest` 的大阈值场景做回归验证
 - [ ] L2 上线前配置真实 SMTP 并实测「注册验证码 / 找回密码」两封邮件可达（`account.code-log-only` 仅联调兜底）——**阻塞于生产凭据，非仓库内可完成**
+
+> L1（`TimestampRing` 内存与 `max` 成正比导致大阈值 OOM）已于 2026-09-15 完成：改为按需增长队列 + 容量上界裁剪，`mvn test` 134 全绿，EvictionTest 阈值恢复 100000 作为回归防护。结论见 [`archive/plan-v2.9-completed.md`](./archive/plan-v2.9-completed.md) 主题 L1。
 
 ### 遗留风险（从 B 结转）
 - [~] W17 AWS KMS 算法/编码映射：代码已修复（P-521→`ECDSA_SHA_512`/`ES512`、EC DER↔raw、JWS alg 精确化）+ `AwsKmsServiceTest` 通过；**真实 AWS KMS 密钥端到端验证待 T4/联调**（详见归档 plan-v2.8-completed.md）

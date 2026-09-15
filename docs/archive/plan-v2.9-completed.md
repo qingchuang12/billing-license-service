@@ -172,3 +172,31 @@
 
 - 账号体系新增 7 个 `/api/account/**` 端点，端点总数 **21 → 28**，鉴权扩为三档（公开 / 用户令牌 / `X-API-Key`）；既有 21 个端点路径与权限未变。
 - `docs/接口调用时序图.md` 相应新增 §1.7.3 账号链路图、§2.1 过滤链加入 `JwtAuthFilter`、§4.8 账号相关端点入参示例。
+
+---
+
+# 主题 L1 · 限流滑动窗口内存重构（2026-09-15 完成）
+
+> 来源：账号体系（v2.10）收尾验证时发现的**既有隐患**，随 v2.10 归档结转为活动 plan 的 L1 项。
+> 归档时间：2026-09-15
+
+## 一、问题
+
+`RateLimitService.TimestampRing` 构造器按 `capacity+1` **预分配** `AtomicLongArray`：内存占用与配置的 `max` 成正比，而非与实际事件数成正比。`max` 配到 10 万时单个 key 就是 800KB，`RateLimitServiceEvictionTest`（5000 个 key）必然 OOM（约 4GB）——实测 `-Xmx1g` / `-Xmx2g` 均无效，说明是真实内存膨胀而非堆大小不足。
+
+**注意**：该隐患非 v2.10 引入（本次对该文件的改动只有 `peekCount` 与抽取 `countWithin`），属既有缺陷被大参数测试放大。
+
+## 二、改动
+
+`TimestampRing` 改为 `ArrayDeque<Long>` + `synchronized`：
+
+- `record`：入队后按上界 `capacity+1` 从队头淘汰（等价于原环形缓冲的覆盖写）；
+- `countWithin`：队头过期即出队，返回队列长度（原实现恒为 O(capacity) 地扫描含空闲槽位的数组，现为 O(窗口内事件数)）。
+
+**语义保持**：上界计算沿用 C9 的 `(long) capacity + 1` 防溢出钳位；`lastAccess` 仍为 `AtomicLong`（EvictionTest 的反射断言不受影响）；公开 API、限流触发阈值与驱逐行为均不变。
+
+## 三、验证
+
+`RateLimitServiceEvictionTest` 的阈值**恢复为 100000**（此前为绕过 OOM 临时下调到 10），作为该隐患的长期回归防护。
+
+`mvn -B test` = **134 tests, 0 failures, 0 errors, BUILD SUCCESS**（2026-09-15），其中 EvictionTest 2/2 通过、耗时 1.239 s（重构前必 OOM）。
