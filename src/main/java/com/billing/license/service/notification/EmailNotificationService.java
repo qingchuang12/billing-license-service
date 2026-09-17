@@ -30,7 +30,7 @@ public class EmailNotificationService {
     @Value("${spring.mail.from-address:#{null}}")
     private String fromAddress;
     
-    @Value("${billing.support-email:support@company.com}")
+    @Value("${billing.support-email:service@ywhome.top}")
     private String supportEmail;
     
     public EmailNotificationService(JavaMailSender mailSender) {

@@ -39,7 +39,7 @@ public class OpenApiConfig {
                         .title("Billing & License Service API")
                         .version("1.0.0")
                         .description("统一计费与许可证管理服务的 OpenAPI 文档（三档收费：Pro 买断 / Pro Plus / 订阅制；5 家支付渠道）")
-                        .contact(new Contact().name("Billing Team").email("support@company.com")))
+                        .contact(new Contact().name("Billing Team").email("service@ywhome.top")))
                 .components(new Components()
                         .addSecuritySchemes("X-API-Key",
                                 new SecurityScheme()
