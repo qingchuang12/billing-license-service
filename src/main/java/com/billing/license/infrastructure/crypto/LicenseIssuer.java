@@ -160,7 +160,7 @@ public class LicenseIssuer {
             case "Ed25519" -> "EdDSA";
             case "EC" -> "ES256";   // 本地/阿里云 EC 默认 ES256
             case "RSA" -> "RS256";
-            default -> alg;          // AWS 直接返回精确 JWS alg（ES256/ES384/ES512/RS256，见 W17）
+            default -> alg;          // 云 KMS（如阿里云）直接返回精确 JWS alg；本地已在上文映射
         };
     }
 }

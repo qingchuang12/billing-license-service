@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: 8000
 spring:
   application:
     name: billing-license-service
@@ -54,7 +54,6 @@ springdoc:
 billing:
   # License 签名算法（实际支持集合，与 LocalKmsService / LicenseIssuer 实现对齐）：
   #   local:  ED25519（默认，需 DER 包装的原始密钥，见 C11）、ES256（EC）、RS256（RSA）
-  #   aws:    ES256/ES384（需密钥类型与算法匹配，P-521 暂不支持，见 W17）
   # 注：ES384/ES512/RS384/RS512 当前实现未覆盖，声明即失效，故不在此列出（w13 收敛）
   signature-algorithm: ED25519
   # 私钥路径（用于签发 License）
@@ -81,22 +80,22 @@ payment:
   # 显式配置时以本项为准；渠道名写错会直接启动失败（fail-fast），避免渠道莫名不可用
   # 启动日志会打印各渠道自检报告，也可调 GET /api/admin/payment-channels 在线查询
   # （可选值：alipay / wechat_pay / stripe / paddle / paypal）
-  enabled-channels: ${PAYMENT_ENABLED_CHANNELS:ALIPAY,WECHAT_PAY}
+  enabled-channels: ${PAYMENT_ENABLED_CHANNELS:ALIPAY}
 
   # 支付宝（国内）
   alipay:
     # 开放平台应用 ID（AppID）
-    app-id: ${ALIPAY_APP_ID:}
+    app-id: ${ALIPAY_APP_ID:9021000150680771}
     # 商户应用私钥（RSA2，PKCS8），用于下单请求签名
-    private-key: ${ALIPAY_PRIVATE_KEY:}
+    private-key: ${ALIPAY_PRIVATE_KEY:MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCVNbKBzEEkMD43DmunOfCWqvXSbELoa5cuMeYYHcT0bSr4VrM9GqB0Oi2BbUUtzp6U8dfR2ddtIsFF0fktRvTI9vqsP0GVKgBF2fN7cpqBYOSS/FZSCpA44cvCkGPe7Xp6ZHOos+r5zuVA+URS8Yi3EK6NZLnqQoDj/JLSFA1Nl3f4f1TzUvu28lbkfG/D5rJ01HEmcDx90DvoXqtpD3V995CpIHxbfJR5WWNde0RYBAMJMWvMCSkhKPL7DuQmeAwNem8BFjvUYw3BabyffffS5SNKfQCD7uaXhweBEriKNIIFYv6SZL10QGKxvQalFGCXULdAVTass+Rdw/z+/WqZAgMBAAECggEAAqSt4eDFcqesInuN6qt7GKA0tKKYWNe3GOlnYxv75jyc20Nl73ouR4DUV4uhAxu68XaLVTtftp48AEmk+WldYsYFUNHaDpNs58/hoVk5ZXta8UOpH9DyFx/g5TR7oHJijhKDfgSZ8Az7QLhpvnJq8ptIDFcxd/XvpJpP24rhZXN3VNl7SaEfHjVnj5Ug10VbLIGgZhe9lhNrsdl0rDtJh/1j58HAbhuHottEb855eUlmjcwkjoKzNeV/JqzNZFM8Ux8vsYf7l50ROvIMujo4ZA/Fo+fds3aJkV5TZw24OuegGogwtQ74zgjjtcGez+PzfoYnS7DVXcP5A3kmySCFkQKBgQD8Q+c1cvvMChrgRD3FmlnHWoDppO3T9ih0A1W+kr/e+ltv4OjaoP7ACFl9z71Tl5dNeQ/sHD/4fshaeASt6779+80Xq9dtSVq04Iz2wrvokeyBQEX6Lxs1v7IztW7+l1oJ3GIZ/r3j8bbv9N6Xvj907fLPYyC7J6NbDH3yvd7/VQKBgQCXazWHjXr2fjN2aIblKwzuOFu1boQFyVzcj+OLqnC3FkJoaXpm4toOIIndYQAHS5ZrNgNuyN3CCFAMPH2Esvot9nFn7sjP9IGoCO58J4TYSYjnyfAcTwqWn9kROy915afAq3l0ES/PXY91PcnNKbH/LmfeMkoUMaQZbQUn9dxWNQKBgHvQQBzFsLw2gXZtR/xCg6oKy5bhcjFEchpuwJjmofGo41QICYG03xQVhQbw/TWYA5TsxFnYi7VFVMTCf1l1iapS+hiSKQvkovZ/9+/tKBk/9dqCV1Yx5KL+0VH7zNx8IJ8SYbvsgfrs2iLwBohnwfF8EF6lgp0ZGV5IxVBszJR5AoGAN8wD372c8DQ1Fo8SFmS00Rvnf4YIFHHNTGGhghf+jRkgw4UK29sAa3BGHVPfRNDvzvYKccqHHTce+ENaJYomcsV7qMbvLOJ23MrdxtZxN5pxXqilWGkwB61DufvLU3CbTn5htQmYSpu5f4STVozk0JnzIIf7kFFynQP1gHIzDXkCgYEA85hB4G/pz54M0kXYhWSAjYgQFGewXuDSDGapAaNiWXq+zUoHOXGYHynKIdcrSbY9uenNxxDZyRNPpKYfUn2Iq2I5YHAjlPX154bg8oKfdo5GICSjqSfnnUF/GBBCOkEksValK+Ye1VRzHsgq/mnVquUa6Ah4twDD/cpa2fktoE0=}
     # 支付宝公钥，用于异步通知验签（不是商户公钥，勿填错）
-    public-key: ${ALIPAY_PUBLIC_KEY:}
+    public-key: ${ALIPAY_PUBLIC_KEY:MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt2gqoKrkFBAUZGLHz+PsFd9ZBds31br+cx2wJaGXIBABrxXaICLaWYcZDBTknJroZBn0WrqHzB3cYl7l9Cx8cxidicaqKWprC3FtkFzCIcCA3rVSnwxW2hVK424+kTZh1SjUYu2i881P604mchSRo99KGe8XctUlfFfP6hjkDeHwb87iWkpYLAYPZ8byM2O14Q7wxr89u6lnt2p29GyAoexk+vdQyTzkze6S/xTWmyCpBeGY/Weg2ZbdACvHTdtWyN1JfttJJXdGb0gNRW8ccbdgFjo09zneahBti4tIa7fth/5zasa67CofrEGmRVJnKMEv2+5iQjy7zLQUxyXIpwIDAQAB}
     # 异步通知地址：默认由 app.base-url 派生，需与支付宝后台配置的 Notify URL 一致
     notify-url: ${ALIPAY_NOTIFY_URL:${app.base-url}/api/webhooks/alipay}
     # 网页支付完成后的回跳地址
     return-url: ${ALIPAY_RETURN_URL:${app.base-url}/payment/return}
-    # 网关地址（生产固定为 openapi.alipay.com；沙箱为 openapi-sandbox.dl.alipaydev.com）
-    gateway-url: ${ALIPAY_GATEWAY_URL:https://openapi.alipay.com/gateway.do}
+    # 网关地址（生产固定为 openapi.alipay.com；沙箱为 openapi-sandbox.dl.alipaydev.com 生产 https://openapi.alipay.com）
+    gateway-url: ${ALIPAY_GATEWAY_URL:https://openapi-sandbox.dl.alipaydev.com/gateway.do}
     # 签名类型：RSA2（SHA256withRSA），与支付宝后台保持一致
     sign-type: ${ALIPAY_SIGN_TYPE:RSA2}
 
@@ -108,10 +107,10 @@ payment:
     mch-id: ${WECHAT_MCH_ID:}
     # APIv3 密钥（32 字符），用于回调报文与平台证书的 AES-256-GCM 解密
     api-key: ${WECHAT_API_KEY:}
-    # 商户 API 私钥文件路径（apiclient_key.pem），用于上行请求签名
-    private-key-path: ${WECHAT_PRIVATE_KEY_PATH:/keys/wechat/apiclient_key.pem}
-    # 商户证书文件路径（apiclient_cert.pem），用于提取商户证书序列号
-    certificate-path: ${WECHAT_CERT_PATH:/keys/wechat/apiclient_cert.pem}
+    # 商户 API 私钥文件路径（apiclient_key.pem），用于上行请求签名/keys/wechat/apiclient_key.pem
+    private-key-path: ${WECHAT_PRIVATE_KEY_PATH:}
+    # 商户证书文件路径（apiclient_cert.pem），用于提取商户证书序列号/keys/wechat/apiclient_cert.pem
+    certificate-path: ${WECHAT_CERT_PATH:}
     # 回调地址：默认由 app.base-url 派生，需与商户平台配置的回调地址一致
     notify-url: ${WECHAT_NOTIFY_URL:${app.base-url}/api/webhooks/wechat}
 
@@ -154,16 +153,13 @@ payment:
 
 # KMS 配置（本地文件 / 云 KMS 按 kms.provider 切换，仅一个实现生效）
 kms:
-  # provider: local(默认) | aws | aliyun  （azure 暂未实现）
+  # provider: local(默认) | aliyun  （azure 暂未实现）
   provider: ${KMS_PROVIDER:local}
   # 云 KMS 密钥 ID/ARN（本地文件方案不使用）
   key-id: ${KMS_KEY_ID:license-signing-key}
   # 本地文件方案的密钥路径（由 billing.private-key-path/public-key-path 提供，此处留空）
   private-key-path: ${KMS_PRIVATE_KEY_PATH:}
   public-key-path: ${KMS_PUBLIC_KEY_PATH:}
-  aws:
-    region: ${KMS_AWS_REGION:us-east-1}
-    # 凭证走 AWS SDK 默认链：环境变量 AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY 或 IAM 角色
   aliyun:
     region: ${KMS_ALIYUN_REGION:cn-hangzhou}
     # 阿里云 API 签名算法（AsymmetricSign 用），需与密钥类型匹配
@@ -177,7 +173,7 @@ kms:
 # 账号体系配置（plan v2.10）
 account:
   # 用户令牌签名密钥（HS256，对称）：不设默认值，缺失即启动失败（fail-fast）
-  jwt-secret: ${ACCOUNT_JWT_SECRET:}
+  jwt-secret: ${ACCOUNT_JWT_SECRET:o1EaY/O/HZ3HDk63QfRtN/9st3RXOsns9sIPwQtXh44=}
   # 令牌有效期（小时），默认 7 天
   token-ttl-hours: ${ACCOUNT_TOKEN_TTL_HOURS:168}
   # 注册是否强制邮箱验证码（联调期可临时置 false）

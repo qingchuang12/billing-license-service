@@ -27,7 +27,6 @@
         <alipay.version>4.40.560.ALL</alipay.version>
         <wechatpay.version>0.2.14</wechatpay.version>
         <paypal.version>2.0.0</paypal.version>
-        <kms.version>2.21.0</kms.version>
         <keyvault.version>4.8.0</keyvault.version>
         <aliyun.version>2.16.0</aliyun.version>
         <spring-security.version>6.5.10</spring-security.version>
@@ -184,21 +183,6 @@
             <groupId>com.paypal.sdk</groupId>
             <artifactId>checkout-sdk</artifactId>
             <version>${paypal.version}</version>
-        </dependency>
-
-        <!-- AWS KMS（K1 双 KMS 支持：本地文件 + 云 KMS，按 kms.provider 切换） -->
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>kms</artifactId>
-            <version>${kms.version}</version>
-            <optional>true</optional>
-        </dependency>
-        <!-- AWS SDK v2 同步 HTTP 客户端：KmsClient 运行时必须，本地仓库已缓存（离线可解析） -->
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>apache-client</artifactId>
-            <version>${kms.version}</version>
-            <optional>true</optional>
         </dependency>
 
         <!-- Azure Key Vault -->
