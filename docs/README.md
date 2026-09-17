@@ -11,8 +11,8 @@
 - **支付集成（5 家渠道）**：支付宝、微信支付（国内）；Stripe、Paddle、PayPal（国际）。支持创建支付、Webhook 回调发货、查询状态与**管理员发起退款**。
 - **许可证签发与校验**：基于 JWS 的签名许可证，payload 含 `lic/cid/sku/plan/feat/mid/oid/iat/exp`，客户端可离线校验机器码绑定与档位权益。
 - **兑换码系统**：密码学安全随机（`SecureRandom`）生成、兑换、管理端批量生成与吊销。
-- **多算法支持**：Ed25519（JWS `EdDSA`，默认）、ECDSA（`ES256`）、RSA（`RS256`）；可用集合取决于 `kms.provider`：`local` 支持 `EdDSA`/`ES256`/`RS256`，`aliyun` 支持 `ES256`/`RS256`（详见 `application.yml` 的 `billing.signature-algorithm` 注释）。
-- **KMS 集成**：本地文件（默认）、阿里云 KMS，按 `kms.provider` 切换（GCP / Azure 暂未实现）。
+- **多算法支持**：Ed25519（JWS `EdDSA`，默认）、ECDSA（`ES256`）、RSA（`RS256`）；可用集合（纯本地 `LocalKmsService` 支持）：`EdDSA` / `ES256` / `RS256`（详见 `application.yml` 的 `billing.signature-algorithm` 注释）。
+- **KMS 集成**：纯本地文件方案（`LocalKmsService`），密钥经文件挂载，无云 KMS 依赖（GCP / Azure / 阿里云 均不接入）。
 - **邮件通知**：支付成功/失败与 License 签发通知（`service/notification/EmailNotificationService`，`@Async`；未配置 SMTP 时自动跳过，不阻塞主流程）。
 - **安全与可观测**：ApiKey 鉴权（特权端点 `X-API-Key` + `ROLE_ADMIN`；管理端 `/api/admin/**` 由 `AdminController` 自校验 `X-Admin-API-Key`）、CORS 白名单、并发限流（内存淘汰 + XFF 防伪造）、操作审计日志（`@Audit` + `AuditAspect` 异步独立事务落库）、`/actuator/health` 健康检查（k8s 探针放行）。
 
@@ -55,8 +55,6 @@ export STRIPE_WEBHOOK_SECRET=whsec_xxx
 # export WECHAT_APP_ID=...  export WECHAT_MCH_ID=...  export WECHAT_API_V3_KEY=...
 # export PADDLE_API_KEY=...  export PAYPAL_CLIENT_ID=...  export PAYPAL_CLIENT_SECRET=...
 
-# KMS（可选；默认 local）
-# export KMS_PROVIDER=aliyun     # 另需阿里云 region/密钥 ID 与 AccessKey
 ```
 
 > 配置优先级：环境变量 > `application.yml`。生产部署务必替换所有占位密钥，并启用 PostgreSQL + Flyway（schema 归迁移脚本管理，`ddl-auto: validate`）。
@@ -446,11 +444,11 @@ billing-license-service/
 │   ├── entity/               # JPA 实体（Order 双状态机、Product/PlanTier、Subscription、Payment…）
 │   ├── dto/                  # 数据传输对象（含脱敏 LicenseResponse/OrderResponse）
 │   ├── infrastructure/
-│   │   ├── kms/              # KMS（local / aliyun，按 provider 条件化切换）
+│   │   ├── kms/              # KMS（local 纯本地实现）
 │   │   └── crypto/           # LicenseIssuer（JWS 签发）/验证
 │   └── exception/            # 全局异常处理（脱敏 + traceId）
 ├── src/main/resources/
-│   ├── application.yml       # 主配置（含 management/actuator、security、payment、kms）
+│   ├── application.yml       # 主配置（含 management/actuator、security、payment；KMS 为纯本地文件方案）
 │   ├── application-docker.yml
 │   └── db/migration/         # Flyway 迁移脚本 V1–V8
 ├── src/test/                 # 单元测试 + 集成测试（含 @SpringBootTest 上下文闸门、OpenAPI 文档可用性）
@@ -476,10 +474,6 @@ payment:
     api-key: ${STRIPE_API_KEY}
     webhook-secret: ${STRIPE_WEBHOOK_SECRET}
   # 各渠道独立配置块：alipay / wechat / stripe / paddle / paypal（渠道标识见上）
-
-kms:
-  provider: ${KMS_PROVIDER:local}   # local | aliyun（azure 暂未实现）
-  # aliyun:{ region, key-id, access-key-id, access-key-secret, key-type }
 
 security:
   api-key-header: X-API-Key

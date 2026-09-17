@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 本地运行已构建的 jar。密钥/连接信息一律通过环境变量注入，禁止明文写死。
 # 用法：先 export 必要变量，再 ./scripts/deploy/run.sh
-#   export DB_URL=... DB_USERNAME=... DB_PASSWORD=... ADMIN_API_KEYS=... KMS_PROVIDER=local
+#   export DB_URL=... DB_USERNAME=... DB_PASSWORD=... ADMIN_API_KEYS=...
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."

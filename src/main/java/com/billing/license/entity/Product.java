@@ -80,6 +80,21 @@ public class Product {
     @Column(nullable = false)
     @Builder.Default
     private Integer licenseDurationDays = 365;
+
+    /**
+     * 更新权益截止天数（自签发日起算，签发时换算为 payload 的 {@code update_until} 绝对秒）。
+     * 语义：NULL 或 &lt;= 0 均表示「不限制」，不写入 payload（当前不支持用 0 表达「不含更新」）；
+     * 常见取值 365 / 730。
+     */
+    @Column(name = "update_until_days")
+    private Integer updateUntilDays;
+
+    /**
+     * 允许使用的大版本上限（写入 payload 的 {@code max_major_version}）。
+     * 语义：NULL 或 &lt;= 0 均表示「不限制」，不写入 payload，与 {@link #updateUntilDays} 口径一致。
+     */
+    @Column(name = "max_major_version")
+    private Integer maxMajorVersion;
     
     @Column(nullable = false)
     @Builder.Default

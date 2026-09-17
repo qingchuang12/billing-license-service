@@ -56,8 +56,7 @@ export DB_URL=jdbc:postgresql://127.0.0.1:5432/license
 export DB_USERNAME=license
 export DB_PASSWORD='<强口令>'
 export ADMIN_API_KEYS='<管理端密钥>'
-export KMS_PROVIDER=local            # local | aws | aliyun
-# 各支付渠道密钥见 application.yml（KMS_*/ALIPAY_*/WECHAT_*/STRIPE_* 等）
+# 各支付渠道密钥见 application.yml（ALIPAY_*/WECHAT_*/STRIPE_* 等）
 ./scripts/deploy/run.sh
 ```
 
@@ -110,10 +109,6 @@ docker compose logs -f app
 | 变量 | 说明 |
 |---|---|
 | `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | 数据库连接（`DB_PASSWORD` 无默认值，缺失即启动失败，fail-fast） |
-| `KMS_PROVIDER` | KMS 方案：`local`（默认）/ `aws` / `aliyun` |
-| `KMS_KEY_ID` | 云 KMS 密钥 ID/ARN（local 不使用） |
-| `KMS_AWS_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | AWS KMS 区域与凭证（默认链） |
-| `KMS_ALIYUN_REGION` / `KMS_ALIYUN_SIGN_ALG` / `KMS_ALIYUN_KEY_TYPE` / `ALIYUN_ACCESS_KEY_ID` / `ALIYUN_ACCESS_KEY_SECRET` | 阿里云 KMS 配置与凭证 |
 | `ADMIN_API_KEYS` | 管理端 API 密钥（逗号分隔，无默认值，缺失即启动失败） |
 | `APP_BASE_URL` | 对外基址，用于拼接各渠道回调/回跳地址 |
 | `PAYMENT_ENABLED_CHANNELS` | 启用的支付渠道（逗号分隔；留空=按各渠道配置齐全度自动启用） |
@@ -122,3 +117,38 @@ docker compose logs -f app
 
 `scripts/ops/healthcheck.sh` 优先探测 `/actuator/health`（H13 已完成，`management.endpoints.web.exposure.include=health,info`
 并在 `docker-compose.yml` 中作为容器 healthcheck），HTTP 探针不可用时退化为端口连通性探测。
+
+## License 签名密钥轮换流程（kid）
+
+`LocalKmsService` 支持多 kid 验签：主 kid 由 `billing.license-kid` 指定（默认 `license-key-1`，对应
+`billing.public-key-path`），新签发的 License header 携带该 kid；验签时按 kid 选公钥，
+**旧 kid 的公钥保留即可继续校验历史 License**。
+
+1. **生成新密钥对**（Ed25519 裸 32 字节，放入 `keys/`，该目录不入库）：
+
+   ```bash
+   openssl genpkey -algorithm ed25519 -out keys/private.key.new
+   openssl pkey -in keys/private.key.new -pubout -rawin -out keys/public.key.new
+   ```
+
+2. **放置新密钥**：确认新私钥落到 `PRIVATE_KEY_PATH`、新公钥落到 `PUBLIC_KEY_PATH`
+   （容器场景即 `./keys`，以 `:ro` 挂载）。旧公钥另存为 `keys/public.key.old`。
+
+3. **切换主 kid 并保留旧公钥**（保证已发出的旧 License 仍可验签）：
+
+   ```bash
+   # 新签发的 License 携带新 kid
+   BILLING_LICENSE_KID=license-key-2
+   # 旧 kid 的验签公钥（配置优先，其次环境变量 PUBLIC_KEY_<KID>，KID 大写、连字符转下划线）
+   BILLING_PUBLIC_KEYS_LICENSE_KEY_1=/keys/public.key.old
+   # 或：PUBLIC_KEY_LICENSE_KEY_1=/keys/public.key.old
+   ```
+
+4. **客户端内置新公钥**：随客户端版本发布内置 `public.key.new`；未升级的旧客户端在
+   旧 License 过期前仍可用（其验签走客户端本地公钥，不受服务端轮换影响）。
+
+5. **回滚**：把 `BILLING_LICENSE_KID` 改回 `license-key-1`、私钥路径改回旧私钥即可；
+   期间用新 kid 签发的 License 会因 `license-key-2` 未配置而回退主公钥验签并告警，
+   故回滚窗口内请保留 `BILLING_PUBLIC_KEYS_LICENSE_KEY_2` 指向新公钥。
+
+> ⚠️ 轮换只改**公钥验签面**；已签发的 License token 不会重签，务必长期保留历史 kid 的公钥。

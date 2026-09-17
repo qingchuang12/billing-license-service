@@ -32,8 +32,9 @@
 ### SEC 私钥防入库（P0，安全）
 
 - **触点**：`.gitignore`、仓库根 `private.key`/`public.key`、`docker-compose.yml:15-18`。
-- **现状**：`.gitignore` 仅忽略 `keys/` 目录（第 41–42 行，注释「Local signing keys … never commit」），但真实密钥文件落在**仓库根** `private.key`/`public.key`（各 32B，当前 `git status` 为未跟踪 `??`，**尚未入库**）；Docker 实际挂载 `./keys:/keys:ro` 并设 `PRIVATE_KEY_PATH=/keys/private.key`——根级文件既未被忽略、又未被容器使用（容器读 `/keys` 为空），属错位 + 入库隐患。
-- **步骤**：① 将根级 `private.key`/`public.key` 移入 `keys/`（已被 gitignore）或显式追加 `private.key`/`public.key` 到 `.gitignore`；② 确认 `keys/` 在部署时由 Secret/挂载注入，本地联调同理；③ 之后 `git status` 应不再出现这两文件；④ 若曾误加，执行 `git rm --cached` 并从历史清理（当前未跟踪，无需此步）。
+- **现状（2026-09-17 23:10 实测更正，推翻原文）**：`.gitignore` 仅忽略 `keys/` 目录（第 41–42 行），但真实密钥文件落在**仓库根** `private.key`/`public.key`（各 32B）。**原文称「未跟踪 ??、尚未入库」为误判**——`git ls-files` 命中两者（**已在版本库索引内，即私钥已入库**），`git check-ignore` 无输出（未被忽略）。另实测 `keys/` 目录**并不存在**（`Test-Path keys` = False），而 compose 挂载源为 `./keys` → 容器内 `/keys` 为空，首次签名必崩。
+- **处置范围（用户 2026-09-17 拍板：仅止血，不轮换密钥、不清历史）**：① 新建 `keys/` 并把根级两密钥**移动**进 `keys/`（gitignore 已覆盖 `keys/`）；② `.gitignore` 追加 `*.key` 兜底规则，并清掉首行误留的 markdown 围栏 `` ``` ``；③ 执行 `git rm --cached private.key public.key` 移出索引；④ compose 保留 `./keys:/keys:ro`，与移动后的实际路径对齐。
+- **未做（显式记录）**：密钥**未轮换**（入库过的 Ed25519 私钥按泄露风险看待，轮换待排期）；历史**未清理**（`git filter-repo` + force push 属高风险，待用户协调远端与协作方后另开任务）。
 - **回归**：`git add .` 不应纳入任何 `.key` 文件。
 
 ### A1 服务端校验端点补验签（P1，纵深防御）
@@ -46,7 +47,8 @@
 ### A2 管理端批量签发绑 `mid`（P1，正确性）
 
 - **触点**：`service/LicenseService.java:263-283`（`createLicense` 未设 `machineCode`，`issueLicensesForOrder` 路径产出的 License token 无 `mid`）。
-- **步骤**：`createLicense` 若 `order.getMachineCode()` 非空则注入 `machineCode`（同 `issueLicense(orderId, machineCode)` 路径）；若订单无 `machineCode`，则该管理端路径**仅产出兑换码**，不直接发可离线锁机的 License（避免「一码多机」）。
+- **步骤（2026-09-17 用户拍板，偏离原文）**：`createLicense` 若 `order.getMachineCode()` 非空则注入 `machineCode`（与 `issueLicense(orderId, machineCode)` 路径一致）；**订单无 `machineCode` 时仍照常签发 License**（token 不含 `mid`），后续由兑换码激活路径补绑。
+- **为何偏离原文**：原文要求「无 mid 则仅产兑换码、不直发 License」，但实测 `issueLicensesForOrder` 不只是管理端入口——`CheckoutService.java:269/345`（支付成功后签发）与 `AdminController.java:138` 均调用它。照原文执行会**砍掉支付成功主流程的 License 产出**，属破坏性变更，故收敛为最小改动：只补绑、不改签发与否。
 - **价值**：管理端补发/补偿签发的 License 才能被客户端离线校验设备。
 - **测试**：单测覆盖「订单带 machineCode → token 含 mid」「订单无 machineCode → 不绑 mid 且仍可用兑换路径」。
 
@@ -56,6 +58,7 @@
 - **步骤**：① `Product` 增 `updateUntilDays` / `maxMajorVersion` 字段（可空）；② `LicenseIssuer.issueLicense` 依据二者计算 `update_until`（`iat + updateUntilDays`）与 `max_major_version` 并写入 payload（保持 `meta` 之外的顶级短键，如 `umu`/`mmv` 或沿用 `meta` 内嵌，需与客户端契约统一）；③ 种子补默认档位值；④ `授权设计方案.md` §三/§十 字段示例同步为实际键名。
 - **价值**：大版本升级收费、更新截止的离线强制得以落地（当前设计空窗）。
 - **注意**：字段名须与 §十六 客户端逻辑一致，定下后客户端按名取值。
+- **本轮键名定稿（2026-09-17）**：payload **顶级全名** `update_until`（epoch 秒，Unix 时间戳）/ `max_major_version`（Integer）。**不采用**原文备选的 `umu`/`mmv` 短键——客户端尚未对接，无省字节诉求，全名可读性显著更优且免维护映射表。二者均在对应配置为 null 时**不写入 payload**（缺失即不限制），避免用 0 值误伤旧客户端。
 
 ### A4 `feat` 解析强约束（P2，一致性）
 
@@ -69,6 +72,7 @@
 - **步骤**：① `KmsService` 支持密钥版本/别名，提供「按 `kid` 选公钥」的 `verify(data, sig, kid)` 重载；② 客户端内置多公钥（按 `kid` 选），`LocalKmsService`/云 KMS 实现匹配；③ 轮换流程文档化：生成新密钥 → 配 `billing.license-kid` → 客户端发版内置新公钥 → 旧证仍由旧公钥验。
 - **价值**：买断 License 有效期数年，轮换后旧证必须仍能验。
 - **边界**：本项改动面较大，可先只做接口与客户端多公钥预留，密钥版本管理留待基础设施迭代。
+- **本轮范围（2026-09-17）**：① `KmsService` 新增 `verify(data, sig, kid)` 默认方法（默认委派无 kid 版本，保证现有实现零破坏）；② `LocalKmsService` 维护 `Map<String, keyPath>`——主密钥沿用现路径，额外公钥由 `PUBLIC_KEY_PATH_<KID>` 环境变量或 `billing.public-keys.<kid>` 注入，按 kid 选钥；③ 轮换流程写入 `scripts/README.md`。**不做**：多版本并存签名选择、自动轮换调度。
 
 ### T1 全渠道真实沙箱/生产联调（高，上线线）
 
@@ -103,17 +107,10 @@ SEC（先消除入库风险）→ A1 / A2（授权正确性与兜底，改动小
 
 ## TODOS（仅未完成项）
 
-### SEC. 私钥防入库（P0）
-- [ ] 将根级 `private.key`/`public.key` 移入 `keys/`（已被 gitignore）或显式追加到 `.gitignore`
-- [ ] 确认 `keys/` 由部署 Secret/挂载注入，`git add .` 不再纳入任何 `.key` 文件
-- [ ] 核对 `docker-compose.yml` 的 `./keys:/keys:ro` 挂载路径与实际密钥位置一致
-
-### A. 授权子域硬化
-- [ ] A1 服务端 `verifyLicense` 补 `licenseIssuer.verifyLicense(token)` 重验签 + 单测
-- [ ] A2 管理端 `createLicense` 绑 `machineCode`；订单无 `mid` 时仅产兑换码不直发 License + 单测
-- [ ] A3 `Product` 增 `updateUntilDays`/`maxMajorVersion`；`LicenseIssuer` 注入 `update_until`/`max_major_version` + 种子 + 文档同步
-- [ ] A4 `features` 落库/种子层强约束为合法 JSON 数组；签发非法时告警而非静默 + 测试
-- [ ] A5 `KmsService` 支持按 `kid` 选公钥；客户端内置多公钥预留；轮换流程文档化
+### N. 本轮新增未完项（2026-09-17 QA 验证后登记）
+- [ ] **N1 签名密钥轮换（P0，安全）**：QA 实测 commit `2a193b9` 已把 `private.key`/`public.key` 推到 **origin/main**（已上远端），`git hash-object` 与当前 `keys/` 下密钥 blob **逐字节相同**（移动≠轮换）。在线签名私钥视为已泄露。用户 2026-09-17 决策「本轮仅止血、不轮换」，故列为待排期项；须重新生成 Ed25519 密钥对 → 旧 License 重签 → 客户端内置新公钥。
+- [ ] **N2 git 历史清理**：`private.key`/`public.key` 仍在历史与远端（`git filter-repo` + force push 方可清除），高风险，需先协调远端与协作方。用户决策「本轮不清」。
+- [ ] **N3 V11 迁移真实执行验证（2026-09-18 复核：仍阻塞）**：V11 在 `git status` 中仍为 `??`（**从未提交、未进入任何部署**），且 test profile 下 `flyway.enabled=false` + H2，故至今**仍未被真实执行过**，仅静态审查通过。首次带真 PG 启动前必须验证两条 `ALTER TABLE` 与 `ddl-auto: validate` 一致。本机无 docker/psql，无法自证。
 
 ### C. 上线前验证闸门（待外部资源）
 - [ ] T1 全渠道真实沙箱/生产联调（前置：各渠道测试密钥 + 公网回调端点；建议先打通 Stripe）
@@ -124,5 +121,9 @@ SEC（先消除入库风险）→ A1 / A2（授权正确性与兜底，改动小
 ### L. v2.10 结转遗留项（2026-09-15 并入）
 - [ ] L2 上线前配置真实 SMTP 并实测「注册验证码 / 找回密码」两封邮件可达（`account.code-log-only` 仅联调兜底）——**阻塞于生产凭据，非仓库内可完成**
 
-### 遗留风险（从 B 结转）
-- [x] W17 AWS KMS 算法/编码映射：原修复针对 AWS KMS 路径；AWS KMS 实现已于 2026-09-17 移除（`AwsKmsService`/`AwsKmsServiceTest` 删除），该风险项随之关闭；当前为纯本地 Ed25519 + 阿里云 KMS 方案，无需云 KMS DER↔raw 转换路径。
+### 已关闭（不再保留条目）
+- A. 授权子域硬化 A1–A5：2026-09-17 全部落地并通过 QA 验证（`mvn test` **169/169 全绿**，基线 152 + 新增 17）。A1 服务端重验签、A2 订单带 machineCode 才绑 `mid`（无码仍照常签发）、A3 payload 顶级 `update_until`/`max_major_version`（统一「NULL 或 <=0 = 不限制、不写入」）、A4 非法 `features` 改 `log.warn` 且不写 `feat`、A5 `KmsService.verify(data,sig,kid)` default 方法 + `LocalKmsService` 按 kid 选公钥（未知 kid 回退主公钥），轮换流程写入 `scripts/README.md`。
+- W17 AWS KMS 算法/编码映射：AWS/阿里云/Azure KMS 实现与依赖已于 2026-09-17 全部移除，当前为**纯本地文件 KMS（Ed25519）**方案，无云 KMS DER↔raw 转换路径，风险关闭。
+- **N4 V11 注释口径（2026-09-18 完成）**：`V11__product_update_entitlement.sql` 原注释「0=不含更新」与实现矛盾，已改为「NULL 或 <=0 = 不限制（键不写入 payload），不可用 0 表达不含更新」，文件头注释同步。**放行依据**：V11 在 git 中仍为未跟踪（`??`），从未提交也从未在任何环境执行，改文件无 Flyway checksum 风险。
+- **N5 `授权设计方案.md` 偏离清单同步（2026-09-18 完成）**：顶部偏离清单中 A1（服务端重验签）、A2（批量签发绑 `mid`）、A3（版本门槛字段）三条「待补强项」已更新为已落地并写明实际语义；§三 待补强提示、§十六 客户端校验步骤第 7 步（待落地）同步为已落地。
+- SEC 私钥防入库（止血部分）：密钥已移入 `keys/`（gitignore 覆盖）、`git rm --cached` 移出索引、`.gitignore` 追加 `*.key` 并清掉首行误留围栏、compose `./keys:/keys:ro` 对齐。**注意：止血≠安全闭环**，轮换与历史清理见 N1/N2。

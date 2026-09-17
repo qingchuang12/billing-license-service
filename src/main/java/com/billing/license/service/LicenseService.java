@@ -151,7 +151,15 @@ public class LicenseService {
             throw new BusinessException("LICENSE_EXPIRED", 
                 "License has expired");
         }
-        
+
+        // A1：纵深防御——服务端校验点同样重验签名，避免库内 token 被篡改/伪造后仅凭状态即放行
+        String signedToken = license.getSignedToken();
+        if (signedToken == null || signedToken.isBlank() || !licenseIssuer.verifyLicense(signedToken)) {
+            recordLicenseEvent(license, LicenseEvent.EventType.VERIFY_FAILED, license.getMachineCode(),
+                "签名校验失败：signedToken 缺失或签名不匹配");
+            throw new BusinessException("LICENSE_INVALID", "License signature verification failed");
+        }
+
         return mapToResponse(license);
     }
     

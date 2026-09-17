@@ -1,4 +1,3 @@
-```
 # Compiled and build artifacts
 *.class
 *.o
@@ -40,6 +39,7 @@ Thumbs.db
 
 # Local signing keys (mounted into container at runtime, never commit)
 keys/
+*.key
 
 # Force-include the env template (override the *.env.* ignore above)
 !.env.example

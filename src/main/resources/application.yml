@@ -157,25 +157,6 @@ payment:
     # 支付取消回跳地址
     cancel-url: ${PAYPAL_CANCEL_URL:${app.base-url}/payment/cancel}
 
-# KMS 配置（本地文件 / 云 KMS 按 kms.provider 切换，仅一个实现生效）
-kms:
-  # provider: local(默认) | aliyun  （azure 暂未实现）
-  provider: ${KMS_PROVIDER:local}
-  # 云 KMS 密钥 ID/ARN（本地文件方案不使用）
-  key-id: ${KMS_KEY_ID:license-signing-key}
-  # 本地文件方案的密钥路径（由 billing.private-key-path/public-key-path 提供，此处留空）
-  private-key-path: ${KMS_PRIVATE_KEY_PATH:}
-  public-key-path: ${KMS_PUBLIC_KEY_PATH:}
-  aliyun:
-    region: ${KMS_ALIYUN_REGION:cn-hangzhou}
-    # 阿里云 API 签名算法（AsymmetricSign 用），需与密钥类型匹配
-    sign-algorithm: ${KMS_ALIYUN_SIGN_ALG:RSA_PKCS1_SHA_256}
-    # 密钥类型（供 JWS alg 头使用）：RSA | EC
-    key-type: ${KMS_ALIYUN_KEY_TYPE:RSA}
-    # 凭证走环境变量 ALIYUN_ACCESS_KEY_ID / ALIYUN_ACCESS_KEY_SECRET
-  azure:
-    vault-name: ${AZURE_VAULT_NAME:}
-
 # 账号体系配置（plan v2.10）
 account:
   # 用户令牌签名密钥（HS256，对称）：不设默认值，缺失即启动失败（fail-fast）

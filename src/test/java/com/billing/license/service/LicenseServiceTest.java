@@ -1,6 +1,7 @@
 package com.billing.license.service;
 
 import com.billing.license.config.BillingProperties;
+import com.billing.license.dto.LicenseResponse;
 import com.billing.license.entity.*;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.infrastructure.crypto.LicenseIssuer;
@@ -13,12 +14,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.Signature;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+import java.time.LocalDateTime;
+import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -152,6 +153,100 @@ class LicenseServiceTest {
         assertNotNull(license.getRevokedAt());
         verify(licenseEventRepository).save(argThat(e ->
             e.getEventType() == LicenseEvent.EventType.REVOKED));
+    }
+
+    /** 构造一条 ACTIVE 且已签名（签名有效）的 License */
+    private License signedActiveLicense(String key) {
+        Product product = Product.builder()
+            .id(productId).sku("pro").name("Pro").licenseDurationDays(365).build();
+        License license = License.builder()
+            .id(UUID.randomUUID()).licenseKey(key).customerId(customerId)
+            .status(License.LicenseStatus.ACTIVE).product(product)
+            .issuedAt(LocalDateTime.now()).expiresAt(LocalDateTime.now().plusDays(30))
+            .machineCode("M1").build();
+        license.setSignedToken(licenseIssuer.issueLicense(license));
+        return license;
+    }
+
+    // ---------------- A1：服务端校验补验签 ----------------
+
+    @Test
+    void verifyLicense_shouldPass_whenSignatureValid() {
+        License license = signedActiveLicense("LIC-OK");
+        when(licenseRepository.findByLicenseKey("LIC-OK")).thenReturn(Optional.of(license));
+        when(licenseRepository.save(any(License.class))).thenAnswer(i -> i.getArgument(0));
+
+        LicenseResponse response = licenseService.verifyLicense("LIC-OK");
+
+        assertEquals("LIC-OK", response.getLicenseKey());
+        assertNotNull(license.getLastVerifiedAt());
+        verify(licenseEventRepository, never()).save(argThat(e ->
+            e.getEventType() == LicenseEvent.EventType.VERIFY_FAILED));
+    }
+
+    @Test
+    void verifyLicense_shouldThrowAndRecordVerifyFailed_whenTokenTampered() {
+        License license = signedActiveLicense("LIC-TAMPERED");
+        // 篡改 payload 段（不碰签名段）：signingInput 变化 → 验签必然失败。
+        // 注意：不能只翻转签名末字符——base64 末字符含 2 个无效位，翻转后解码字节可能不变（测试会偶发通过）。
+        String[] parts = license.getSignedToken().split("\\.");
+        String forgedPayload = Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("{\"lic\":\"FORGED\"}".getBytes(StandardCharsets.UTF_8));
+        license.setSignedToken(parts[0] + "." + forgedPayload + "." + parts[2]);
+        when(licenseRepository.findByLicenseKey("LIC-TAMPERED")).thenReturn(Optional.of(license));
+        when(licenseRepository.save(any(License.class))).thenAnswer(i -> i.getArgument(0));
+
+        assertThrows(BusinessException.class, () -> licenseService.verifyLicense("LIC-TAMPERED"));
+        verify(licenseEventRepository).save(argThat(e ->
+            e.getEventType() == LicenseEvent.EventType.VERIFY_FAILED));
+    }
+
+    @Test
+    void verifyLicense_shouldThrowAndRecordVerifyFailed_whenSignedTokenMissing() {
+        License license = signedActiveLicense("LIC-NOTOKEN");
+        license.setSignedToken(null);
+        when(licenseRepository.findByLicenseKey("LIC-NOTOKEN")).thenReturn(Optional.of(license));
+        when(licenseRepository.save(any(License.class))).thenAnswer(i -> i.getArgument(0));
+
+        assertThrows(BusinessException.class, () -> licenseService.verifyLicense("LIC-NOTOKEN"));
+
+        License blankTokenLicense = signedActiveLicense("LIC-BLANKTOKEN");
+        blankTokenLicense.setSignedToken("   ");
+        when(licenseRepository.findByLicenseKey("LIC-BLANKTOKEN")).thenReturn(Optional.of(blankTokenLicense));
+
+        assertThrows(BusinessException.class, () -> licenseService.verifyLicense("LIC-BLANKTOKEN"));
+        verify(licenseEventRepository, times(2)).save(argThat(e ->
+            e.getEventType() == LicenseEvent.EventType.VERIFY_FAILED));
+    }
+
+    // ---------------- A2：批量签发绑 machineCode ----------------
+
+    @Test
+    void issueLicensesForOrder_shouldBindMachineCode_whenOrderHasMachineCode() {
+        Order order = paidOrder("MACHINE-BATCH");
+        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+        when(licenseRepository.saveAll(any())).thenAnswer(i -> i.getArgument(0));
+
+        List<LicenseResponse> responses = licenseService.issueLicensesForOrder(orderId);
+
+        assertEquals(1, responses.size());
+        Map<String, Object> payload = licenseIssuer.decodePayload(responses.get(0).getSignedToken());
+        assertEquals("MACHINE-BATCH", payload.get("mid"));
+    }
+
+    @Test
+    void issueLicensesForOrder_shouldStillIssueWithoutMid_whenOrderHasNoMachineCode() {
+        Order order = paidOrder(null);
+        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+        when(licenseRepository.saveAll(any())).thenAnswer(i -> i.getArgument(0));
+
+        List<LicenseResponse> responses = licenseService.issueLicensesForOrder(orderId);
+
+        assertEquals(1, responses.size(), "无机器码仍应照常签发 License");
+        String token = responses.get(0).getSignedToken();
+        assertNotNull(token);
+        Map<String, Object> payload = licenseIssuer.decodePayload(token);
+        assertFalse(payload.containsKey("mid"));
     }
 
     @Test

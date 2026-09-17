@@ -1,6 +1,7 @@
 package com.billing.license.infrastructure.crypto;
 
 import com.billing.license.entity.License;
+import com.billing.license.entity.Product;
 import com.billing.license.infrastructure.kms.KmsService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -49,20 +50,32 @@ public class LicenseIssuer {
             
             // Create payload
             Map<String, Object> payload = new HashMap<>();
+            long issuedAtSeconds = ZonedDateTime.now().toEpochSecond();
             payload.put("lic", license.getLicenseKey());
             payload.put("cid", license.getCustomerId().toString());
-            if (license.getProduct() != null) {
-                payload.put("sku", license.getProduct().getSku());
+            Product product = license.getProduct();
+            if (product != null) {
+                payload.put("sku", product.getSku());
                 // B17：写入档位与权益清单，供客户端离线校验 Pro / Pro Plus 的权益差异
-                if (license.getProduct().getTier() != null) {
-                    payload.put("plan", license.getProduct().getTier().name());
+                if (product.getTier() != null) {
+                    payload.put("plan", product.getTier().name());
                 }
-                if (license.getProduct().getFeatures() != null && !license.getProduct().getFeatures().isEmpty()) {
+                if (product.getFeatures() != null && !product.getFeatures().isEmpty()) {
                     try {
-                        payload.put("feat", objectMapper.readValue(license.getProduct().getFeatures(), List.class));
-                    } catch (Exception ignored) {
-                        // 特征字段非合法 JSON 时忽略，不影响主签发流程
+                        payload.put("feat", objectMapper.readValue(product.getFeatures(), List.class));
+                    } catch (Exception e) {
+                        // A4：非法 JSON 不再静默丢弃——明确告警且不写入 feat 键；签发流程继续（不因权益描述异常阻断售卖）
+                        log.warn("产品 features 非合法 JSON 数组，已跳过 feat 键：sku={}, features={}",
+                            product.getSku(), product.getFeatures(), e);
                     }
+                }
+                // A3：更新门槛——键缺失即「不限制」，故为 null 或 <= 0 时均不写入；
+                // 注意：当前不支持用 0 表达「不含更新」，0 一律按「不限制」处理。
+                if (product.getUpdateUntilDays() != null && product.getUpdateUntilDays() > 0) {
+                    payload.put("update_until", issuedAtSeconds + product.getUpdateUntilDays() * 86400L);
+                }
+                if (product.getMaxMajorVersion() != null && product.getMaxMajorVersion() > 0) {
+                    payload.put("max_major_version", product.getMaxMajorVersion());
                 }
             }
             // B17：绑定机器码，客户端可离线校验设备授权
@@ -73,7 +86,7 @@ public class LicenseIssuer {
             if (license.getOrder() != null) {
                 payload.put("oid", license.getOrder().getId().toString());
             }
-            payload.put("iat", ZonedDateTime.now().toEpochSecond());
+            payload.put("iat", issuedAtSeconds);
             
             if (license.getExpiresAt() != null) {
                 payload.put("exp", license.getExpiresAt()
@@ -121,14 +134,31 @@ public class LicenseIssuer {
             
             String signingInput = parts[0] + "." + parts[1];
             byte[] signature = Base64.getUrlDecoder().decode(parts[2]);
-            
+
+            // A5：按 header 携带的 kid 选择公钥；解析失败时 kid 传 null 走默认分支
             return kmsService.verify(
                 signingInput.getBytes(StandardCharsets.UTF_8),
-                signature
+                signature,
+                extractKid(parts[0])
             );
         } catch (Exception e) {
             log.error("Failed to verify license", e);
             return false;
+        }
+    }
+
+    /**
+     * 从 JWS header 段解析 kid；解析失败返回 null（交由 KMS 走默认公钥）。
+     */
+    private String extractKid(String headerB64) {
+        try {
+            String headerJson = new String(Base64.getUrlDecoder().decode(headerB64), StandardCharsets.UTF_8);
+            Map<String, Object> header = objectMapper.readValue(headerJson, Map.class);
+            Object kid = header.get("kid");
+            return kid == null ? null : kid.toString();
+        } catch (Exception e) {
+            log.warn("解析 token header 失败，kid 置空并回退默认公钥验签");
+            return null;
         }
     }
     

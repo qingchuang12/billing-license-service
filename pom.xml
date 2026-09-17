@@ -27,8 +27,6 @@
         <alipay.version>4.40.560.ALL</alipay.version>
         <wechatpay.version>0.2.14</wechatpay.version>
         <paypal.version>2.0.0</paypal.version>
-        <keyvault.version>4.8.0</keyvault.version>
-        <aliyun.version>2.16.0</aliyun.version>
         <spring-security.version>6.5.10</spring-security.version>
         <jackson-core.version>2.22.1</jackson-core.version>
         <dom4j.version>2.1.3</dom4j.version>
@@ -183,39 +181,6 @@
             <groupId>com.paypal.sdk</groupId>
             <artifactId>checkout-sdk</artifactId>
             <version>${paypal.version}</version>
-        </dependency>
-
-        <!-- Azure Key Vault -->
-        <dependency>
-            <groupId>com.azure</groupId>
-            <artifactId>azure-security-keyvault-keys</artifactId>
-            <version>${keyvault.version}</version>
-            <exclusions>
-                <exclusion>
-                    <artifactId>jackson-core</artifactId>
-                    <groupId>com.fasterxml.jackson.core</groupId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <!-- Aliyun KMS -->
-        <dependency>
-            <groupId>com.aliyun</groupId>
-            <artifactId>aliyun-java-sdk-kms</artifactId>
-            <version>${aliyun.version}</version>
-        </dependency>
-        <!-- aliyun-java-sdk-kms 将 core 声明为 optional，不会传递；此处显式引入以满足编译（DefaultAcsClient 等） -->
-        <dependency>
-            <groupId>com.aliyun</groupId>
-            <artifactId>aliyun-java-sdk-core</artifactId>
-            <version>4.7.8</version>
-            <exclusions>
-                <!-- 与本项目 bouncycastle 1.85.2 统一，避免双版本 -->
-                <exclusion>
-                    <groupId>org.bouncycastle</groupId>
-                    <artifactId>bcprov-jdk18on</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
 
         <!-- Utilities -->
