@@ -1,6 +1,7 @@
 # plan v3.0 · 上线验证 + 授权硬化（合并活动 plan）
 
-> 版本：v3.0（2026-09-17）
+> 版本：v3.1（2026-09-18）
+> v3.1 变更：并入「客户标识邮箱化（E1–E5）」主题（见 §三 E、TODOS-E）。触发：兑换为公开端点，客户身份全靠请求体 `customerId`(UUID)，终端用户不可能知道 UUID；用户 2026-09-18 拍板「方案 A：邮箱对外、UUID 内部」+「未注册邮箱自动建访客账户」+「出参回显邮箱」。
 > 前序：v1.0–v2.10 各主题与专项 plan 已归档至 `archive/`。
 > **合并说明**：本 plan 由原 `plan-2.9`（上线验证闸门）与 `plan-3.0`（授权设计方案落地 / 免费生产硬化）**合并而成**，现为本目录**唯一活动 plan**（遵循「未完成项合并进最新一份」纪律）。
 > 来源：v2.9 的 T1–T4 上线闸门 + [`授权设计方案.md`](./授权设计方案.md) §十七「免费生产的关键注意点」及文首偏离清单（待补强项）。
@@ -94,6 +95,51 @@
 ### T4 渗透测试（中，上线线）
 
 - **范围**：Webhook 验签 / admin 鉴权（现为单 header `X-API-Key`）/ 限流 / CORS / 异常脱敏 / Actuator 暴露面。
+
+### E. 客户标识邮箱化（P1，身份契约；2026-09-18 用户拍板方案 A）
+
+**背景与决策**：`POST /api/redeem/redeem` 为**公开端点**（`RedeemCodeController.java:52`，无 JWT），客户身份完全来自请求体；而 `RedeemCodeRequest.java:27` 现要求传 `customerId`（须是合法 UUID，`:199` 处 `UUID.fromString`）。终端用户拿不到、也不该知道内部 UUID。故对外标识统一改为**邮箱**，内部仍以 `users.id`(UUID) 为主键与全部落库列类型（**0 数据迁移**）。
+
+**决策记录（用户 2026-09-18 确认）**：
+1. 采用**方案 A**——邮箱只做对外标识，UUID 保持内部主键；不做全链 UUID→VARCHAR 替换（历史匿名随机 UUID 无法映射为邮箱，且邮箱可变会断链）。
+2. 匿名流程**强制提供邮箱**；未注册邮箱**自动建访客账户**（非拒绝、非 UUID 兜底）。
+3. 响应体中的客户标识**一并改为邮箱**。
+
+**E1 统一解析器（新增 `service/CustomerIdentityService`）**
+- 触点：新增服务类；依赖 `UserRepository`（`findByEmail` 已存在，见 `UserRepository.java`）、`PasswordEncoder`。
+- 接口：`UUID resolveOrCreate(String rawEmail)`。
+- 逻辑：① 归一化 `trim().toLowerCase()`（与 `User#normalizeEmail()` 同语义）；② 空/格式非法 → `BusinessException("EMAIL_REQUIRED"/"INVALID_EMAIL")`；③ `findByEmail` 命中 → 返回其 `id`；④ 未命中 → 建访客账户（`email` 归一化、`passwordHash = passwordEncoder.encode(UUID.randomUUID().toString())` 即**随机不可登录密码**、`status=ACTIVE`、`emailVerified=false`、`tokenVersion=0`）；⑤ 并发下唯一索引 `uk_users_email` 冲突 → 捕获 `DataIntegrityViolationException` 后**重查返回**，不抛错。
+- 认领路径：访客账户后续可走已有 `POST /api/account/password/reset`（`AccountController.java:148` + `VerificationCodeService`）设密码认领，无需新建流程。
+- 实现时核对项（不阻塞设计）：`AccountService.login` 对 `emailVerified=false` 的既有策略，决定访客认领后是否需先验邮箱；保持与现有注册路径一致即可。
+
+**E2 入参改造（3 处）**
+- `dto/CheckoutRequest.java:57`：`UUID customerId` → `String customerEmail`（加 `@Email` 校验，非空由 `resolveOrCreate` 兜底报错）。
+- `dto/RedeemCodeRequest.java:27`：`String customerId` → `String customerEmail`（Swagger 描述同步为邮箱）。
+- `controller/AdminController.java:153`：`@RequestParam UUID customerId` → `@RequestParam(required=false) String customerEmail`；`AdminService.listLicenses` 入参同步改为 `String customerEmail`（`:84`），内部经解析器换成 UUID 再查。
+- **兼容性**：项目尚未上线（T1 阻塞于外部资源），无存量外部客户端，故**直接替换字段名**、不做双字段过渡；契约变更登记到 T3（客户端仓库）与 §五 文档同步。
+
+**E3 出参改造（含 N+1 规避）**
+- `dto/LicenseResponse.java:34`：`UUID customerId` → `String customerEmail`（Swagger 示例改为邮箱）。
+- `dto/OrderResponse.java:35`：同上。
+- 工厂方法签名：`LicenseResponse.adminView(License)`（`:76`）→ `adminView(License, String customerEmail)`；`OrderResponse` 的构造点同步。
+- **批量解析避免 N+1**：`AdminService.listLicenses`（`:104` 的 `map(LicenseResponse::adminView)`）先收集本页所有 `customerId` → `userRepository.findAllById(ids)` 建 `Map<UUID,String>` → 逐条填充；单条接口（`AdminController.java:175/197`）单查一次。
+- `LicenseController.java:47`（`verifyLicense` 公开返回 `LicenseResponse`）同样需邮箱解析——**注意**：该端点为公开端点，回显邮箱会把「License 归属邮箱」暴露给任何持有 licenseKey 的人；实现时按现有 H10 脱敏思路处理（建议该端点**不回显邮箱**，置 null，或沿用 `adminView` 口径，实现时在 PR 说明中标注选择）。
+- `dto/RedeemResponse.java`：**实测无 `customerId` 字段**（`:20-50`），本次**不改**；兑换响应只回 `licenseKey`/`signedToken`/`expiresAt`，邮箱对客户端无用途，如需再单列。
+
+**E4 移除匿名 UUID 兜底（2 处）**
+- `service/CheckoutService.java:96`：`request.getCustomerId() != null ? request.getCustomerId() : UUID.randomUUID()` → `customerIdentityService.resolveOrCreate(request.getCustomerEmail())`。
+- `service/RedeemCodeService.java:195-203`（`doRedeem`）：删除 `UUID.fromString` 与随机 UUID 分支 → `resolveOrCreate(request.getCustomerEmail())`；错误码 `INVALID_CUSTOMER_ID` 收敛为 `EMAIL_REQUIRED`/`INVALID_EMAIL`。
+- `service/subscription/SubscriptionService.java:82`：取的是 `order.getCustomerId()`，随订单改造自动正确，**无需单独改**。
+
+**E5 验证与文档**
+- 单测：现有 10 个测试文件含 `customerId`/`UUID` 断言，需同步为邮箱入参；新增覆盖——未注册邮箱兑换→自动建访客账户且 License 挂到该 `userId`；已注册邮箱→复用同一 `userId` 不重复建号；并发同邮箱兑换仅产生 1 条 User（唯一索引兜底）。
+- 全量 `mvn test` 必须全绿（基线 **169/169**）。
+- 文档同步：`README.md`、`接口调用时序图.md`、`授权设计方案.md` 中 `customerId` 的请求/响应示例。
+
+**风险与边界**
+- **破坏性契约变更**：入参与响应体的客户标识字段名与类型同时变化，须与客户端仓库同步（T3 前置项）。
+- **邮箱 PII**：不得在日志打印完整邮箱，沿用现有脱敏约定（必要时掩码 `a***@x.com`）。
+- **访客账户语义**：随机密码不可登录，仅作归属载体；不建到 `orders` 的外键（匿名订单设计已如此，见 `V10__accounts.sql` 注释），本方案不引入外键。
 
 ## 四、依赖与顺序
 

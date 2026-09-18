@@ -32,10 +32,11 @@ spring:
     baseline-on-migrate: true
     locations: classpath:db/migration
   mail:
-    host: ${MAIL_HOST:smtp.gmail.com}
+    host: ${MAIL_HOST:mail.ywhome.top}
     port: ${MAIL_PORT:587}
-    username: ${MAIL_USERNAME:}
-    password: ${MAIL_PASSWORD:}
+    username: ${MAIL_USERNAME:service@ywhome.top}
+    password: ${MAIL_PASSWORD:service@123.top}
+    from-address: ${MAIL_FROM_ADDRESS:service@ywhome.top}
     properties:
       mail:
         smtp:
@@ -43,7 +44,7 @@ spring:
           starttls:
             enable: true
             required: true
-        from-address: ${MAIL_FROM_ADDRESS:noreply@billing.com}
+        from-address: ${MAIL_FROM_ADDRESS:service@ywhome.top}
 
 # Springdoc OpenAPI 文档开关：必须在顶层 springdoc 命名空间下才生效；
 # 原误写在 spring: 下（变成 spring.api-docs.enabled，springdoc 不识别，等于无效配置）。
@@ -202,7 +203,7 @@ security:
   # 管理端密钥：不设默认值，缺失即启动失败。多个密钥用英文逗号分隔。
   # 2026-09-16：移除弱默认值 123456 —— 原注释声明 fail-fast，实际却有默认值，语义自相矛盾。
   # 本地/联调值见项目根目录 .env；测试值见 src/test/resources/application-test.yml。
-  admin-api-keys: ${ADMIN_API_KEYS}
+  admin-api-keys: ${ADMIN_API_KEYS:e37b476828db4b758298d2c19c41ce375cb9b195961e0fde0f4d2c5230c1ef04}
 
 # 应用对外基址
 app:

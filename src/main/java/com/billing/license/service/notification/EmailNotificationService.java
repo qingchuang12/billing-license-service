@@ -27,7 +27,7 @@ public class EmailNotificationService {
     @Value("${spring.mail.username:}")
     private String mailUsername;
     
-    @Value("${spring.mail.from-address:#{null}}")
+    @Value("${spring.mail.from-address:}")
     private String fromAddress;
     
     @Value("${billing.support-email:service@ywhome.top}")
@@ -53,7 +53,7 @@ public class EmailNotificationService {
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
             
-            helper.setFrom(fromAddress != null ? fromAddress : "noreply@billing.com");
+            helper.setFrom(fromAddress != null ? fromAddress : "service@ywhome.top");
             helper.setTo(to);
             helper.setSubject("支付成功 - 订单 " + orderNo);
             
