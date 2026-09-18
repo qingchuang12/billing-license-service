@@ -5,10 +5,12 @@ import com.billing.license.dto.OrderResponse;
 import com.billing.license.entity.License;
 import com.billing.license.entity.Order;
 import com.billing.license.entity.Payment;
+import com.billing.license.entity.User;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.LicenseRepository;
 import com.billing.license.repository.OrderRepository;
 import com.billing.license.repository.PaymentRepository;
+import com.billing.license.repository.UserRepository;
 import com.billing.license.service.notification.EmailNotificationService;
 import com.billing.license.service.payment.PaymentService;
 import com.billing.license.service.payment.impl.PaymentServiceFactory;
@@ -23,6 +25,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -41,6 +45,9 @@ public class AdminService {
     private final PaymentService paymentService;
     private final EmailNotificationService emailNotificationService;
     private final PaymentRepository paymentRepository;
+    // E1/E3（客户标识邮箱化）：对外邮箱 ↔ 内部 userId 解析，及出参 customerEmail 回填
+    private final CustomerIdentityService customerIdentityService;
+    private final UserRepository userRepository;
 
     // i6：复用 ObjectMapper 构造 metadata JSON，避免手写拼接导致的转义/注入问题
     private static final ObjectMapper METADATA_MAPPER = new ObjectMapper();
@@ -77,16 +84,18 @@ public class AdminService {
     }
 
     /**
-     * License 查询（I3 收敛）：支持按客户 ID / 订单号 / 状态过滤，三者全部留空即全量；
+     * License 查询（I3 收敛）：支持按客户邮箱 / 订单号 / 状态过滤，三者全部留空即全量；
      * 返回脱敏管理视图（不回显 signedToken）。一个端点替代原
      * {@code /api/licenses/customer/{cid}} 与 {@code /api/admin/orders/{n}/licenses}。
      */
-    public List<LicenseResponse> listLicenses(UUID customerId, String orderNumber, String status) {
+    public List<LicenseResponse> listLicenses(String customerEmail, String orderNumber, String status) {
         List<License> licenses;
         if (orderNumber != null && !orderNumber.isBlank()) {
             licenses = licenseRepository.findByOrder(getOrderByNumber(orderNumber.trim()));
-        } else if (customerId != null) {
-            licenses = licenseRepository.findByCustomerId(customerId);
+        } else if (customerEmail != null && !customerEmail.isBlank()) {
+            // E2：对外邮箱经解析器换成内部 userId 再查；未注册邮箱 → 无匹配（只读解析，不建号）
+            UUID customerId = customerIdentityService.resolveExisting(customerEmail).orElse(null);
+            licenses = (customerId == null) ? List.of() : licenseRepository.findByCustomerId(customerId);
         } else {
             licenses = licenseRepository.findAll();
         }
@@ -101,7 +110,20 @@ public class AdminService {
                 .filter(l -> l.getStatus() == target)
                 .collect(Collectors.toList());
         }
-        return licenses.stream().map(LicenseResponse::adminView).collect(Collectors.toList());
+        // E3：批量解析本页 customerId → 邮箱，避免逐条查库（N+1）
+        List<UUID> customerIds = licenses.stream()
+            .map(License::getCustomerId)
+            .filter(Objects::nonNull)
+            .distinct()
+            .collect(Collectors.toList());
+        Map<UUID, String> emailById = customerIds.isEmpty()
+            ? Map.of()
+            : userRepository.findAllById(customerIds).stream()
+                .collect(Collectors.toMap(User::getId, User::getEmail));
+        return licenses.stream()
+            .map(l -> LicenseResponse.adminView(l,
+                l.getCustomerId() == null ? null : emailById.get(l.getCustomerId())))
+            .collect(Collectors.toList());
     }
 
     /**
@@ -239,7 +261,17 @@ public class AdminService {
     public LicenseResponse getLicenseDetail(String licenseKey) {
         License license = licenseRepository.findByLicenseKey(licenseKey)
             .orElseThrow(() -> new BusinessException("LICENSE_NOT_FOUND", "License not found: " + licenseKey));
-        return LicenseResponse.adminView(license);
+        return LicenseResponse.adminView(license, resolveEmail(license.getCustomerId()));
+    }
+
+    /**
+     * E3：按 userId 单查邮箱，供单条 License 视图回填 {@code customerEmail}；查不到（如匿名历史件）返回 null。
+     */
+    private String resolveEmail(UUID customerId) {
+        if (customerId == null) {
+            return null;
+        }
+        return userRepository.findById(customerId).map(User::getEmail).orElse(null);
     }
 
     private PaymentMethod resolveMethod(String provider) {

@@ -29,9 +29,9 @@ public class LicenseResponse {
     @Schema(description = "License 密钥，用于激活软件", example = "LIC-2F8A-7C31-9D04-B5E6")
     private String licenseKey;
     
-    /** 客户唯一标识 */
-    @Schema(description = "客户唯一标识", example = "8b2c4d6e-1f3a-4b5c-9d7e-0a1b2c3d4e5f")
-    private UUID customerId;
+    /** 客户邮箱（对外客户标识） */
+    @Schema(description = "客户邮箱（对外客户标识）；匿名历史证件或对外脱敏场景为 null", example = "buyer@example.com")
+    private String customerEmail;
     
     /** 产品 SKU（库存量单位） */
     @Schema(description = "产品 SKU（库存量单位）", example = "PRO_LIFETIME")
@@ -68,12 +68,15 @@ public class LicenseResponse {
     /**
      * H10：管理后台安全视图。映射除敏感字段外的全部信息，
      * 显式不设置 {@code signedToken}（内部离线校验令牌，不应经管理接口返回）。
+     *
+     * <p>E3（客户标识邮箱化）：{@code customerEmail} 由调用方解析后传入，避免在实体层逐条查库
+     * （N+1）；匿名历史证件或无法解析时为 null。
      */
-    public static LicenseResponse adminView(License license) {
+    public static LicenseResponse adminView(License license, String customerEmail) {
         return LicenseResponse.builder()
             .id(license.getId())
             .licenseKey(license.getLicenseKey())
-            .customerId(license.getCustomerId())
+            .customerEmail(customerEmail)
             .productSku(license.getProduct() != null ? license.getProduct().getSku() : null)
             .status(license.getStatus() != null ? license.getStatus().name() : null)
             .issuedAt(license.getIssuedAt())

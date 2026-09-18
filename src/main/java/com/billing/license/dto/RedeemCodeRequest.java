@@ -21,10 +21,10 @@ public class RedeemCodeRequest {
     @Schema(description = "兑换码明文（必填）；无效/已使用/已过期返回 400", example = "RC-8F3C-1D2E-9A4B")
     private String code;
     
-    /** 客户唯一标识 */
-    @Schema(description = "客户 UUID；不传则自动生成匿名客户",
-            example = "8b2c4d6e-1f3a-4b5c-9d7e-0a1b2c3d4e5f")
-    private String customerId;
+    /** 客户邮箱（对外客户标识；未注册则自动建访客账户） */
+    @Schema(description = "客户邮箱，作为对外客户标识；未注册邮箱将自动创建访客账户",
+            example = "buyer@example.com")
+    private String customerEmail;
 
     /** 客户端机器码（兑换时绑定到 License，架构十一.4） */
     @Schema(description = "客户端机器码；传入则该 License 绑定此设备，为空则签发不绑定设备的 License",

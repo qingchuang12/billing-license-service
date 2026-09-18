@@ -2,12 +2,11 @@ package com.billing.license.dto;
 
 import com.billing.license.entity.Currency;
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.Email;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-
-import java.util.UUID;
 
 /**
  * 统一收银台创建请求
@@ -51,10 +50,11 @@ public class CheckoutRequest {
             example = "https://app.example.com/pay/cancel")
     private String cancelUrl;
 
-    /** 客户标识（可选，未传则生成匿名客户） */
-    @Schema(description = "客户 UUID；不传则自动生成匿名客户",
-            example = "3f1a8c92-5b7e-4d21-9a03-6c8f2d4e5b1a")
-    private UUID customerId;
+    /** 客户邮箱（对外客户标识；未注册则自动建访客账户） */
+    @Email
+    @Schema(description = "客户邮箱，作为对外客户标识；未注册邮箱将自动创建访客账户",
+            example = "buyer@example.com")
+    private String customerEmail;
 
     /**
      * I7（2026-09-14）：支付渠道（可选）。传入则**一步完成**「创建会话 + 创建支付」，

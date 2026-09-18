@@ -9,6 +9,7 @@ import com.billing.license.infrastructure.kms.KmsService;
 import com.billing.license.repository.LicenseEventRepository;
 import com.billing.license.repository.LicenseRepository;
 import com.billing.license.repository.OrderRepository;
+import com.billing.license.repository.UserRepository;
 import com.billing.license.service.notification.EmailNotificationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,7 @@ class LicenseServiceTest {
     private LicenseRepository licenseRepository;
     private LicenseEventRepository licenseEventRepository;
     private LicenseIssuer licenseIssuer;
+    private UserRepository userRepository;
     private LicenseService licenseService;
 
     private UUID customerId;
@@ -77,10 +79,12 @@ class LicenseServiceTest {
         };
         licenseIssuer = new LicenseIssuer(kms);
 
+        userRepository = mock(UserRepository.class);
         licenseService = new LicenseService(
             licenseRepository, orderRepository, licenseEventRepository,
             licenseIssuer, billingProperties, email,
-            mock(com.billing.license.service.risk.RateLimitService.class));
+            mock(com.billing.license.service.risk.RateLimitService.class),
+            userRepository);
 
         customerId = UUID.randomUUID();
         productId = UUID.randomUUID();
@@ -179,6 +183,8 @@ class LicenseServiceTest {
         LicenseResponse response = licenseService.verifyLicense("LIC-OK");
 
         assertEquals("LIC-OK", response.getLicenseKey());
+        // E3：verify 为公开端点，客户邮箱不回显（置 null），避免向持 licenseKey 者泄露归属邮箱
+        assertNull(response.getCustomerEmail());
         assertNotNull(license.getLastVerifiedAt());
         verify(licenseEventRepository, never()).save(argThat(e ->
             e.getEventType() == LicenseEvent.EventType.VERIFY_FAILED));

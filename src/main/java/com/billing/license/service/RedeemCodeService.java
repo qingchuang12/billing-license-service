@@ -31,6 +31,8 @@ public class RedeemCodeService {
     private final OrderRepository orderRepository;
     private final LicenseIssuer licenseIssuer;
     private final RateLimitService rateLimitService;
+    // E1（客户标识邮箱化）：对外邮箱 → 内部 userId 解析；未注册自动建访客账户
+    private final CustomerIdentityService customerIdentityService;
 
     // B8：使用密码学安全随机源生成兑换码，替代可预测的 Math.random()
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
@@ -145,7 +147,8 @@ public class RedeemCodeService {
      */
     @Transactional
     public License redeemCode(RedeemCodeRequest request) {
-        log.info("Redeeming code for customer: {}", request.getCustomerId());
+        // E4（客户标识邮箱化）：日志仅打印掩码邮箱，避免 PII 泄漏
+        log.info("Redeeming code for customer: {}", CustomerIdentityService.maskEmail(request.getCustomerEmail()));
 
         // 风控前置：同一 IP 高频兑换限流 + 暴力猜测拦截（架构十七）
         String clientIp = request.getClientIp();
@@ -192,15 +195,10 @@ public class RedeemCodeService {
                 "This code has expired");
         }
 
-        // w5：customerId 可能为空或非法格式，裸 UUID.fromString 会抛 IllegalArgumentException → 500。
-        // 收敛为业务异常并给友好提示；缺省时生成随机 UUID 保持兼容。
-        UUID customerId;
-        try {
-            customerId = (request.getCustomerId() == null || request.getCustomerId().isBlank())
-                    ? UUID.randomUUID() : UUID.fromString(request.getCustomerId());
-        } catch (IllegalArgumentException e) {
-            throw new BusinessException("INVALID_CUSTOMER_ID", "非法的 customerId: " + request.getCustomerId());
-        }
+        // E4（客户标识邮箱化）：删除原匿名随机 UUID 兜底与 UUID.fromString 解析——
+        // 对外邮箱经解析器换成内部 userId，未注册自动建访客账户；错误码收敛为
+        // EMAIL_REQUIRED / INVALID_EMAIL（均由 CustomerIdentityService 抛出）。
+        UUID customerId = customerIdentityService.resolveOrCreate(request.getCustomerEmail());
 
         // Create license
         String licenseKey = generateLicenseKey();

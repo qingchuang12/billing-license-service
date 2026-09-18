@@ -24,7 +24,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -141,7 +140,7 @@ public class AdminController {
     // ==================== License ====================
 
     @Operation(summary = "License 查询（管理端）",
-            description = "按客户 ID / 订单号 / 状态过滤，全部留空返回全部；返回脱敏视图（不含 signedToken，含失效件）。"
+            description = "按客户邮箱 / 订单号 / 状态过滤，全部留空返回全部；返回脱敏视图（不含 signedToken，含失效件）。"
                     + "（I3：合并原「按客户查询」与「订单下 License 列表」两个入口）")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "查询成功"),
@@ -150,12 +149,12 @@ public class AdminController {
     @Audit(action = "LIST_LICENSES", target = "#orderNumber")
     @GetMapping("/licenses")
     public ResponseEntity<List<LicenseResponse>> listLicenses(
-            @Parameter(description = "客户 UUID") @RequestParam(required = false) UUID customerId,
-            @Parameter(description = "业务订单号（精确匹配，优先于 customerId）")
+            @Parameter(description = "客户邮箱（对外客户标识）") @RequestParam(required = false) String customerEmail,
+            @Parameter(description = "业务订单号（精确匹配，优先于 customerEmail）")
             @RequestParam(required = false) String orderNumber,
             @Parameter(description = "License 状态：ACTIVE/EXPIRED/REVOKED/REISSUED")
             @RequestParam(required = false) String status) {
-        return ResponseEntity.ok(adminService.listLicenses(customerId, orderNumber, status));
+        return ResponseEntity.ok(adminService.listLicenses(customerEmail, orderNumber, status));
     }
 
     /**

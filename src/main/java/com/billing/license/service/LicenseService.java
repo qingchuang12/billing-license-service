@@ -6,11 +6,13 @@ import com.billing.license.entity.License;
 import com.billing.license.entity.LicenseEvent;
 import com.billing.license.entity.Order;
 import com.billing.license.entity.Product;
+import com.billing.license.entity.User;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.infrastructure.crypto.LicenseIssuer;
 import com.billing.license.repository.LicenseEventRepository;
 import com.billing.license.repository.LicenseRepository;
 import com.billing.license.repository.OrderRepository;
+import com.billing.license.repository.UserRepository;
 import com.billing.license.service.notification.EmailNotificationService;
 import com.billing.license.service.risk.RateLimitService;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +37,8 @@ public class LicenseService {
     private final BillingProperties billingProperties;
     private final EmailNotificationService emailNotificationService;
     private final RateLimitService rateLimitService;
+    // E3（客户标识邮箱化）：按 userId 解析邮箱，用于签发/重发等管理端出参回填 customerEmail
+    private final UserRepository userRepository;
     
     /**
      * Issue a license bound to a specific machine code
@@ -113,8 +117,10 @@ public class LicenseService {
         
         log.info("Issued {} licenses for order: {}", licenses.size(), orderId);
         
+        // E3：本订单下所有 License 同属一个 customerId，单次解析邮箱即可（避免逐条查库）
+        String customerEmail = resolveEmail(order.getCustomerId());
         return licenses.stream()
-            .map(this::mapToResponse)
+            .map(l -> mapToResponse(l, customerEmail))
             .collect(Collectors.toList());
     }
     
@@ -160,7 +166,8 @@ public class LicenseService {
             throw new BusinessException("LICENSE_INVALID", "License signature verification failed");
         }
 
-        return mapToResponse(license);
+        // E3：verify 为**公开端点**——不回显客户邮箱（否则任何持 licenseKey 者可看到归属邮箱）
+        return mapToResponse(license, null);
     }
     
     /**
@@ -247,7 +254,7 @@ public class LicenseService {
             "Reissued license for original " + licenseKey);
 
         log.info("Reissued license created: {}", newLicense.getLicenseKey());
-        return mapToResponse(newLicense);
+        return mapToResponse(newLicense, resolveEmail(newLicense.getCustomerId()));
     }
 
     /**
@@ -301,11 +308,12 @@ public class LicenseService {
         return sb.toString();
     }
     
-    private LicenseResponse mapToResponse(License license) {
+    /** E3：构建 License 响应；{@code customerEmail} 由调用方按端点口径解析后传入（公开端点传 null）。 */
+    private LicenseResponse mapToResponse(License license, String customerEmail) {
         return LicenseResponse.builder()
             .id(license.getId())
             .licenseKey(license.getLicenseKey())
-            .customerId(license.getCustomerId())
+            .customerEmail(customerEmail)
             .productSku(license.getProduct().getSku())
             .status(license.getStatus().name())
             .issuedAt(license.getIssuedAt())
@@ -314,5 +322,13 @@ public class LicenseService {
             .reissuedFrom(license.getReissuedFrom())
             .signedToken(license.getSignedToken())
             .build();
+    }
+
+    /** E3：按 userId 解析邮箱；匿名历史件或查不到返回 null。 */
+    private String resolveEmail(UUID customerId) {
+        if (customerId == null) {
+            return null;
+        }
+        return userRepository.findById(customerId).map(User::getEmail).orElse(null);
     }
 }

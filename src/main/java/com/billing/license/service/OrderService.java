@@ -43,7 +43,7 @@ public class OrderService {
         return OrderResponse.builder()
             .id(order.getId())
             .orderNumber(order.getOrderNumber())
-            .customerId(order.getCustomerId())
+            .customerEmail(order.getEmail())
             .totalAmount(order.getTotalAmount())
             .currency(order.getCurrency())
             .status(order.getStatus().name())

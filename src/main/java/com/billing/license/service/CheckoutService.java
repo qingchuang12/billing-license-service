@@ -48,6 +48,8 @@ public class CheckoutService {
     private final RedeemCodeRepository redeemCodeRepository;
     private final PaymentRepository paymentRepository;
     private final RateLimitService rateLimitService;
+    // E1（客户标识邮箱化）：对外邮箱 → 内部 userId 解析；未注册自动建访客账户
+    private final CustomerIdentityService customerIdentityService;
 
     // R5：单实例内按订单号串行化发放，避免并发轮询重复签发 License/兑换码（资损）
     private ConcurrentHashMap<String, Object> fulfillmentLocks = new ConcurrentHashMap<>();
@@ -90,10 +92,11 @@ public class CheckoutService {
         BigDecimal orderAmount = product.getPriceForRegion(domestic);
         Currency orderCurrency = product.getCurrencyForRegion(domestic);
 
-        // 构建订单
+        // E4（客户标识邮箱化）：不再匿名随机 UUID 兜底——对外邮箱解析为内部 userId，
+        // 未注册邮箱自动建访客账户（方案 A：邮箱对外、UUID 内部）。
         Order order = Order.builder()
             .orderNumber(generateOrderNumber())
-            .customerId(request.getCustomerId() != null ? request.getCustomerId() : UUID.randomUUID())
+            .customerId(customerIdentityService.resolveOrCreate(request.getCustomerEmail()))
             .totalAmount(orderAmount)
             .currency(orderCurrency)
             .status(Order.OrderStatus.PENDING)

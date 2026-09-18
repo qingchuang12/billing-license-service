@@ -51,7 +51,7 @@ class CheckoutServicePaymentFailureTest {
                 paymentServiceFactory, paymentService, mock(LicenseService.class),
                 mock(RedeemCodeService.class), mock(LicenseRepository.class),
                 mock(RedeemCodeRepository.class), mock(PaymentRepository.class),
-                mock(RateLimitService.class));
+                mock(RateLimitService.class), mock(CustomerIdentityService.class));
     }
 
     @Test

@@ -119,7 +119,7 @@ docker compose logs -f app
 | 订单 | `GET /api/admin/orders?status=&orderNumber=&orderId=` | `X-API-Key` |
 | | `POST /api/admin/orders/{orderNumber}/issue` | `X-API-Key` |
 | | `POST /api/admin/orders/{orderNumber}/refund` | `X-API-Key` |
-| License | `GET /api/admin/licenses?customerId=&orderNumber=&status=` | `X-API-Key` |
+| License | `GET /api/admin/licenses?customerEmail=&orderNumber=&status=` | `X-API-Key` |
 | | `GET /api/admin/licenses/{licenseKey}` | `X-API-Key` |
 | | `POST /api/admin/licenses/{licenseKey}/revoke` | `X-API-Key` |
 | | `POST /api/admin/licenses/{licenseKey}/reissue` | `X-API-Key` |
@@ -192,7 +192,7 @@ curl -X POST http://localhost:8080/api/account/password/reset \
 > ⚠️ **邮件通道**：SMTP 未配置时验证码邮件会被**静默跳过**（仅 warn 日志），注册与找回密码将不可用且难以察觉。
 > 联调阶段请设置 `ACCOUNT_CODE_LOG_ONLY=true` 把验证码输出到日志；**上线前必须配置真实 SMTP 并实测可达**。
 >
-> ⚠️ **`customerId` 语义（决策 1）**：`users.id` 直接承载 `orders.customer_id`——登录用户下单即以 `userId` 作为 `customerId`；匿名订单的 `customerId` 仍为随机 UUID，不对应任何 `User`。因此「按 customerId 查单」等价于「按 userId 查单」，但**匿名订单查不到任何账号**。
+> ⚠️ **客户标识：对外邮箱 / 内部 UUID（决策 1，E1–E5）**：内部仍以 `users.id`(UUID) 为主键并承载 `orders.customer_id`；**对外统一用邮箱**——下单 `POST /api/checkout/create` 与兑换 `POST /api/redeem/redeem` 均传 `customerEmail`；**未注册邮箱自动建访客账户**（随机不可登录密码、`emailVerified=false`，可走 `POST /api/account/password/reset` 认领），服务端经 `CustomerIdentityService.resolveOrCreate` 解析为该账户 `userId` 落库。管理端 `GET /api/admin/licenses?customerEmail=` 亦按邮箱查（只读解析，未注册邮箱 → 无匹配）。历史匿名订单（旧随机 `customerId`）不在本方案回溯范围内。
 
 ### 响应结构（统一响应壳）
 
@@ -280,7 +280,7 @@ curl -X POST http://localhost:8080/api/admin/orders/{orderNumber}/issue \
 curl http://localhost:8080/api/licenses/verify/{licenseKey}
 
 # 查询 License（I3：一个端点替代「按客户查询」与「订单下 License 列表」，含失效件）
-curl "http://localhost:8080/api/admin/licenses?customerId={customerId}" -H "X-API-Key: admin-key-0001"
+curl "http://localhost:8080/api/admin/licenses?customerEmail=buyer@example.com" -H "X-API-Key: admin-key-0001"
 curl "http://localhost:8080/api/admin/licenses?orderNumber=ORD-20260914-0001" -H "X-API-Key: admin-key-0001"
 curl "http://localhost:8080/api/admin/licenses?status=REISSUED" -H "X-API-Key: admin-key-0001"
 
@@ -322,7 +322,7 @@ curl -X POST http://localhost:8080/api/redeem/redeem \
   -H "Content-Type: application/json" \
   -d '{
     "code": "ABCD-EFGH-IJKL-MNOP",
-    "customerId": "550e8400-e29b-41d4-a716-446655440000",
+    "customerEmail": "buyer@example.com",
     "machineId": "ABCD-1234-EFGH-5678"
   }'
 ```

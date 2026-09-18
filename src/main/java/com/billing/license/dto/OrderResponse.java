@@ -30,9 +30,9 @@ public class OrderResponse {
     @Schema(description = "业务订单号", example = "ORD20260914224937123")
     private String orderNumber;
     
-    /** 客户唯一标识 */
-    @Schema(description = "客户唯一标识", example = "8b2c4d6e-1f3a-4b5c-9d7e-0a1b2c3d4e5f")
-    private UUID customerId;
+    /** 客户邮箱（对外客户标识；取订单落库的 email） */
+    @Schema(description = "客户邮箱（对外客户标识）", example = "buyer@example.com")
+    private String customerEmail;
     
     /** 订单总金额 */
     @Schema(description = "订单总金额；精度与币种一致", example = "299.00")

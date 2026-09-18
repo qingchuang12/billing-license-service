@@ -9,6 +9,7 @@ import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.LicenseRepository;
 import com.billing.license.repository.OrderRepository;
 import com.billing.license.repository.PaymentRepository;
+import com.billing.license.repository.UserRepository;
 import com.billing.license.service.notification.EmailNotificationService;
 import com.billing.license.service.payment.PaymentService;
 import com.billing.license.service.payment.impl.PaymentServiceFactory;
@@ -41,6 +42,8 @@ class AdminServiceRefundTest {
     private PaymentService paymentService;
     private EmailNotificationService emailNotificationService;
     private PaymentRepository paymentRepository;
+    private CustomerIdentityService customerIdentityService;
+    private UserRepository userRepository;
 
     private AdminService adminService;
 
@@ -53,9 +56,12 @@ class AdminServiceRefundTest {
         paymentService = mock(PaymentService.class);
         emailNotificationService = mock(EmailNotificationService.class);
         paymentRepository = mock(PaymentRepository.class);
+        customerIdentityService = mock(CustomerIdentityService.class);
+        userRepository = mock(UserRepository.class);
         adminService = new AdminService(
                 orderRepository, orderService, licenseRepository,
-                paymentServiceFactory, paymentService, emailNotificationService, paymentRepository);
+                paymentServiceFactory, paymentService, emailNotificationService, paymentRepository,
+                customerIdentityService, userRepository);
     }
 
     private Order paidOrder(PaymentMethod provider) {

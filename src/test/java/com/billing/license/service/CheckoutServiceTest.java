@@ -38,6 +38,7 @@ class CheckoutServiceTest {
     private LicenseRepository licenseRepository;
     private RedeemCodeRepository redeemCodeRepository;
     private PaymentRepository paymentRepository;
+    private CustomerIdentityService customerIdentityService;
     private CheckoutService checkoutService;
 
     private Product product;
@@ -54,6 +55,9 @@ class CheckoutServiceTest {
         licenseRepository = mock(LicenseRepository.class);
         redeemCodeRepository = mock(RedeemCodeRepository.class);
         paymentRepository = mock(PaymentRepository.class);
+        customerIdentityService = mock(CustomerIdentityService.class);
+        // E4：createCheckout 经 CustomerIdentityService 解析客户标识，默认返回一个 userId
+        when(customerIdentityService.resolveOrCreate(anyString())).thenReturn(UUID.randomUUID());
 
         // B13：getStatus 优先查已签发结果，未命中才签发；默认返回空列表避免 NPE
         when(licenseRepository.findByOrderId(any())).thenReturn(List.of());
@@ -64,7 +68,8 @@ class CheckoutServiceTest {
             paymentServiceFactory, paymentService, licenseService, redeemCodeService,
             licenseRepository, redeemCodeRepository,
             paymentRepository,
-            mock(com.billing.license.service.risk.RateLimitService.class));
+            mock(com.billing.license.service.risk.RateLimitService.class),
+            customerIdentityService);
 
         product = Product.builder().id(UUID.randomUUID()).sku("pro")
             .name("Pro").price(new BigDecimal("99.00"))
@@ -80,7 +85,8 @@ class CheckoutServiceTest {
         when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
 
         CheckoutRequest req = CheckoutRequest.builder()
-            .productId("pro").currency(Currency.CNY).locale("zh-CN").build();
+            .productId("pro").currency(Currency.CNY).locale("zh-CN")
+            .customerEmail("buyer@example.com").build();
         CheckoutResponse resp = checkoutService.createCheckout(req);
 
         assertNotNull(resp.getCheckoutId());
@@ -96,7 +102,8 @@ class CheckoutServiceTest {
         when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
 
         CheckoutRequest req = CheckoutRequest.builder()
-            .productId("pro").currency(Currency.USD).locale("en-US").build();
+            .productId("pro").currency(Currency.USD).locale("en-US")
+            .customerEmail("buyer@example.com").build();
         CheckoutResponse resp = checkoutService.createCheckout(req);
 
         assertTrue(resp.getPaymentMethods().contains("STRIPE"));
@@ -109,7 +116,8 @@ class CheckoutServiceTest {
         when(productRepository.findBySku("pro")).thenReturn(Optional.of(inactive));
 
         assertThrows(RuntimeException.class, () ->
-            checkoutService.createCheckout(CheckoutRequest.builder().productId("pro").currency(Currency.CNY).build()));
+            checkoutService.createCheckout(CheckoutRequest.builder().productId("pro").currency(Currency.CNY)
+                .customerEmail("buyer@example.com").build()));
     }
 
     @Test
@@ -127,13 +135,15 @@ class CheckoutServiceTest {
         ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
 
         checkoutService.createCheckout(
-            CheckoutRequest.builder().productId("pro").currency(Currency.CNY).locale("zh-CN").build());
+            CheckoutRequest.builder().productId("pro").currency(Currency.CNY).locale("zh-CN")
+                .customerEmail("buyer@example.com").build());
         verify(orderRepository).save(captor.capture());
         assertEquals(new BigDecimal("712.80"), captor.getValue().getTotalAmount());
         assertEquals(Currency.CNY, captor.getValue().getCurrency());
 
         checkoutService.createCheckout(
-            CheckoutRequest.builder().productId("pro").currency(Currency.USD).locale("en-US").build());
+            CheckoutRequest.builder().productId("pro").currency(Currency.USD).locale("en-US")
+                .customerEmail("buyer@example.com").build());
         verify(orderRepository, times(2)).save(captor.capture());
         assertEquals(new BigDecimal("99.00"), captor.getValue().getTotalAmount());
         assertEquals(Currency.USD, captor.getValue().getCurrency());
