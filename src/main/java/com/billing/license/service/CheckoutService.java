@@ -70,9 +70,9 @@ public class CheckoutService {
         }
 
         // 风控：同一邮箱大量购买频控（架构十七）
-        if (request.getEmail() != null && !request.getEmail().isEmpty()) {
+        if (request.getCustomerEmail() != null && !request.getCustomerEmail().isEmpty()) {
             try {
-                rateLimitService.checkEmailPurchase(request.getEmail());
+                rateLimitService.checkEmailPurchase(request.getCustomerEmail());
             } catch (RateLimitService.RateLimitExceededException e) {
                 throw new BusinessException("EMAIL_PURCHASE_LIMIT", "同一邮箱购买过于频繁，请稍后再试");
             }
@@ -104,7 +104,7 @@ public class CheckoutService {
             .title(product.getName())
             .description(product.getDescription())
             .machineCode(request.getMachineId())
-            .email(request.getEmail())
+            .email(request.getCustomerEmail())
             .build();
         List<OrderItem> items = new ArrayList<>();
         items.add(OrderItem.builder()
@@ -129,7 +129,7 @@ public class CheckoutService {
             .locale(request.getLocale())
             .country(domestic ? "CN" : "GLOBAL")
             .machineId(request.getMachineId())
-            .email(request.getEmail())
+            .email(request.getCustomerEmail())
             .returnUrl(request.getReturnUrl())
             .cancelUrl(request.getCancelUrl())
             .expiresAt(LocalDateTime.now().plusHours(2))

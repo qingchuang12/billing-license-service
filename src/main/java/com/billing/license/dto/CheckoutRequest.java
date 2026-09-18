@@ -36,10 +36,6 @@ public class CheckoutRequest {
             example = "MACHINE-FP-8823a1")
     private String machineId;
 
-    /** 客户邮箱（用于发货通知） */
-    @Schema(description = "客户邮箱，用于发送支付成功与兑换码通知", example = "buyer@example.com")
-    private String email;
-
     /** 支付成功回跳地址 */
     @Schema(description = "支付成功回跳地址（网页支付渠道使用）",
             example = "https://app.example.com/pay/success")

@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>I3/I4（2026-09-14）接口简化：
  * <ul>
- *   <li>按客户查询 License 收敛到 {@code GET /api/admin/licenses?customerId=}（管理端）；</li>
+ *   <li>按客户查询 License 收敛到 {@code GET /api/admin/licenses?customerEmail=}（管理端）；</li>
  *   <li>手动签发收敛到 {@code POST /api/admin/orders/{orderNumber}/issue}（管理端）；</li>
  *   <li>客户端自吊销端点已删除（吊销唯一入口为管理端）；</li>
  *   <li>本控制器只保留客户端可公开调用的在线校验（离线验签的在线兜底）。</li>

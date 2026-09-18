@@ -2,6 +2,7 @@ package com.billing.license.service;
 
 import com.billing.license.dto.CheckoutRequest;
 import com.billing.license.dto.CheckoutResponse;
+import com.billing.license.dto.OrderResponse;
 import com.billing.license.dto.SelectProviderRequest;
 import com.billing.license.entity.*;
 import com.billing.license.repository.*;
@@ -10,6 +11,7 @@ import com.billing.license.service.payment.impl.PaymentServiceFactory;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentResponse;
 import com.billing.license.service.payment.strategy.PaymentStatus;
+import com.billing.license.service.risk.RateLimitService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -39,6 +41,7 @@ class CheckoutServiceTest {
     private RedeemCodeRepository redeemCodeRepository;
     private PaymentRepository paymentRepository;
     private CustomerIdentityService customerIdentityService;
+    private RateLimitService rateLimitService;
     private CheckoutService checkoutService;
 
     private Product product;
@@ -56,6 +59,7 @@ class CheckoutServiceTest {
         redeemCodeRepository = mock(RedeemCodeRepository.class);
         paymentRepository = mock(PaymentRepository.class);
         customerIdentityService = mock(CustomerIdentityService.class);
+        rateLimitService = mock(RateLimitService.class);
         // E4：createCheckout 经 CustomerIdentityService 解析客户标识，默认返回一个 userId
         when(customerIdentityService.resolveOrCreate(anyString())).thenReturn(UUID.randomUUID());
 
@@ -68,7 +72,7 @@ class CheckoutServiceTest {
             paymentServiceFactory, paymentService, licenseService, redeemCodeService,
             licenseRepository, redeemCodeRepository,
             paymentRepository,
-            mock(com.billing.license.service.risk.RateLimitService.class),
+            rateLimitService,
             customerIdentityService);
 
         product = Product.builder().id(UUID.randomUUID()).sku("pro")
@@ -147,6 +151,44 @@ class CheckoutServiceTest {
         verify(orderRepository, times(2)).save(captor.capture());
         assertEquals(new BigDecimal("99.00"), captor.getValue().getTotalAmount());
         assertEquals(Currency.USD, captor.getValue().getCurrency());
+    }
+
+    /**
+     * 回归（E2 缺陷修复）：客户端仅传 {@code customerEmail}（旧的 {@code email} 字段已删除，
+     * 无从传入）时，订单链路必须端到端使用该邮箱：
+     * ① {@code Order.email} 落库等于该邮箱（供支付成功/兑换码/退款通知与风控使用）；
+     * ② {@code OrderResponse.customerEmail} 回显非空（{@link OrderService#mapToResponse} 取 {@code order.getEmail()}）；
+     * ③ 风控按该邮箱执行（非空路径）。
+     */
+    @Test
+    void createCheckout_shouldUseCustomerEmail_forOrderEmail_responseAndRiskControl() {
+        UUID resolvedUserId = UUID.randomUUID();
+        when(customerIdentityService.resolveOrCreate("only@email.com")).thenReturn(resolvedUserId);
+        when(productRepository.findBySku("pro")).thenReturn(Optional.of(product));
+        when(paymentServiceFactory.getDomesticMethods()).thenReturn(List.of(PaymentMethod.ALIPAY));
+        when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
+        when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
+
+        CheckoutRequest req = CheckoutRequest.builder()
+            .productId("pro").currency(Currency.CNY).locale("zh-CN")
+            .customerEmail("only@email.com").build();
+
+        checkoutService.createCheckout(req);
+
+        // ① Order.email 落库 = customerEmail
+        ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(captor.capture());
+        Order saved = captor.getValue();
+        assertEquals("only@email.com", saved.getEmail(), "Order.email 必须落 customerEmail");
+        assertEquals(resolvedUserId, saved.getCustomerId(), "Order.customerId 必须是解析出的内部 userId");
+
+        // ② 订单响应回显 customerEmail（订单链路出参邮箱化真正生效）
+        OrderResponse orderResponse = new OrderService(orderRepository).mapToResponse(saved);
+        assertNotNull(orderResponse.getCustomerEmail(), "订单响应 customerEmail 不得为 null");
+        assertEquals("only@email.com", orderResponse.getCustomerEmail(), "订单响应必须回显 customerEmail");
+
+        // ③ 风控按 customerEmail 执行
+        verify(rateLimitService).checkEmailPurchase("only@email.com");
     }
 
     @Test
