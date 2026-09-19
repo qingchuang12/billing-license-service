@@ -2,14 +2,8 @@ package com.billing.license.controller;
 
 import com.billing.license.annotation.Audit;
 import com.billing.license.common.web.ClientIpResolver;
-import com.billing.license.dto.AuthResponse;
-import com.billing.license.dto.ChangePasswordRequest;
-import com.billing.license.dto.LoginRequest;
-import com.billing.license.dto.RegisterRequest;
-import com.billing.license.dto.ResetPasswordRequest;
-import com.billing.license.dto.SendCodeRequest;
-import com.billing.license.dto.UserProfileResponse;
-import com.billing.license.exception.BusinessException;
+import com.billing.license.dto.*;
+import com.billing.license.security.CurrentUserResolver;
 import com.billing.license.service.AccountService;
 import com.billing.license.service.VerificationCodeService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -20,13 +14,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
 
@@ -154,18 +142,10 @@ public class AccountController {
     }
 
     /**
-     * 取当前登录用户 ID（由 {@code JwtAuthFilter} 写入 principal）。
-     * 进入本方法说明已通过 {@code ROLE_USER} 授权，取不到只可能是令牌被并发登出等极端情况。
+     * 取当前登录用户 ID（由 {@code JwtAuthFilter} 写入 principal，解析逻辑见
+     * {@link com.billing.license.security.CurrentUserResolver}）。
      */
     private UUID currentUserId() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || auth.getName() == null) {
-            throw new BusinessException("TOKEN_INVALID", "缺少有效登录令牌");
-        }
-        try {
-            return UUID.fromString(auth.getName());
-        } catch (IllegalArgumentException e) {
-            throw new BusinessException("TOKEN_INVALID", "登录令牌非法");
-        }
+        return CurrentUserResolver.currentUserId();
     }
 }

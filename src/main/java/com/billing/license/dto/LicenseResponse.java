@@ -54,7 +54,11 @@ public class LicenseResponse {
     @Schema(description = "最近一次校验时间（调用 verify 时更新）；从未校验过为 null",
             example = "2026-09-14T23:10:02")
     private LocalDateTime lastVerifiedAt;
-    
+
+    /** 绑定的设备机器码（换机重发时更新）；未绑定（如先付款后绑机）为 null */
+    @Schema(description = "绑定的设备机器码；未绑定为 null", example = "5E01-7EB8-3661-E06A")
+    private String machineCode;
+
     /** 换机重发时指向的原 License ID（仅 REISSUED 记录的后续新证会带值） */
     @Schema(description = "换机重发时指向的原 License ID；非重发签发为 null",
             example = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d")
@@ -82,6 +86,7 @@ public class LicenseResponse {
             .issuedAt(license.getIssuedAt())
             .expiresAt(license.getExpiresAt())
             .lastVerifiedAt(license.getLastVerifiedAt())
+            .machineCode(license.getMachineCode())
             .reissuedFrom(license.getReissuedFrom())
             .build();
     }

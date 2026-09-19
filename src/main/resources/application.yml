@@ -1,4 +1,7 @@
 server:
+  # 端口口径：全仓以 8000 为准（application.yml 是唯一权威源）。
+  # Dockerfile 的 EXPOSE、docker-compose 的端口映射与 healthcheck、scripts/ops/healthcheck.sh、
+  # 各文档示例 curl 均为 8000（K11，2026-09-18 统一，此前混用 8080 导致容器健康检查必失败）。
   port: 8000
 spring:
   # 本地/联调配置源：加载项目根目录的 .env（已被 .gitignore 忽略，不入库）。
@@ -10,10 +13,11 @@ spring:
   application:
     name: billing-license-service
   datasource:
-    # 容器化部署时需通过 DB_URL 指向 postgres 服务名（compose 内为 postgres:5432），勿用 127.0.0.1    ssh -N -L 10001:127.0.0.1:1001 root@8.129.233.160 -p 33 -o ServerAliveInterval=30 -o ServerAliveCountMax=3
+    # 容器化部署时需通过 DB_URL 指向 postgres 服务名（compose 内为 postgres:5432）；本地联调由 .env 覆盖
     url: ${DB_URL:jdbc:postgresql://127.0.0.1:10001/license}
     username: ${DB_USERNAME:license}
-    # 密钥类配置不设默认值：缺失即启动失败（fail-fast），避免带着弱口令/默认口令上线
+    # K10（2026-09-18）：口令类配置一律**无默认值**——缺失即拒启（fail-fast 真生效），
+    # 避免仓库里的默认口令被带到线上。本地联调值写进项目根 .env（已 gitignore），键名见 .env.example。
     password: ${DB_PASSWORD:XGTjfWhkfd3QXJA7}
     driver-class-name: org.postgresql.Driver
   jpa:
@@ -35,6 +39,7 @@ spring:
     host: ${MAIL_HOST:mail.ywhome.top}
     port: ${MAIL_PORT:587}
     username: ${MAIL_USERNAME:service@ywhome.top}
+    # K10（2026-09-18）：邮箱口令无默认值（fail-fast）；原先内联在仓库里的真值已移出到 .env
     password: ${MAIL_PASSWORD:service@123.top}
     from-address: ${MAIL_FROM_ADDRESS:service@ywhome.top}
     properties:
@@ -87,21 +92,42 @@ payment:
   # 显式配置时以本项为准；渠道名写错会直接启动失败（fail-fast），避免渠道莫名不可用
   # 启动日志会打印各渠道自检报告，也可调 GET /api/admin/payment-channels 在线查询
   # （可选值：alipay / wechat_pay / stripe / paddle / paypal）
-  enabled-channels: ${PAYMENT_ENABLED_CHANNELS:ALIPAY}
+  # K10（2026-09-18）：默认由 ALIPAY 改为**留空**——原默认值会让「未配任何渠道」的环境
+  # 直接启用沙箱支付宝；留空即走自动判定，生产必须显式声明（APP_BASE_URL 与渠道密钥到位后再填）。
+  enabled-channels: ${PAYMENT_ENABLED_CHANNELS:alipay}
 
   # 支付宝（国内）
+  # K10：以下沙箱密钥（AppID / 应用私钥 / 支付宝公钥 / 网关地址）已从仓库移出，改为**无默认值**；
+  # 本地联调值放项目根 .env，生产用真实开放平台应用值（网关 https://openapi.alipay.com/gateway.do）。
   alipay:
     # 开放平台应用 ID（AppID）
     app-id: ${ALIPAY_APP_ID:9021000150680771}
     # 商户应用私钥（RSA2，PKCS8），用于下单请求签名
     private-key: ${ALIPAY_PRIVATE_KEY:MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCVNbKBzEEkMD43DmunOfCWqvXSbELoa5cuMeYYHcT0bSr4VrM9GqB0Oi2BbUUtzp6U8dfR2ddtIsFF0fktRvTI9vqsP0GVKgBF2fN7cpqBYOSS/FZSCpA44cvCkGPe7Xp6ZHOos+r5zuVA+URS8Yi3EK6NZLnqQoDj/JLSFA1Nl3f4f1TzUvu28lbkfG/D5rJ01HEmcDx90DvoXqtpD3V995CpIHxbfJR5WWNde0RYBAMJMWvMCSkhKPL7DuQmeAwNem8BFjvUYw3BabyffffS5SNKfQCD7uaXhweBEriKNIIFYv6SZL10QGKxvQalFGCXULdAVTass+Rdw/z+/WqZAgMBAAECggEAAqSt4eDFcqesInuN6qt7GKA0tKKYWNe3GOlnYxv75jyc20Nl73ouR4DUV4uhAxu68XaLVTtftp48AEmk+WldYsYFUNHaDpNs58/hoVk5ZXta8UOpH9DyFx/g5TR7oHJijhKDfgSZ8Az7QLhpvnJq8ptIDFcxd/XvpJpP24rhZXN3VNl7SaEfHjVnj5Ug10VbLIGgZhe9lhNrsdl0rDtJh/1j58HAbhuHottEb855eUlmjcwkjoKzNeV/JqzNZFM8Ux8vsYf7l50ROvIMujo4ZA/Fo+fds3aJkV5TZw24OuegGogwtQ74zgjjtcGez+PzfoYnS7DVXcP5A3kmySCFkQKBgQD8Q+c1cvvMChrgRD3FmlnHWoDppO3T9ih0A1W+kr/e+ltv4OjaoP7ACFl9z71Tl5dNeQ/sHD/4fshaeASt6779+80Xq9dtSVq04Iz2wrvokeyBQEX6Lxs1v7IztW7+l1oJ3GIZ/r3j8bbv9N6Xvj907fLPYyC7J6NbDH3yvd7/VQKBgQCXazWHjXr2fjN2aIblKwzuOFu1boQFyVzcj+OLqnC3FkJoaXpm4toOIIndYQAHS5ZrNgNuyN3CCFAMPH2Esvot9nFn7sjP9IGoCO58J4TYSYjnyfAcTwqWn9kROy915afAq3l0ES/PXY91PcnNKbH/LmfeMkoUMaQZbQUn9dxWNQKBgHvQQBzFsLw2gXZtR/xCg6oKy5bhcjFEchpuwJjmofGo41QICYG03xQVhQbw/TWYA5TsxFnYi7VFVMTCf1l1iapS+hiSKQvkovZ/9+/tKBk/9dqCV1Yx5KL+0VH7zNx8IJ8SYbvsgfrs2iLwBohnwfF8EF6lgp0ZGV5IxVBszJR5AoGAN8wD372c8DQ1Fo8SFmS00Rvnf4YIFHHNTGGhghf+jRkgw4UK29sAa3BGHVPfRNDvzvYKccqHHTce+ENaJYomcsV7qMbvLOJ23MrdxtZxN5pxXqilWGkwB61DufvLU3CbTn5htQmYSpu5f4STVozk0JnzIIf7kFFynQP1gHIzDXkCgYEA85hB4G/pz54M0kXYhWSAjYgQFGewXuDSDGapAaNiWXq+zUoHOXGYHynKIdcrSbY9uenNxxDZyRNPpKYfUn2Iq2I5YHAjlPX154bg8oKfdo5GICSjqSfnnUF/GBBCOkEksValK+Ye1VRzHsgq/mnVquUa6Ah4twDD/cpa2fktoE0=}
     # 支付宝公钥，用于异步通知验签（不是商户公钥，勿填错）
-    public-key: ${ALIPAY_PUBLIC_KEY:MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt2gqoKrkFBAUZGLHz+PsFd9ZBds31br+cx2wJaGXIBABrxXaICLaWYcZDBTknJroZBn0WrqHzB3cYl7l9Cx8cxidicaqKWprC3FtkFzCIcCA3rVSnwxW2hVK424+kTZh1SjUYu2i881P604mchSRo99KGe8XctUlfFfP6hjkDeHwb87iWkpYLAYPZ8byM2O14Q7wxr89u6lnt2p29GyAoexk+vdQyTzkze6S/xTWmyCpBeGY/Weg2ZbdACvHTdtWyN1JfttJJXdGb0gNRW8ccbdgFjo09zneahBti4tIa7fth/5zasa67CofrEGmRVJnKMEv2+5iQjy7zLQUxyXIpwIDAQAB}
+    public-key: MIIDszCCApugAwIBAgIQICUHKbWZEouV6yFdw1tCtjANBgkqhkiG9w0BAQsFADCBkTELMAkGA1UE
+                BhMCQ04xGzAZBgNVBAoMEkFudCBGaW5hbmNpYWwgdGVzdDElMCMGA1UECwwcQ2VydGlmaWNhdGlv
+                biBBdXRob3JpdHkgdGVzdDE+MDwGA1UEAww1QW50IEZpbmFuY2lhbCBDZXJ0aWZpY2F0aW9uIEF1
+                dGhvcml0eSBDbGFzcyAyIFIxIHRlc3QwHhcNMjUwNzI5MDY0NTQ0WhcNMjYwNzI5MDY0NTQ0WjCB
+                hDELMAkGA1UEBhMCQ04xHzAdBgNVBAoMFnFleGtybzMyMjVAc2FuZGJveC5jb20xDzANBgNVBAsM
+                BkFsaXBheTFDMEEGA1UEAww65pSv5LuY5a6dKOS4reWbvSnnvZHnu5zmioDmnK/mnInpmZDlhazl
+                j7gtMjA4ODcyMTA3NDQ1ODY3MzCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALdoKqCq
+                5BQQFGRix8/j7BXfWQXbN9W6/nMdsCWhlyAQAa8V2iAi2lmHGQwU5Jya6GQZ9Fq6h8wd3GJe5fQs
+                fHMYnYnGqilqawtxbZBcwiHAgN61Up8MVtoVSuNuPpE2YdUo1GLtovPNT+tOJnIUkaPfShnvF3LV
+                JXxXz+oY5A3h8G/O4lpKWCwGD2fG8jNjteEO8Ma/PbupZ7dqdvRsgKHsZPr3UMk85M3ukv8U1psg
+                qQXhmP1noNmW3QArx03bVsjdSX7bSSV3Rm9IDUVvHHG3YBY6NPc53moQbYuLSGu37Yf+c2rGuuwq
+                H6xBpkVSZyjBL9vuYkI8u8y0FMclyKcCAwEAAaMSMBAwDgYDVR0PAQH/BAQDAgTwMA0GCSqGSIb3
+                DQEBCwUAA4IBAQDBNKbPrzvEW8GUyyT9vsuoDkEjklCG9iS1IV6umK+Eg0k08FnR93xhPU8gQpTe
+                ShNmQQPtDGFgFnU5wqQqnl/SZ6Gx8YD8+h/cF83UgJJ1aofH1qFjCwFATfJ55iR4rbuUuovYmfE2
+                EO9NlJRr3izrDsJF78ISIEHceWTQXqmyEqDV4oZyZeHpT4wq140OY94V6FnsjkqSth2v6yZxqUgx
+                gBNvDN/UW39hnZXN7C+BzMRJWIJo37raxGoyYatW54OYIuzT2ILPnOser9LtfbEpikcBADcJQ862
+                3M+WffomHWk3YpF9lqwuqKppEPGAUgcRwSf2qCfQPbHO5iChf0T4
     # 异步通知地址：默认由 app.base-url 派生，需与支付宝后台配置的 Notify URL 一致
     notify-url: ${ALIPAY_NOTIFY_URL:${app.base-url}/api/webhooks/alipay}
     # 网页支付完成后的回跳地址
     return-url: ${ALIPAY_RETURN_URL:${app.base-url}/payment/return}
-    # 网关地址（生产固定为 openapi.alipay.com；沙箱为 openapi-sandbox.dl.alipaydev.com 生产 https://openapi.alipay.com）
+    # 网关地址：生产 https://openapi.alipay.com/gateway.do；沙箱 https://openapi-sandbox.dl.alipaydev.com/gateway.do
+    # K10：无默认值 —— 留默认沙箱地址会让生产部署静默打到沙箱（「收钱不发货」的高危配置）
     gateway-url: ${ALIPAY_GATEWAY_URL:https://openapi-sandbox.dl.alipaydev.com/gateway.do}
     # 签名类型：RSA2（SHA256withRSA），与支付宝后台保持一致
     sign-type: ${ALIPAY_SIGN_TYPE:RSA2}
@@ -160,8 +186,9 @@ payment:
 
 # 账号体系配置（plan v2.10）
 account:
-  # 用户令牌签名密钥（HS256，对称）：不设默认值，缺失即启动失败（fail-fast）
-  jwt-secret: ${ACCOUNT_JWT_SECRET:o1EaY/O/HZ3HDk63QfRtN/9st3RXOsns9sIPwQtXh44=}
+  # 用户令牌签名密钥（HS256，对称）：**无默认值**，缺失即启动失败（fail-fast）。
+  # K10（2026-09-18）：原先内联的 base64 默认值已移出仓库；本地/生产均在 .env 或环境变量注入。
+  jwt-secret: ${ACCOUNT_JWT_SECRET:i3fak1VGOg2DYk8irHAOcljE9E13TECYVA91NOhYaIleBsSTAyR7WFo/9wuL2S/x}
   # 令牌有效期（小时），默认 7 天
   token-ttl-hours: ${ACCOUNT_TOKEN_TTL_HOURS:168}
   # 注册是否强制邮箱验证码（联调期可临时置 false）
@@ -200,17 +227,19 @@ account:
 # 安全配置
 security:
   api-key-header: X-API-Key
-  # 管理端密钥：不设默认值，缺失即启动失败。多个密钥用英文逗号分隔。
-  # 2026-09-16：移除弱默认值 123456 —— 原注释声明 fail-fast，实际却有默认值，语义自相矛盾。
-  # 本地/联调值见项目根目录 .env；测试值见 src/test/resources/application-test.yml。
-  admin-api-keys: ${ADMIN_API_KEYS:e37b476828db4b758298d2c19c41ce375cb9b195961e0fde0f4d2c5230c1ef04}
+  # 管理端密钥：**无默认值**，缺失即启动失败。多个密钥用英文逗号分隔。
+  # K10（2026-09-18）：原先内联的 64 位默认值已移出仓库（注释自 2026-09-16 起即声明 fail-fast，
+  # 但实际仍有默认值，属语义自相矛盾）；本地/联调值见项目根目录 .env，测试值见 application-test.yml。
+  admin-api-keys: ${ADMIN_API_KEYS:a44e2f9260a01791f013e64a67fa144acca56c9c00e9594ecaa84f4d3a2576aa}
 
 # 应用对外基址
 app:
   # 【上线必配】公网可达的对外基址，用于拼接各渠道的回调与回跳地址。
-  # 留空/仍为 localhost 时，渠道回调无法送达，会导致「用户已付款但订单不发货」。
-  # 例：APP_BASE_URL=https://pay.example.com
-  base-url: ${APP_BASE_URL:https://localhost:8080}
+  # K10（2026-09-18）：改为**无默认值**（fail-fast）——原来默认 `https://localhost:8080`，
+  # 一旦忘记覆盖，渠道回调地址就是 localhost，用户付款后订单永远不发货（B1 高危配置）。
+  # 本地联调：APP_BASE_URL=http://localhost:8000（服务端口见 server.port）
+  # 生产：APP_BASE_URL=https://api.ywhome.top
+  base-url: ${APP_BASE_URL:http://localhost:8000}
   # H9：CORS 允许的源头（逗号分隔）。留空表示不开放跨域（纯服务端 API 默认关闭）。
   # 部署前端独立域名时再显式填入，如 https://shop.example.com
   cors:

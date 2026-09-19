@@ -1,0 +1,134 @@
+/* ==========================================================================
+   晏宁科技 · 我的授权页（后端内嵌 /account/，U2）页面专属样式
+   设计令牌与通用组件（btn/field/panel/site-header 等）复用 ../checkout/checkout.css，
+   本文件只定义本页布局与资产表格组件。
+   ========================================================================== */
+
+/* ------------------------------- 页面骨架 ------------------------------- */
+.account { padding: 48px 0 64px; }
+.account__inner { max-width: 960px; }
+
+.account__eyebrow {
+  margin: 0 0 8px;
+  color: var(--brand-600);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.account__title { margin: 0; font-size: 30px; line-height: 1.25; color: var(--ink-1); }
+.account__sub { margin: 10px 0 0; color: var(--ink-3); font-size: 15px; }
+
+/* 登录卡片与资产区块共用纵向节奏 */
+.auth-panel { margin-top: 28px; max-width: 520px; }
+.asset-panel { margin-top: 24px; }
+
+/* 无脚本环境（js 类由 index.html 内联脚本添加）才隐藏登录后视图 */
+html:not(.js) #contentPanel { display: block; }
+
+/* ------------------------------- 用户栏 ------------------------------- */
+.userbar {
+  margin-top: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.userbar__email { margin: 0; color: var(--ink-2); font-size: 14px; word-break: break-all; }
+
+/* ------------------------------- 表单辅助 ------------------------------- */
+.linklike {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--brand-600);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.linklike:hover { color: var(--brand-800); }
+
+.form-error { margin: 12px 0 0; color: var(--danger); font-size: 13px; }
+
+.code-row { display: flex; gap: 12px; }
+.code-row .field__input { flex: 1; min-width: 0; }
+.code-row .btn { flex: none; white-space: nowrap; }
+
+/* ------------------------------- 资产表格 ------------------------------- */
+.table-wrap {
+  margin-top: 16px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.asset-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.asset-table th,
+.asset-table td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.asset-table thead th {
+  background: var(--bg-soft);
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.asset-table tbody tr:last-child td { border-bottom: 0; }
+.asset-table tbody tr:hover { background: var(--brand-50); }
+
+/* 密钥列：等宽字体 + 复制按钮 */
+.key-cell { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.key-cell code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-1);
+}
+.copy-btn {
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--ink-3);
+  font-size: 12px;
+  cursor: pointer;
+}
+.copy-btn:hover { color: var(--brand-700); border-color: var(--brand-300); }
+
+.mono { font-family: var(--font-mono); font-size: 13px; }
+.muted { color: var(--ink-3); }
+
+/* 状态徽标：语义色随令牌（success/warning/danger 均来自 checkout.css） */
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.badge--ok { background: #E7F3EE; color: var(--success); }
+.badge--warn { background: #F9F1E2; color: var(--warning); }
+.badge--danger { background: var(--danger-bg); color: var(--danger); }
+.badge--muted { background: var(--bg-soft); color: var(--ink-3); }
+
+.empty-note { margin: 16px 0 0; color: var(--ink-3); font-size: 14px; }
+.asset-error { margin: 12px 0 0; color: var(--danger); font-size: 13px; }
+
+/* ------------------------------- 页脚 ------------------------------- */
+.site-footer { padding: 24px 0 40px; border-top: 1px solid var(--line); }
+.site-footer .form-note { margin: 0; }
+
+/* ------------------------------- 响应式（与收银台断点一致） ------------------------------- */
+@media (max-width: 768px) {
+  .account { padding: 32px 0 48px; }
+  .account__title { font-size: 24px; }
+  .userbar { flex-direction: column; align-items: flex-start; gap: 8px; }
+}

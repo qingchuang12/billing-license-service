@@ -2,11 +2,7 @@ package com.billing.license.service;
 
 import com.billing.license.config.BillingProperties;
 import com.billing.license.dto.LicenseResponse;
-import com.billing.license.entity.License;
-import com.billing.license.entity.LicenseEvent;
-import com.billing.license.entity.Order;
-import com.billing.license.entity.Product;
-import com.billing.license.entity.User;
+import com.billing.license.entity.*;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.infrastructure.crypto.LicenseIssuer;
 import com.billing.license.repository.LicenseEventRepository;
@@ -135,10 +131,6 @@ public class LicenseService {
             .orElseThrow(() -> new BusinessException("LICENSE_NOT_FOUND", 
                 "License not found: " + licenseKey));
         
-        // Update last verified timestamp
-        license.setLastVerifiedAt(LocalDateTime.now());
-        licenseRepository.save(license);
-        
         // Check status
         if (license.getStatus() != License.LicenseStatus.ACTIVE) {
             recordLicenseEvent(license, LicenseEvent.EventType.VERIFY_FAILED, license.getMachineCode(),
@@ -165,6 +157,11 @@ public class LicenseService {
                 "签名校验失败：signedToken 缺失或签名不匹配");
             throw new BusinessException("LICENSE_INVALID", "License signature verification failed");
         }
+
+        // K7（2026-09-18）：lastVerifiedAt 语义为「最后一次**成功**校验」，故放在全部判定通过之后再写。
+        // 此前实现是「先写后判」（旧 138-140 行），校验失败也会刷新该字段，导致数据失真。
+        license.setLastVerifiedAt(LocalDateTime.now());
+        licenseRepository.save(license);
 
         // E3：verify 为**公开端点**——不回显客户邮箱（否则任何持 licenseKey 者可看到归属邮箱）
         return mapToResponse(license, null);

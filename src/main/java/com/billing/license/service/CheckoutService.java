@@ -257,6 +257,16 @@ public class CheckoutService {
             resp.status(session.getStatus().name());
         }
 
+        // 会话恢复（页面刷新/第三方支付回跳）：CREATED 会话把当前区域可用支付方式一并返回，
+        // 页面恢复流程据此直接续选支付方式；缺了它前端拿到空列表会误报「暂无可用支付方式」。
+        // （按 createCheckout 的区域判定口径：session.country CN → 国内渠道，其余 → 国际渠道）
+        if (session.getStatus() == CheckoutSession.Status.CREATED) {
+            List<PaymentMethod> restoreMethods = "CN".equals(session.getCountry())
+                ? paymentServiceFactory.getDomesticMethods()
+                : paymentServiceFactory.getInternationalMethods();
+            resp.paymentMethods(restoreMethods.stream().map(Enum::name).collect(Collectors.toList()));
+        }
+
         if (session.getStatus() == CheckoutSession.Status.PAID) {
             // R5：发放幂等——单实例内按订单号串行化，且优先返回已签发记录，
             // 避免并发轮询重复签发 License 或兑换码（资损）。
@@ -380,7 +390,9 @@ public class CheckoutService {
      * M2：定时清理过期且未支付（PAID 保留用于对账）的收银台会话，避免记录无限增长。
      * 默认每小时执行一次（fixedDelay，上次完成后间隔）；可通过
      * billing.checkout-session.cleanup-interval-ms 调整。
+     * 必须开事务：派生删除 deleteBy… 走 JPA remove，无事务时抛 TransactionRequiredException。
      */
+    @Transactional
     @Scheduled(fixedDelayString = "${billing.checkout-session.cleanup-interval-ms:3600000}")
     public void cleanupExpiredSessions() {
         long deleted = checkoutSessionRepository.deleteByStatusNotAndExpiresAtBefore(

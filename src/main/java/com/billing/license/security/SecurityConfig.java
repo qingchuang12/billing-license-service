@@ -83,9 +83,17 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                 // w14：放行 Swagger/OpenAPI 文档（开发联调用，生产可按需收紧）
                 .requestMatchers("/v3/api-docs", "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
-                // 公开端点：收银台、支付回调、License 在线校验、兑换码兑换
-                .requestMatchers("/api/webhooks/**", "/api/checkout/**",
+                // 公开端点：收银台、支付回调、License 在线校验、兑换码兑换、公开产品目录
+                .requestMatchers("/api/webhooks/**", "/api/checkout/**", "/api/products/**",
                     "/api/licenses/verify/**", "/api/redeem/redeem").permitAll()
+                // 收银台静态页（/checkout/index.html + css/js 资产）：客户端「在线激活」跳转的落地页，
+                // 买家在支付前是匿名状态，必须与 /api/checkout/** 同批放行；页面自身无数据，仅静态资产。
+                // 注意不是 /api/checkout（接口已在上行放行）——少了这条，页面会被 anyRequest().denyAll() 拦成 401。
+                .requestMatchers("/checkout/**").permitAll()
+                // 「我的授权」静态页（/account/index.html + 资产，U2）：登录前页面自身无数据，
+                // 鉴权由页面内的 /api/account/** 调用凭 JWT 完成，静态资产与 /checkout/** 同口径放行。
+                // 同样注意不是 /api/account（接口已在上方按 ROLE_USER 保护，两条路径互不影响）。
+                .requestMatchers("/account/**").permitAll()
                 // v2.10 账号公开端点：**必须逐条声明在 /api/account/** 之前**。
                 // Spring Security 按声明顺序取首个匹配规则，若把宽松的 /api/account/** 写在前面，
                 // 登录接口也会要求令牌 —— 未登录用户永远拿不到令牌，形成死锁。

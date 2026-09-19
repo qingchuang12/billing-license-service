@@ -1,175 +1,50 @@
 # plan v3.0 · 上线验证 + 授权硬化（合并活动 plan）
 
-> 版本：v3.1（2026-09-18）
-> v3.1 变更：并入「客户标识邮箱化（E1–E5）」主题（见 §三 E、TODOS-E）。触发：兑换为公开端点，客户身份全靠请求体 `customerId`(UUID)，终端用户不可能知道 UUID；用户 2026-09-18 拍板「方案 A：邮箱对外、UUID 内部」+「未注册邮箱自动建访客账户」+「出参回显邮箱」。
-> 前序：v1.0–v2.10 各主题与专项 plan 已归档至 `archive/`。
-> **合并说明**：本 plan 由原 `plan-2.9`（上线验证闸门）与 `plan-3.0`（授权设计方案落地 / 免费生产硬化）**合并而成**，现为本目录**唯一活动 plan**（遵循「未完成项合并进最新一份」纪律）。
-> 来源：v2.9 的 T1–T4 上线闸门 + [`授权设计方案.md`](./授权设计方案.md) §十七「免费生产的关键注意点」及文首偏离清单（待补强项）。
-> 当前状态：v2.9 部分（T1–T4、L2、W17）**阻塞于外部资源**（渠道测试密钥、公网回调端点、客户端仓库、生产 SMTP 凭据）；授权硬化项（SEC、A1–A5）可独立启动、不阻塞上线闸门。
-> 算法结论（已符合，无需改动）：实际密钥为 **Ed25519 裸 32 字节**（`private.key`/`public.key` 各 32B，前导非 DER），与 `LocalKmsService` 的 Ed25519 分支及 `LicenseIssuer#getJwsAlgorithm` 的 `EdDSA` 映射一致，属「免费生产最佳」选型。
-> 契约基线（G/H/I 之后）：API 统一 `/api/**`、鉴权两档（公开 / `X-API-Key`）、下单唯一入口 `POST /api/checkout/create`、管理动作在 `/api/admin/**`、共 21 个端点。**注（v2.10 后）**：账号体系新增 7 个 `/api/account/**` 端点并引入第三档鉴权（用户令牌），端点总数 28、鉴权三档；原 21 个端点路径与权限未变。
+> 版本：v3.12（2026-09-19）· 唯一活动 plan。仓库内可改项已收口；剩余为决策 / 外部资源 / 跨仓任务。K8-billing 与 K16 已落地（见「已完成」）。
+> **v3.12 追加（2026-09-19）**：新增 U1-U3「用户密钥自助管理」（已确认：JWT 登录视角 / 证书+订阅+订单 / API+简单静态页）。
+> 当前状态：K8 支付页按新要求**迁入本服务**（与 API 同源），官网仅保留购买入口链接（交易页由本服务 `/checkout/` 托管，详见 `上线准备工作.md`）。
+> **2026-09-19 追记**：客户端侧激活联调完成（见「已完成」S1）；支付渠道（select-provider 的支付宝 INTERNAL_ERROR）**用户指示暂不处理**；`/checkout/**` 静态页放行已改 `SecurityConfig`，**待服务重启生效**。
 
----
+## 范围
+授权硬化 + 上线验证闸门 + 内嵌支付页托管。设计依据见专项文档（`授权设计方案.md` / `上线准备工作.md`）。
 
-## 一、背景与目标
+## Flyway 纪律
+迁移文件一经提交即受 checksum 保护，不得再改文件；需变更请新增版本（当前应为 V12）。迁移由 Flyway 在上线发布时自动执行，不是 task。
 
-两条线合并管理：
+## TODOS（仅未完成）
 
-1. **上线验证闸门（原 v2.9）**：P0/P1 阻塞项已清零、5 渠道代码层审计通过，目标为完成依赖外部资源的 4 项上线验证闸门（T1–T4）。
-2. **授权硬化（原 v3.0）**：`授权设计方案.md` 偏离清单与 §十七 标出若干「待补强」项（服务端校验未重验签、管理端批量签发未绑 `mid`、缺 `update_until`/`max_major_version`、`feat` 解析静默丢弃、缺多 `kid` 公钥轮换），并发现**私钥入库风险**（根级 `private.key` 不在 `.gitignore` 覆盖内）。目标：把授权子域从「可用」补到「生产可硬化」，覆盖**安全（SEC）、正确性（A1/A2）、商业化（A3/A4）、密钥轮换（A5）**。
+- [ ] **K5 `update_until` / `max_major_version` 客户端不拦截（P2，待产品决策）**：客户端已解析两 claim 但未据此拦截——「硬阻断版本超范围」vs「仅作更新门控（updater）」，影响付费用户，需拍板。
+- [ ] **C5/C7 客户端离线 / 在线复核（跨仓，待产品决策）**：订阅到期 / 退款吊销延迟生效 vs 补在线复核端点，需拍板。
+- [ ] **C9 收银台读取产品 / 档位入口参数（跨仓，官网侧已就绪）**：官网产品区已按 `?product=ai-tools&productId=<sku>` 生成购买链接（SKU 与 `products.sku` 一致），但收银台页 `static/checkout/checkout.js` 的 `getQueryParams()` 目前仅消费 `machineId` / `checkoutId`，`init()`（约 L1704-1733）未读取产品参数 → 用户点档位后仍须在页内重新选档，"买哪个产品/档位"未被承接。需后端读取并预选：按 `item.sku === params.productId` 命中后写入 `state.product` 再 `renderPlanCards()`。多产品上线前必须补齐。
 
-## 二、范围与边界
+## 已完成（本 plan 收口）
 
-**做**：
-- 上线线：T1 全渠道联调 / T2 压测 / T3 客户端 exe 验签 / T4 渗透。
-- 授权线：SEC 私钥防入库；A1 服务端补验签；A2 管理端批量签发绑 `mid`；A3 `update_until`/`max_major_version` 落 payload；A4 `feat` 解析强约束；A5 多 `kid` 公钥验证/轮换。
+- **U1-U3 用户密钥自助管理（2026-09-19，已确认范围：JWT 登录视角 / 证书+订阅+订单 / API+简单静态页）**：
+  - **U1 API**：`GET /api/account/licenses|subscriptions|orders`（ROLE_USER，复用 `/api/account/**` 保护区，SecurityConfig 接口侧零改动）。新增 `AccountAssetService` + `AccountAssetController`（同挂 `/api/account` 前缀）；`CurrentUserResolver` 从 AccountController 提取共用；仓储新增三个按 customerId 时间倒序派生查询；新 DTO `SubscriptionView`（产品 SKU/名称批量解析防 N+1）；`LicenseResponse` 加 `machineCode`（加法改动，adminView 同步回填）。脱敏口径：licenseKey 完整回显、signedToken 不外发。
+  - **U2 静态页**：`/account/`（static/account/ 三件套），登录 + 找回/设密码认领（验证码 RESET_PASSWORD）+ 三区块 + 复制密钥 + 登出 + 中英双语（共用 `yaning-lang` 语言键）；样式复用 `../checkout/checkout.css` 设计体系；`SecurityConfig` 放行 `/account/**` 静态资产。
+  - **附带修复（已定位根因）**：Spring Boot 3 不再解析子目录 `index.html` 欢迎页——干净启动下 `GET /checkout/` 与 `GET /account/` 均 500（`NoResourceFoundException`→GlobalExceptionHandler），而 `/checkout/index.html`=200。新增 `WebMvcConfig` 显式 forward 两页的目录路径（含尾斜杠），冒烟实测两页均 200。**随下次重启对用户实例生效**。
+  - **验证**：`mvn test` 194 全绿（新增 4 用例）；H2 冒烟实例端到端走通 注册→管理端发码→兑换出证→三端点查询（licenseKey/machineCode/customerEmail 正确、signedToken=null）；浏览器实测页面渲染（截图）、登录、三区块列表（含空态）、双语切换、登出、旧令牌自动回登录态。复制按钮动态文案随语言刷新的修复（按钮加 `data-i18n="common.copy"`）因 IAB 自动化桥中途故障未做端到端复测，机制与已验证的静态节点切换一致，待下次人工过一遍即可。
 
-**暂不做**：新支付渠道、Redis 共享限流、客户端仓库改造（§十六 客户端逻辑由客户端团队落地，本 plan 仅定义契约）、Vault 开源 KMS 接入（A5 若选 Vault 另立子项）。
+- **S1 激活接口端到端调通（2026-09-19，客户端 ai-tools ↔ 本服务）**：`POST /api/redeem/redeem` 运行时 `INTERNAL_ERROR` 已定位并修复——根因是 `LocalKmsService` 懒加载签名密钥，yml 缺省路径 `/keys/private.key` 是 **docker 容器路径**，Windows 本机直启解析为**当前盘符根** `D:\keys\`，该目录不存在 → 首次签发（兑换/收款）必然抛「本地密钥加载失败」；加载失败不缓存，故**无需重启**。处置：① 把 `keys/private.key`、`keys/public.key` 副本放到 `D:\keys\`（运行中实例下一次兑换即恢复）② `.env` 追加 `PRIVATE_KEY_PATH`/`PUBLIC_KEY_PATH` 指向仓库 keys（供 .env 生效的启动方式）。全链路实测：管理端发码（`/api/admin/redeem-codes/generate`，X-API-Key=yml 默认值可用）→ 兑换（code JC3Y-MXZV-N9ER-CPQX + 机器码 5E01-7EB8-3661-E06A）→ 签发 3 段 token → 按客户端 verifier 同款算法（Ed25519 over header.payload）**验签通过**，claims 正确（sku=pro-buyout、mid=本机机器码、lic=AE46-7546-70E6-A668、exp=10 年）；`/api/admin/licenses` 落库 ACTIVE。密钥配对独立复核：私钥 seed 派生公钥 == 客户端内置公钥 `73a23b…437`（三处一致：服务端 keys/、客户端 src/public.key、dist 镜像、编译期兜底常量）。
+- **S1 附带诊断（2026-09-19 晚）与更正：用户复报「当前地区暂无可用支付方式」——此前「旧标签页缓存旧脚本」的判断**错误**，真实根因**：收银台会话快照存 **localStorage**（跨标签页存活），用户首次成功 create 后快照一直带着 `checkoutId`（status=CREATED）；此后每次打开收银台都走 `restoreCheckout()` → `GET /status` → **状态接口从不返回 `paymentMethods`**（页面端本有消费该字段的恢复逻辑）→ 恢复出的 CREATED 会话拿空列表 → 死路报错。且快照在 localStorage，**刷新无法自愈**，故反复出现。
+  - **修复一（页面端，已同步 target 免重启生效）**：restore 拿到 CREATED 且无支付方式时不再报错，改为 `clearSession() + resetToForm()` 回退下单表单（档位选中态/邮箱/机器码均保留，可直接重新提交）；另在 checkout.js 顶部加构建标记（console.info）便于排查缓存脚本。
+  - **修复二（服务端，待重启生效）**：`CheckoutService.getStatus` 对 CREATED 会话按 `session.country`（CN→国内渠道，其余→国际）补返 `paymentMethods`（与 create 同口径），刷新/回跳可真正续选支付方式。`mvn test` 全绿。
+  - 教训：修前只在「无历史快照」的新环境验证，漏了 localStorage 快照路径；本次已用带快照的浏览器复现并验证修复。
+  - 支付环节遗留（搁置中）：点支付宝 → select-provider INTERNAL_ERROR；probable 根因 `.env` 有完整支付宝沙箱配置（APP_ID/密钥对/沙箱网关均非空）但运行实例未加载 .env（同签名密钥类问题，.env 可能因多行值整体解析失败被 optional 跳过）——处理支付时让实例真正加载 .env（IDEA EnvFile 或修正格式）。
+- **S1 附带修复：定时清理任务缺事务（2026-09-19，用户报启动日志 ERROR）**：`CheckoutService.cleanupExpiredSessions`（M2，每小时清理过期未支付会话）调用派生删除 `deleteByStatusNotAndExpiresAtBefore`，JPA `remove` 要求活动事务，而定时入口未标 `@Transactional` → 每次调度抛 `TransactionRequiredException`，清理从未生效。已加 `@Transactional`（全工程仅此一个 @Scheduled 任务），`mvn test` 全绿；**随下次重启生效**（当前实例每小时仍会刷一条该 ERROR，无功能影响）。
+- **S1 附带修复：收银台静态页 401**：`SecurityConfig` 的 permitAll 有 `/api/checkout/**` 但漏了静态页路径 `/checkout/**`，被 `.anyRequest().denyAll()` 拦成 401 空响应——客户端「在线激活」跳转落地页打不开（用户报障「接口没开发好」的实际现象之一）。已在 `SecurityConfig.java` 补 `"/checkout/**"` permitAll，`mvn test` 全绿；**用户重启后已生效**（页面已能打开）。
+- **S1 附带修复：收银台页 API 层未剥响应壳（2026-09-19）**：`static/checkout/checkout.js` 的 `requestJson` 直接把服务端统一壳 `{success, code, data, …}` 返回给上层，全文件 0 处剥 `$.data`——与 2026-09-18 客户端激活契约问题同源（页面按扁平业务对象书写）。实测复现：页面打开正常（`/checkout/**` 放行生效后）但档位区显示「产品信息加载失败」——`fetchProducts` 对壳对象 `Array.isArray` 为 false → 空列表 → 主动 reject；同病还有轮询读 `$.status`（永远等不到 PAID）与创建会话读 `$.checkoutId`。修复：`requestJson` 单点剥壳（`$.data` 为对象/数组时返回之，兼容扁平结构；壳内 `data.success === false` 归一为 API 错误抛给既有 catch），已同步到 `target/classes` **免重启生效**，浏览器实测四个档位全部正常渲染、机器码正确绑定。支付流程（select-provider INTERNAL_ERROR）仍按用户指示搁置。
+- **S1 本地配置隐患（待用户处置）**：项目根 `.env`（gitignored）中 `DB_PASSWORD` / `ADMIN_API_KEYS` / `MAIL_PASSWORD` 为**空值**；当前运行实例未导入 .env（admin 默认键可用证明），一旦某次启动实际导入了 .env，空值将压过 yml 默认导致 fail-fast 拒启。建议把真实本地值填进 .env 或 IDEA 运行配置。
 
-> 文档口径：授权线设计依据为 `授权设计方案.md`；实现以代码为准。
+- **K8-billing 内嵌支付页（同源托管）**：收银台页面迁移至本服务 `src/main/resources/static/checkout/`，对外 `/checkout/`，与 `/api` 同源（免 CORS）。落实三决策：① 区域跟随 UI 语言（zh→CNY+支付宝/微信，en→USD+Stripe/PayPal）② 客服邮箱统一 `service@ywhome.top` ③ 价格改由 K16 端点 `GET /api/products` 取（不再硬编码）。官网 `mian/` 已删除误落的 `getlicense/` 交易文件；购买入口改为「导航『购买授权』→ 站内产品区 `#pricing` → 档位按钮携 `?product=ai-tools&productId=<sku>` 跳收银台」，跳转地址集中在 `mian/assets/js/site-config.js`（2026-09-19 更新，原为两处裸跳收银台不带产品标识）；`上线准备工作.md` §0/§2.5/§6.5/§8/§10-6 已改为「后端内嵌」口径。验收：静态页自包含（内联 design tokens，无 mian/style.css 依赖）、i18n 双语、三决策已落地；端到端支付走通需真实渠道密钥（见手册 T1）。
+- **K16 公开产品目录端点 `GET /api/products`（决策 B）**：permitAll 端点返回 SKU / 名称 / 双档价格 / 档位 / 周期 / 权益；页面 fetch 调用消除硬编码价格漂移。`ProductRepository.findByActiveTrue` + `ProductPublicDto` + `SecurityConfig` 放行 + 单测已落地，`mvn test` 190 全绿（IDEA MCP，其中 2 个新增用例覆盖 K16）。
 
-## 三、实现思路
+## 已纳入上线准备手册（不展开）
 
-### SEC 私钥防入库（P0，安全）
-
-- **触点**：`.gitignore`、仓库根 `private.key`/`public.key`、`docker-compose.yml:15-18`。
-- **现状（2026-09-17 23:10 实测更正，推翻原文）**：`.gitignore` 仅忽略 `keys/` 目录（第 41–42 行），但真实密钥文件落在**仓库根** `private.key`/`public.key`（各 32B）。**原文称「未跟踪 ??、尚未入库」为误判**——`git ls-files` 命中两者（**已在版本库索引内，即私钥已入库**），`git check-ignore` 无输出（未被忽略）。另实测 `keys/` 目录**并不存在**（`Test-Path keys` = False），而 compose 挂载源为 `./keys` → 容器内 `/keys` 为空，首次签名必崩。
-- **处置范围（用户 2026-09-17 拍板：仅止血，不轮换密钥、不清历史）**：① 新建 `keys/` 并把根级两密钥**移动**进 `keys/`（gitignore 已覆盖 `keys/`）；② `.gitignore` 追加 `*.key` 兜底规则，并清掉首行误留的 markdown 围栏 `` ``` ``；③ 执行 `git rm --cached private.key public.key` 移出索引；④ compose 保留 `./keys:/keys:ro`，与移动后的实际路径对齐。
-- **未做（显式记录）**：密钥**未轮换**（入库过的 Ed25519 私钥按泄露风险看待，轮换待排期）；历史**未清理**（`git filter-repo` + force push 属高风险，待用户协调远端与协作方后另开任务）。
-- **回归**：`git add .` 不应纳入任何 `.key` 文件。
-
-### A1 服务端校验端点补验签（P1，纵深防御）
-
-- **触点**：`service/LicenseService.java:124-156`（`verifyLicense` 仅查库状态 + 过期，未调 `licenseIssuer.verifyLicense`）。
-- **步骤**：在 `verifyLicense(String licenseKey)` 查得 License 后，对其 `signedToken` 调用 `licenseIssuer.verifyLicense(token)` 重验签名；验签失败按 `VERIFY_FAILED` 记录事件并抛 `LICENSE_INVALID`。公开 `GET /api/licenses/verify/{key}` 返回前亦走同一校验。
-- **价值**：防止私钥轮换/数据被篡改后库内旧记录与签名不一致；客户端离线验签仍是主强制点，此处为服务端兜底。
-- **测试**：新增单测——篡改 `signedToken` 后 `verifyLicense` 必拒；正常 token 通过。
-
-### A2 管理端批量签发绑 `mid`（P1，正确性）
-
-- **触点**：`service/LicenseService.java:263-283`（`createLicense` 未设 `machineCode`，`issueLicensesForOrder` 路径产出的 License token 无 `mid`）。
-- **步骤（2026-09-17 用户拍板，偏离原文）**：`createLicense` 若 `order.getMachineCode()` 非空则注入 `machineCode`（与 `issueLicense(orderId, machineCode)` 路径一致）；**订单无 `machineCode` 时仍照常签发 License**（token 不含 `mid`），后续由兑换码激活路径补绑。
-- **为何偏离原文**：原文要求「无 mid 则仅产兑换码、不直发 License」，但实测 `issueLicensesForOrder` 不只是管理端入口——`CheckoutService.java:269/345`（支付成功后签发）与 `AdminController.java:138` 均调用它。照原文执行会**砍掉支付成功主流程的 License 产出**，属破坏性变更，故收敛为最小改动：只补绑、不改签发与否。
-- **价值**：管理端补发/补偿签发的 License 才能被客户端离线校验设备。
-- **测试**：单测覆盖「订单带 machineCode → token 含 mid」「订单无 machineCode → 不绑 mid 且仍可用兑换路径」。
-
-### A3 `update_until` / `max_major_version` 落 payload（P2，商业化）
-
-- **触点**：`infrastructure/crypto/LicenseIssuer.java:51-85`（payload 仅 `exp`，无更新门槛字段）；`entity/Product`；种子 `V4__product_tiers_and_seed.sql`。
-- **步骤**：① `Product` 增 `updateUntilDays` / `maxMajorVersion` 字段（可空）；② `LicenseIssuer.issueLicense` 依据二者计算 `update_until`（`iat + updateUntilDays`）与 `max_major_version` 并写入 payload（保持 `meta` 之外的顶级短键，如 `umu`/`mmv` 或沿用 `meta` 内嵌，需与客户端契约统一）；③ 种子补默认档位值；④ `授权设计方案.md` §三/§十 字段示例同步为实际键名。
-- **价值**：大版本升级收费、更新截止的离线强制得以落地（当前设计空窗）。
-- **注意**：字段名须与 §十六 客户端逻辑一致，定下后客户端按名取值。
-- **本轮键名定稿（2026-09-17）**：payload **顶级全名** `update_until`（epoch 秒，Unix 时间戳）/ `max_major_version`（Integer）。**不采用**原文备选的 `umu`/`mmv` 短键——客户端尚未对接，无省字节诉求，全名可读性显著更优且免维护映射表。二者均在对应配置为 null 时**不写入 payload**（缺失即不限制），避免用 0 值误伤旧客户端。
-
-### A4 `feat` 解析强约束（P2，一致性）
-
-- **触点**：`infrastructure/crypto/LicenseIssuer.java:61-66`（`product.getFeatures()` 非法 JSON 时 `catch` 静默忽略 → 客户端拿不到权益清单）。
-- **步骤**：在落库/种子层约束 `features` 为合法 JSON 数组（Flyway 种子校验或 `@ColumnTransformer`/校验器）；签发时对非法值**不再静默忽略**，改为记录告警日志并置空 `feat`（或抛错，视产品容忍度），避免「部分环境有权益、部分没有」的不一致。
-- **测试**：种子含一个非法 `features` 行 → 启动/签发时明确告警而非静默。
-
-### A5 多 `kid` 公钥验证 / 密钥轮换（P3，基础设施）
-
-- **触点**：`infrastructure/kms/KmsService` 单密钥（所有 `kid` 映射同一公钥，`授权设计方案.md` §九.2）。
-- **步骤**：① `KmsService` 支持密钥版本/别名，提供「按 `kid` 选公钥」的 `verify(data, sig, kid)` 重载；② 客户端内置多公钥（按 `kid` 选），`LocalKmsService`/云 KMS 实现匹配；③ 轮换流程文档化：生成新密钥 → 配 `billing.license-kid` → 客户端发版内置新公钥 → 旧证仍由旧公钥验。
-- **价值**：买断 License 有效期数年，轮换后旧证必须仍能验。
-- **边界**：本项改动面较大，可先只做接口与客户端多公钥预留，密钥版本管理留待基础设施迭代。
-- **本轮范围（2026-09-17）**：① `KmsService` 新增 `verify(data, sig, kid)` 默认方法（默认委派无 kid 版本，保证现有实现零破坏）；② `LocalKmsService` 维护 `Map<String, keyPath>`——主密钥沿用现路径，额外公钥由 `PUBLIC_KEY_PATH_<KID>` 环境变量或 `billing.public-keys.<kid>` 注入，按 kid 选钥；③ 轮换流程写入 `scripts/README.md`。**不做**：多版本并存签名选择、自动轮换调度。
-
-### T1 全渠道真实沙箱/生产联调（高，上线线）
-
-- **触点**：各 `PaymentStrategy` + `WebhookController` + `ChannelConfigValidator`。
-- **前置阻塞**：① 各渠道测试密钥（建议先 Stripe）② 公网 Webhook 端点 ③ 后台配置回调 URL/签名密钥。
-- **步骤**：按 `archive/plan-v2.5-t1-channel-verify.md` §2.3 的 5 步清单逐渠道执行；Paddle 重点核金额为最小货币单位整数串（`"999"` 非 `"9.99"`）。
-- **风险回滚**：渠道以 `enabled=false` 关停；验签异常先反向复核配置/代码。
-
-### T2 性能压测（中，上线线）
-
-- **触点**：`CheckoutService.getStatus` 补偿、`RateLimitService`、并发兑换/发放。
-- **步骤**：真实 PG + 单渠道密钥，压测记录 P95/P99、限流淘汰行为。独立环境，不触生产。
-
-### T3 客户端 exe 验签（高，需客户端仓库）
-
-- **关注点**：算法白名单、机器码绑定、过期/吊销/篡改样本 5 类验证。
-- **前置**：客户端需按 G/H/I 后的契约对接（`/api/**`、单 header `X-API-Key`、License 状态含 `REISSUED`）。
-
-### T4 渗透测试（中，上线线）
-
-- **范围**：Webhook 验签 / admin 鉴权（现为单 header `X-API-Key`）/ 限流 / CORS / 异常脱敏 / Actuator 暴露面。
-
-### E. 客户标识邮箱化（P1，身份契约；2026-09-18 用户拍板方案 A）
-
-**背景与决策**：`POST /api/redeem/redeem` 为**公开端点**（`RedeemCodeController.java:52`，无 JWT），客户身份完全来自请求体；而 `RedeemCodeRequest.java:27` 现要求传 `customerId`（须是合法 UUID，`:199` 处 `UUID.fromString`）。终端用户拿不到、也不该知道内部 UUID。故对外标识统一改为**邮箱**，内部仍以 `users.id`(UUID) 为主键与全部落库列类型（**0 数据迁移**）。
-
-**决策记录（用户 2026-09-18 确认）**：
-1. 采用**方案 A**——邮箱只做对外标识，UUID 保持内部主键；不做全链 UUID→VARCHAR 替换（历史匿名随机 UUID 无法映射为邮箱，且邮箱可变会断链）。
-2. 匿名流程**强制提供邮箱**；未注册邮箱**自动建访客账户**（非拒绝、非 UUID 兜底）。
-3. 响应体中的客户标识**一并改为邮箱**。
-
-**E1 统一解析器（新增 `service/CustomerIdentityService`）**
-- 触点：新增服务类；依赖 `UserRepository`（`findByEmail` 已存在，见 `UserRepository.java`）、`PasswordEncoder`。
-- 接口：`UUID resolveOrCreate(String rawEmail)`。
-- 逻辑：① 归一化 `trim().toLowerCase()`（与 `User#normalizeEmail()` 同语义）；② 空/格式非法 → `BusinessException("EMAIL_REQUIRED"/"INVALID_EMAIL")`；③ `findByEmail` 命中 → 返回其 `id`；④ 未命中 → 建访客账户（`email` 归一化、`passwordHash = passwordEncoder.encode(UUID.randomUUID().toString())` 即**随机不可登录密码**、`status=ACTIVE`、`emailVerified=false`、`tokenVersion=0`）；⑤ 并发下唯一索引 `uk_users_email` 冲突 → 捕获 `DataIntegrityViolationException` 后**重查返回**，不抛错。
-- 认领路径：访客账户后续可走已有 `POST /api/account/password/reset`（`AccountController.java:148` + `VerificationCodeService`）设密码认领，无需新建流程。
-- 实现时核对项（不阻塞设计）：`AccountService.login` 对 `emailVerified=false` 的既有策略，决定访客认领后是否需先验邮箱；保持与现有注册路径一致即可。
-
-**E2 入参改造（3 处）**
-- `dto/CheckoutRequest.java:57`：`UUID customerId` → `String customerEmail`（加 `@Email` 校验，非空由 `resolveOrCreate` 兜底报错）。
-- `dto/RedeemCodeRequest.java:27`：`String customerId` → `String customerEmail`（Swagger 描述同步为邮箱）。
-- `controller/AdminController.java:153`：`@RequestParam UUID customerId` → `@RequestParam(required=false) String customerEmail`；`AdminService.listLicenses` 入参同步改为 `String customerEmail`（`:84`），内部经解析器换成 UUID 再查。
-- **兼容性**：项目尚未上线（T1 阻塞于外部资源），无存量外部客户端，故**直接替换字段名**、不做双字段过渡；契约变更登记到 T3（客户端仓库）与 §五 文档同步。
-
-**E3 出参改造（含 N+1 规避）**
-- `dto/LicenseResponse.java:34`：`UUID customerId` → `String customerEmail`（Swagger 示例改为邮箱）。
-- `dto/OrderResponse.java:35`：同上。
-- 工厂方法签名：`LicenseResponse.adminView(License)`（`:76`）→ `adminView(License, String customerEmail)`；`OrderResponse` 的构造点同步。
-- **批量解析避免 N+1**：`AdminService.listLicenses`（`:104` 的 `map(LicenseResponse::adminView)`）先收集本页所有 `customerId` → `userRepository.findAllById(ids)` 建 `Map<UUID,String>` → 逐条填充；单条接口（`AdminController.java:175/197`）单查一次。
-- `LicenseController.java:47`（`verifyLicense` 公开返回 `LicenseResponse`）同样需邮箱解析——**注意**：该端点为公开端点，回显邮箱会把「License 归属邮箱」暴露给任何持有 licenseKey 的人；实现时按现有 H10 脱敏思路处理（建议该端点**不回显邮箱**，置 null，或沿用 `adminView` 口径，实现时在 PR 说明中标注选择）。
-- `dto/RedeemResponse.java`：**实测无 `customerId` 字段**（`:20-50`），本次**不改**；兑换响应只回 `licenseKey`/`signedToken`/`expiresAt`，邮箱对客户端无用途，如需再单列。
-
-**E4 移除匿名 UUID 兜底（2 处）**
-- `service/CheckoutService.java:96`：`request.getCustomerId() != null ? request.getCustomerId() : UUID.randomUUID()` → `customerIdentityService.resolveOrCreate(request.getCustomerEmail())`。
-- `service/RedeemCodeService.java:195-203`（`doRedeem`）：删除 `UUID.fromString` 与随机 UUID 分支 → `resolveOrCreate(request.getCustomerEmail())`；错误码 `INVALID_CUSTOMER_ID` 收敛为 `EMAIL_REQUIRED`/`INVALID_EMAIL`。
-- `service/subscription/SubscriptionService.java:82`：取的是 `order.getCustomerId()`，随订单改造自动正确，**无需单独改**。
-
-**E5 验证与文档**
-- 单测：现有 10 个测试文件含 `customerId`/`UUID` 断言，需同步为邮箱入参；新增覆盖——未注册邮箱兑换→自动建访客账户且 License 挂到该 `userId`；已注册邮箱→复用同一 `userId` 不重复建号；并发同邮箱兑换仅产生 1 条 User（唯一索引兜底）。
-- 全量 `mvn test` 必须全绿（基线 **169/169**）。
-- 文档同步：`README.md`、`接口调用时序图.md`、`授权设计方案.md` 中 `customerId` 的请求/响应示例。
-
-**风险与边界**
-- **破坏性契约变更**：入参与响应体的客户标识字段名与类型同时变化，须与客户端仓库同步（T3 前置项）。
-- **邮箱 PII**：不得在日志打印完整邮箱，沿用现有脱敏约定（必要时掩码 `a***@x.com`）。
-- **访客账户语义**：随机密码不可登录，仅作归属载体；不建到 `orders` 的外键（匿名订单设计已如此，见 `V10__accounts.sql` 注释），本方案不引入外键。
-
-## 四、依赖与顺序
-
-SEC（先消除入库风险）→ A1 / A2（授权正确性与兜底，改动小、价值高，可并行启动）→ T1（先 Stripe）→ T2 / T3 并行 → T4 最后 → A3 / A4（商业化，需定字段契约）→ A5（基础设施，可后置）。任一闸门发现问题回流本 plan 修复。
-
-> ⚠️ 生效于 2026-09-14：`DB_PASSWORD` 与 `ADMIN_API_KEYS` **已无默认值**，本地联调/压测前必须先注入环境变量（容器走 `.env`，单测走 `application-test.yml` 覆盖）。
->
-> 所有改动须保持 `mvn test` 全绿；A1–A4 建议各带单测，A5 至少带接口与客户端契约说明。
-
----
-
-## TODOS（仅未完成项）
-
-### N. 本轮新增未完项（2026-09-17 QA 验证后登记）
-- [ ] **N1 签名密钥轮换（P0，安全）**：QA 实测 commit `2a193b9` 已把 `private.key`/`public.key` 推到 **origin/main**（已上远端），`git hash-object` 与当前 `keys/` 下密钥 blob **逐字节相同**（移动≠轮换）。在线签名私钥视为已泄露。用户 2026-09-17 决策「本轮仅止血、不轮换」，故列为待排期项；须重新生成 Ed25519 密钥对 → 旧 License 重签 → 客户端内置新公钥。
-- [ ] **N2 git 历史清理**：`private.key`/`public.key` 仍在历史与远端（`git filter-repo` + force push 方可清除），高风险，需先协调远端与协作方。用户决策「本轮不清」。
-- [ ] **N3 V11 迁移真实执行验证（2026-09-18 复核：仍阻塞）**：V11 在 `git status` 中仍为 `??`（**从未提交、未进入任何部署**），且 test profile 下 `flyway.enabled=false` + H2，故至今**仍未被真实执行过**，仅静态审查通过。首次带真 PG 启动前必须验证两条 `ALTER TABLE` 与 `ddl-auto: validate` 一致。本机无 docker/psql，无法自证。
-
-### C. 上线前验证闸门（待外部资源）
-- [ ] T1 全渠道真实沙箱/生产联调（前置：各渠道测试密钥 + 公网回调端点；建议先打通 Stripe）
-- [ ] T2 性能压测：getStatus 补偿 / 限流淘汰 / 并发兑换，记录 P95/P99 与限流行为
-- [ ] T3 客户端 exe 验签验证：算法白名单、机器码绑定、过期/吊销/篡改样本 5 类（需客户端仓库配合）
-- [ ] T4 渗透测试：Webhook 验签 / admin 鉴权 / 限流 / CORS / Actuator 暴露面，发现项回流本 plan
-
-### L. v2.10 结转遗留项（2026-09-15 并入）
-- [ ] L2 上线前配置真实 SMTP 并实测「注册验证码 / 找回密码」两封邮件可达（`account.code-log-only` 仅联调兜底）——**阻塞于生产凭据，非仓库内可完成**
-
-### 已关闭（不再保留条目）
-- A. 授权子域硬化 A1–A5：2026-09-17 全部落地并通过 QA 验证（`mvn test` **169/169 全绿**，基线 152 + 新增 17）。A1 服务端重验签、A2 订单带 machineCode 才绑 `mid`（无码仍照常签发）、A3 payload 顶级 `update_until`/`max_major_version`（统一「NULL 或 <=0 = 不限制、不写入」）、A4 非法 `features` 改 `log.warn` 且不写 `feat`、A5 `KmsService.verify(data,sig,kid)` default 方法 + `LocalKmsService` 按 kid 选公钥（未知 kid 回退主公钥），轮换流程写入 `scripts/README.md`。
-- W17 AWS KMS 算法/编码映射：AWS/阿里云/Azure KMS 实现与依赖已于 2026-09-17 全部移除，当前为**纯本地文件 KMS（Ed25519）**方案，无云 KMS DER↔raw 转换路径，风险关闭。
-- **N4 V11 注释口径（2026-09-18 完成）**：`V11__product_update_entitlement.sql` 原注释「0=不含更新」与实现矛盾，已改为「NULL 或 <=0 = 不限制（键不写入 payload），不可用 0 表达不含更新」，文件头注释同步。**放行依据**：V11 在 git 中仍为未跟踪（`??`），从未提交也从未在任何环境执行，改文件无 Flyway checksum 风险。
-- **N5 `授权设计方案.md` 偏离清单同步（2026-09-18 完成）**：顶部偏离清单中 A1（服务端重验签）、A2（批量签发绑 `mid`）、A3（版本门槛字段）三条「待补强项」已更新为已落地并写明实际语义；§三 待补强提示、§十六 客户端校验步骤第 7 步（待落地）同步为已落地。
-- SEC 私钥防入库（止血部分）：密钥已移入 `keys/`（gitignore 覆盖）、`git rm --cached` 移出索引、`.gitignore` 追加 `*.key` 并清掉首行误留围栏、compose `./keys:/keys:ro` 对齐。**注意：止血≠安全闭环**，轮换与历史清理见 N1/N2。
+| 项 | 手册章节 | 阻塞 |
+|---|---|---|
+| T1 全渠道真实联调 | §10-7 | 渠道测试密钥 + 公网回调 |
+| T2 性能压测 | §10-7 | 真实环境 |
+| T3 客户端 exe 验签 | §10-7 | 客户端发版 |
+| T4 渗透测试 | §10-7 | 公网环境 |
+| L2 生产 SMTP | §10-4 | 生产邮箱凭据 |

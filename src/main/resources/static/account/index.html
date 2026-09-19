@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- 站点仅提供浅色主题：显式声明可避免浏览器自动暗色反色 -->
+  <meta name="color-scheme" content="light">
+  <title>我的授权 · 晏宁科技 Yaning Labs</title>
+  <meta name="description" content="登录后查看购买时所用邮箱名下的 License 证书、订阅与订单。">
+  <meta name="theme-color" content="#4C5B61">
+
+  <!-- 有脚本时才启用隐藏态/动效的初始状态：无脚本环境下内容照常可见 -->
+  <script>document.documentElement.classList.add('js');</script>
+  <!-- 设计体系与收银台同源复用（design tokens + 通用组件）；页面专属样式见 account.css -->
+  <link rel="stylesheet" href="../checkout/checkout.css">
+  <link rel="stylesheet" href="account.css">
+</head>
+<body>
+  <a class="skip-link" href="#main" data-i18n="a11y.skip">跳到主要内容</a>
+
+  <!-- ======================= 顶部导航（精简版，与收银台同构） ======================= -->
+  <header class="site-header">
+    <div class="container site-header__inner">
+      <a class="brand" href="https://www.ywhome.top">
+        <span class="brand__name" data-i18n="brand.name">晏宁科技</span>
+      </a>
+
+      <div class="site-header__actions">
+        <button class="lang-switch" id="langSwitch" type="button" aria-label="切换语言 / Switch language">
+          <span class="lang-switch__current" id="langCurrent">中文</span>
+          <span class="lang-switch__sep" aria-hidden="true">/</span>
+          <span class="lang-switch__other" id="langOther">EN</span>
+        </button>
+        <a class="btn btn--ghost btn--sm" href="https://www.ywhome.top" data-i18n="nav.home">返回首页</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="account" id="main">
+    <div class="container account__inner">
+      <p class="account__eyebrow" data-i18n="account.eyebrow">我的授权</p>
+      <h1 class="account__title" data-i18n="account.title">我的授权管理</h1>
+      <p class="account__sub" data-i18n="account.sub">查看购买/兑换时所用邮箱名下的 License 证书、订阅与订单。</p>
+
+      <!-- 无脚本环境下的兜底提示 -->
+      <noscript>
+        <p class="noscript-note">
+          本页面需要启用 JavaScript 才能登录与查询。请开启后重试，或直接联系我们：<a href="mailto:service@ywhome.top">service@ywhome.top</a><br>
+          This page requires JavaScript for sign-in and queries. Please enable it and retry, or contact us: <a href="mailto:service@ywhome.top">service@ywhome.top</a>
+        </p>
+      </noscript>
+
+      <!-- ======================= 登录卡片（未登录时显示） ======================= -->
+      <div class="panel auth-panel" id="authPanel">
+        <h2 class="panel__title" id="authTitle" data-i18n="auth.loginTitle">登录查看我的授权</h2>
+        <p class="panel__desc" data-i18n="auth.loginDesc">使用购买或兑换时填写的邮箱登录；当时未注册的邮箱，可用「设置密码」认领账户。</p>
+
+        <!-- 登录表单 -->
+        <form id="loginForm" novalidate>
+          <div class="field">
+            <label class="field__label" for="loginEmail" data-i18n="auth.emailLabel">电子邮箱</label>
+            <input class="field__input" id="loginEmail" name="email" type="email" inputmode="email"
+                   autocomplete="email" required aria-describedby="loginError">
+            <p class="field__error" id="loginError" role="alert" hidden></p>
+          </div>
+          <div class="field">
+            <label class="field__label" for="loginPassword" data-i18n="auth.passwordLabel">密码</label>
+            <input class="field__input" id="loginPassword" name="password" type="password"
+                   autocomplete="current-password" required>
+          </div>
+          <p class="form-error" id="formError" role="alert" hidden></p>
+          <div class="panel__actions">
+            <button class="btn btn--primary" id="loginBtn" type="submit" data-i18n="auth.login">登录</button>
+          </div>
+        </form>
+
+        <p class="form-note">
+          <button type="button" class="linklike" id="showResetBtn" data-i18n="auth.toReset">未注册 / 忘记密码？用邮箱验证码设置密码</button>
+        </p>
+
+        <!-- 找回 / 设置密码表单（默认隐藏） -->
+        <form id="resetForm" hidden novalidate>
+          <div class="field">
+            <label class="field__label" for="resetEmail" data-i18n="auth.emailLabel">电子邮箱</label>
+            <input class="field__input" id="resetEmail" name="email" type="email" inputmode="email"
+                   autocomplete="email" required>
+          </div>
+          <div class="field">
+            <label class="field__label" for="resetCode" data-i18n="auth.codeLabel">邮箱验证码</label>
+            <div class="code-row">
+              <input class="field__input" id="resetCode" name="code" type="text" inputmode="numeric"
+                     maxlength="6" autocomplete="one-time-code" required>
+              <button class="btn btn--ghost" id="sendCodeBtn" type="button" data-i18n="auth.sendCode">发送验证码</button>
+            </div>
+            <p class="field__error" id="codeError" role="alert" hidden></p>
+          </div>
+          <div class="field">
+            <label class="field__label" for="newPassword" data-i18n="auth.newPasswordLabel">设置新密码</label>
+            <input class="field__input" id="newPassword" name="newPassword" type="password"
+                   autocomplete="new-password" required>
+          </div>
+          <p class="form-error" id="resetError" role="alert" hidden></p>
+          <div class="panel__actions">
+            <button class="btn btn--primary" id="resetBtn" type="submit" data-i18n="auth.reset">设置密码并登录</button>
+          </div>
+          <p class="form-note">
+            <button type="button" class="linklike" id="backLoginBtn" data-i18n="auth.toLogin">返回登录</button>
+          </p>
+        </form>
+      </div>
+
+      <!-- ======================= 已登录视图：三个资产区块 ======================= -->
+      <div id="contentPanel" hidden>
+        <div class="userbar">
+          <p class="userbar__email" id="userEmail">—</p>
+          <button class="btn btn--ghost btn--sm" id="logoutBtn" type="button" data-i18n="auth.logout">退出登录</button>
+        </div>
+
+        <!-- 我的证书 -->
+        <section class="panel asset-panel" aria-labelledby="licenseTitle">
+          <h2 class="panel__title" id="licenseTitle" data-i18n="license.title">我的证书（License）</h2>
+          <p class="panel__desc" data-i18n="license.desc">激活软件所用的密钥；点击「复制」后粘贴到客户端激活框。</p>
+          <p class="asset-error" id="licenseError" role="alert" hidden></p>
+          <div class="table-wrap">
+            <table class="asset-table">
+              <thead>
+                <tr>
+                  <th data-i18n="license.key">密钥</th>
+                  <th data-i18n="license.product">产品</th>
+                  <th data-i18n="license.status">状态</th>
+                  <th data-i18n="license.issuedAt">签发时间</th>
+                  <th data-i18n="license.expiresAt">有效期至</th>
+                  <th data-i18n="license.machine">绑定机器码</th>
+                </tr>
+              </thead>
+              <tbody id="licenseBody"></tbody>
+            </table>
+          </div>
+          <p class="empty-note" id="licenseEmpty" hidden data-i18n="common.empty">暂无记录</p>
+        </section>
+
+        <!-- 我的订阅 -->
+        <section class="panel asset-panel" aria-labelledby="subTitle">
+          <h2 class="panel__title" id="subTitle" data-i18n="sub.title">我的订阅</h2>
+          <p class="panel__desc" data-i18n="sub.desc">订阅由支付渠道托管续费；取消后本周期结束即失效。</p>
+          <p class="asset-error" id="subError" role="alert" hidden></p>
+          <div class="table-wrap">
+            <table class="asset-table">
+              <thead>
+                <tr>
+                  <th data-i18n="sub.product">产品</th>
+                  <th data-i18n="sub.channel">渠道</th>
+                  <th data-i18n="sub.status">状态</th>
+                  <th data-i18n="sub.period">当前周期</th>
+                </tr>
+              </thead>
+              <tbody id="subBody"></tbody>
+            </table>
+          </div>
+          <p class="empty-note" id="subEmpty" hidden data-i18n="common.empty">暂无记录</p>
+        </section>
+
+        <!-- 我的订单 -->
+        <section class="panel asset-panel" aria-labelledby="orderTitle">
+          <h2 class="panel__title" id="orderTitle" data-i18n="order.title">我的订单</h2>
+          <p class="panel__desc" data-i18n="order.desc">购买与兑换产生的订单记录。</p>
+          <p class="asset-error" id="orderError" role="alert" hidden></p>
+          <div class="table-wrap">
+            <table class="asset-table">
+              <thead>
+                <tr>
+                  <th data-i18n="order.number">订单号</th>
+                  <th data-i18n="order.amount">金额</th>
+                  <th data-i18n="order.status">订单状态</th>
+                  <th data-i18n="order.payment">支付状态</th>
+                  <th data-i18n="order.createdAt">下单时间</th>
+                </tr>
+              </thead>
+              <tbody id="orderBody"></tbody>
+            </table>
+          </div>
+          <p class="empty-note" id="orderEmpty" hidden data-i18n="common.empty">暂无记录</p>
+        </section>
+      </div>
+
+      <!-- 屏幕阅读器状态播报区 -->
+      <p class="sr-only" id="liveRegion" role="status" aria-live="polite"></p>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p class="form-note">
+        <span data-i18n="footer.contact">如有疑问请联系 </span>
+        <a href="mailto:service@ywhome.top">service@ywhome.top</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="account.js"></script>
+</body>
+</html>

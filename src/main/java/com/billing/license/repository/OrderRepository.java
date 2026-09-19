@@ -11,4 +11,6 @@ import java.util.UUID;
 public interface OrderRepository extends JpaRepository<Order, UUID> {
     Optional<Order> findByOrderNumber(String orderNumber);
     java.util.List<Order> findByStatus(Order.OrderStatus status);
+    // 用户自助查询：本人名下订单，下单时间倒序（最新的在前）
+    java.util.List<Order> findByCustomerIdOrderByCreatedAtDesc(UUID customerId);
 }

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- 站点仅提供浅色主题：显式声明可避免浏览器自动暗色反色 -->
+  <meta name="color-scheme" content="light">
+  <title>获取 AI-Tools 授权 · 晏宁科技 Yaning Labs</title>
+  <meta name="description" content="选择 AI-Tools 的 Pro / Pro Plus 授权档位并完成支付，即时获取 License 授权令牌或兑换码。">
+  <meta name="theme-color" content="#4C5B61">
+
+  <!-- 有脚本时才启用隐藏态/动效的初始状态：无脚本环境下内容照常可见 -->
+  <script>document.documentElement.classList.add('js');</script>
+  <link rel="stylesheet" href="checkout.css">
+</head>
+<body>
+  <a class="skip-link" href="#main" data-i18n="a11y.skip">跳到主要内容</a>
+
+  <!-- ======================= 顶部导航（精简版） ======================= -->
+  <header class="site-header">
+    <div class="container site-header__inner">
+      <a class="brand" href="https://www.ywhome.top">
+        <span class="brand__name" data-i18n="brand.name">晏宁科技</span>
+      </a>
+
+      <div class="site-header__actions">
+        <button class="lang-switch" id="langSwitch" type="button" aria-label="切换语言 / Switch language">
+          <span class="lang-switch__current" id="langCurrent">中文</span>
+          <span class="lang-switch__sep" aria-hidden="true">/</span>
+          <span class="lang-switch__other" id="langOther">EN</span>
+        </button>
+        <a class="btn btn--ghost btn--sm" href="https://www.ywhome.top" data-i18n="nav.home">返回首页</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="checkout" id="main">
+    <div class="container checkout__inner">
+      <div class="checkout__main">
+        <p class="checkout__eyebrow" data-i18n="checkout.eyebrow">获取授权</p>
+        <h1 class="checkout__title" data-i18n="checkout.title">获取 AI-Tools 授权</h1>
+        <p class="checkout__sub" data-i18n="checkout.sub">选择授权档位并完成支付，即可获得 License 授权令牌或兑换码；支持 Pro / Pro Plus 买断与订阅。</p>
+
+        <ol class="steps" id="steps" aria-label="结账流程 / Checkout progress">
+          <li class="steps__item" data-step-item="choose">
+            <span class="steps__num" aria-hidden="true">1</span>
+            <span class="steps__label" data-i18n="steps.choose">选择档位</span>
+          </li>
+          <li class="steps__item" data-step-item="pay">
+            <span class="steps__num" aria-hidden="true">2</span>
+            <span class="steps__label" data-i18n="steps.pay">完成支付</span>
+          </li>
+          <li class="steps__item" data-step-item="done">
+            <span class="steps__num" aria-hidden="true">3</span>
+            <span class="steps__label" data-i18n="steps.done">获取授权</span>
+          </li>
+        </ol>
+
+        <!-- 无脚本环境下的兜底提示 -->
+        <noscript>
+          <p class="noscript-note">
+            本页面的下单与支付流程需要启用 JavaScript。请开启后重试，或直接联系我们：<a href="mailto:service@ywhome.top">service@ywhome.top</a><br>
+            This page requires JavaScript for checkout and payment. Please enable it and retry, or contact us: <a href="mailto:service@ywhome.top">service@ywhome.top</a>
+          </p>
+        </noscript>
+
+        <!-- ======================= 步骤 1：下单表单 ======================= -->
+        <div class="panel" id="orderWrap">
+          <h2 class="panel__title" data-i18n="checkout.formTitle">填写下单信息</h2>
+
+          <form id="orderForm" novalidate>
+            <fieldset class="plan-field">
+              <legend class="plan-field__legend" data-i18n="plan.legend">选择授权档位</legend>
+              <!-- 档位卡片由 checkout.js 依据 K16 端点（GET /api/products）渲染 -->
+              <ul class="plan-list" id="planList"></ul>
+              <p class="plan-field__note" data-i18n="plan.currencyNote">价格随界面语言切换：中文界面以人民币（CNY）结算，英文界面以美元（USD）结算。</p>
+              <p class="field__error" id="planError" role="alert" hidden></p>
+            </fieldset>
+
+            <div class="field">
+              <label class="field__label" for="email" data-i18n="form.emailLabel">电子邮箱</label>
+              <input class="field__input" id="email" name="email" type="email" inputmode="email"
+                     autocomplete="email" placeholder="you@example.com" required
+                     aria-describedby="emailHint emailError">
+              <p class="field__hint" id="emailHint" data-i18n="form.emailHint">授权凭证与订单通知将发送到此邮箱。</p>
+              <p class="field__error" id="emailError" role="alert" hidden></p>
+            </div>
+
+            <div class="machine-box">
+              <p class="machine-box__label" data-i18n="form.machineLabel">机器码</p>
+              <p class="machine-box__value" id="machineValue">—</p>
+              <p class="machine-box__hint" id="machineHint">—</p>
+            </div>
+
+            <p class="form-note">
+              <span data-i18n="form.orderNote">点击下单后将跳转至第三方支付渠道完成付款；发票与企业采购请联系 </span>
+              <a href="mailto:service@ywhome.top">service@ywhome.top</a>
+            </p>
+
+            <div class="panel__actions">
+              <button class="btn btn--primary" id="submitBtn" type="submit" data-i18n="form.submit">下一步：选择支付方式</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- ================= 步骤 2/3：支付方式 · 支付 · 结果 ================= -->
+        <div class="panel" id="stage" hidden aria-label="支付流程 / Payment flow"></div>
+
+        <!-- 屏幕阅读器状态播报区 -->
+        <p class="sr-only" id="liveRegion" role="status" aria-live="polite"></p>
+      </div>
+
+      <!-- =========================== 订单摘要 =========================== -->
+      <aside class="summary" aria-labelledby="summaryTitle">
+        <h2 class="summary__title" id="summaryTitle" data-i18n="summary.title">订单摘要</h2>
+        <dl class="summary__list">
+          <div class="summary__row">
+            <dt data-i18n="summary.plan">档位</dt>
+            <dd id="sumPlan">—</dd>
+          </div>
+          <div class="summary__row">
+            <dt data-i18n="summary.amount">金额</dt>
+            <dd id="sumAmount">—</dd>
+          </div>
+          <div class="summary__row">
+            <dt data-i18n="summary.email">邮箱</dt>
+            <dd id="sumEmail">—</dd>
+          </div>
+          <div class="summary__row">
+            <dt data-i18n="summary.machine">机器码</dt>
+            <dd id="sumMachine">—</dd>
+          </div>
+          <div class="summary__row">
+            <dt data-i18n="summary.order">订单号</dt>
+            <dd id="sumOrder">—</dd>
+          </div>
+          <div class="summary__row">
+            <dt data-i18n="summary.status">状态</dt>
+            <dd id="sumStatus">—</dd>
+          </div>
+        </dl>
+        <p class="summary__foot">
+          <a href="mailto:service@ywhome.top" data-i18n="summary.contact">需要帮助？联系我们</a>
+        </p>
+      </aside>
+    </div>
+  </main>
+
+  <!-- ============================== 页脚 ============================== -->
+  <footer class="site-footer">
+    <div class="container site-footer__bottom">
+      <p data-i18n="footer.rights">© 2026 晏宁科技 Yaning Labs. 保留所有权利。</p>
+      <p>
+        <a href="mailto:service@ywhome.top">service@ywhome.top</a>
+        <span aria-hidden="true"> · </span>
+        <a href="https://www.ywhome.top" target="_blank" rel="noopener noreferrer">www.ywhome.top</a>
+      </p>
+    </div>
+  </footer>
+
+  <!-- 二维码：本地 vendor 单文件库（MIT），不引 CDN 外链 -->
+  <script src="vendor/qrcode.js"></script>
+  <script src="checkout.js"></script>
+</body>
+</html>

@@ -3,9 +3,16 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      # 端口口径统一为 8000（K11）：与 application.yml 的 server.port 一致
+      - "8000:8000"
+    # K13（2026-09-18）：整个 .env 透传进容器 —— 此前只列了少数几个键，导致
+    # APP_BASE_URL / 渠道密钥 / MAIL_* / ACCOUNT_CODE_PEPPER / BILLING_TRUST_XFF 等
+    # 静默沿用镜像内默认值（含沙箱支付、localhost 回调）。下面 environment 的优先级高于 env_file。
+    env_file:
+      - .env
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
+      # 生产可显式指定 SPRING_PROFILES_ACTIVE=prod（关闭 Swagger 等，见 application-prod.yml）
+      - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE:-docker}
       # 数据源：指向同网络内的 postgres 服务（非 127.0.0.1），库名与 POSTGRES_DB 一致
       - DB_URL=jdbc:postgresql://postgres:5432/billing_db
       - DB_USERNAME=${DB_USERNAME:-postgres}
@@ -25,7 +32,7 @@ services:
       - billing-network
     healthcheck:
       # i11/W22：eclipse-temurin:21-jre 不含 wget；已通过 Dockerfile 安装 curl 作为探针
-      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/actuator/health"]
       interval: 30s
       timeout: 5s
       retries: 3

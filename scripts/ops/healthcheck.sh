@@ -3,7 +3,8 @@
 # 用法：./scripts/ops/healthcheck.sh
 set -uo pipefail
 
-PORT="${APP_PORT:-8080}"
+# 端口口径与 application.yml 的 server.port 一致（8000，K11 已统一全仓；可用 APP_PORT 覆盖）
+PORT="${APP_PORT:-8000}"
 HOST="${APP_HOST:-127.0.0.1}"
 
 # 优先用 Actuator 健康检查（H13 已落地，生产默认开启）

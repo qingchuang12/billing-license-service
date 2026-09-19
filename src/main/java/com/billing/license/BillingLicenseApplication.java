@@ -35,13 +35,19 @@ public class BillingLicenseApplication {
     /**
      * 启动完成后打印 Swagger / OpenAPI 文档访问地址。
      *
-     * @param env Spring 环境变量，用于获取服务端口与上下文路径
+     * <p>K11/K12（2026-09-18）：端口回退值由 8080 改为 8000（与 `server.port` 一致——原值会让启动日志里的
+     * 地址与实际监听端口不符）；生产 profile 已关闭 springdoc，此时不再打印这套地址以免误导运维。
+     *
+     * @param env Spring 环境变量，用于读取文档开关与端口
      * @return CommandLineRunner
      */
     @Bean
     public CommandLineRunner swaggerLogRunner(Environment env) {
         return args -> {
-            String port = env.getProperty("server.port", "8080");
+            if (!env.getProperty("springdoc.api-docs.enabled", Boolean.class, true)) {
+                return;
+            }
+            String port = env.getProperty("server.port", "8000");
             String contextPath = env.getProperty("server.servlet.context-path", "");
             String baseUrl = "http://localhost:" + port + contextPath;
 

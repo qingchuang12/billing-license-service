@@ -21,6 +21,8 @@ spring:
     host: localhost
     port: 25
     username: test
+    # K10（2026-09-18）：application.yml 中邮箱口令已无默认值（fail-fast），此处补齐；
+    # 测试不真发信（EmailNotificationService 在用户名/口令为空时跳过发送）。
     password: test
 
 # 补齐生产必填项（无默认值）：管理端密钥、账号令牌签名密钥与 DB 口令
@@ -31,6 +33,11 @@ security:
 # 故测试环境必须显式提供（≥32 字节，仅用于测试，禁止复用到生产）
 account:
   jwt-secret: test-only-jwt-secret-for-unit-tests-0123456789abcdef
+
+# K10（2026-09-18）：app.base-url 在 application.yml 中已改为无默认值（fail-fast，
+# 防「默认 localhost 导致渠道回调不可达」），测试 profile 必须补齐。
+app:
+  base-url: http://localhost:8000
 
 # H13：测试中放开健康详情，便于断言探针状态
 management:

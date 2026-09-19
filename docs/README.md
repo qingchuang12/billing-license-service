@@ -2,7 +2,8 @@
 
 统一的计费与许可证管理服务，基于 **Java 21 + Spring Boot 4.0.6**（JPA/Hibernate + PostgreSQL + Flyway + 5 家支付渠道 + KMS）构建，为桌面端 exe 工具提供 license 签发、兑换、换机与计费/退款后端。
 
-> 生产就绪度与已知风险见活动 plan [`plan-2.9.md`](./plan-2.9.md)（v2.9：**T1–T4 上线验证闸门未过，当前不建议发布**）；历史就绪度评估见 [`archive/plan-v2.2-readiness.md`](./archive/plan-v2.2-readiness.md)（v2.2 快照，不代表当前状态）。
+> **上线执行手册见 [`上线准备工作.md`](./上线准备工作.md)**（阻断项清单 / 密钥生成实测命令 / 渠道设置 / 上线当天清单）。
+> 生产就绪度与已知风险见活动 plan [`plan-3.0.md`](./plan-3.0.md)（v3.5：授权硬化与跨仓激活契约已完成，**上线闸门 T1–T4 仍待外部资源**）。
 
 ## 功能特性
 
@@ -20,44 +21,47 @@
 
 ### 1. 生成密钥对（用于 License 签发，KMS=local 时挂载）
 
-```bash
-# 生成 Ed25519 密钥对（推荐）
-openssl genpkey -algorithm ed25519 -out private.key
-openssl pkey -pubout -in private.key -out public.key
+> ⚠️ **格式硬约束**：`LocalKmsService` 只接受**裸 32 字节**（Ed25519）或 **DER** 字节，
+> **不接受 PEM**（`-----BEGIN…` 会加载失败）。EC/RSA 也必须导出 DER，不能留 PEM。
 
-# 或 EC P-256
-openssl ecparam -name prime256v1 -genkey -noout -out private.key
-openssl ec -in private.key -pubout -out public.key
-
-# 或 RSA 2048
-openssl genrsa -out private.key 2048
-openssl rsa -in private.key -pubout -out public.key
-```
+**生成命令 + 两条自检见 [`上线准备工作.md`](./上线准备工作.md) §1.2（唯一权威源，2026-09-18 在 OpenSSL 3.2.4 实测通过）** —— 本文档不再维护副本，避免多处漂移。
 
 ### 2. 配置环境变量
+
+> **推荐做法（2026-09-18 起）：`cp .env.example .env` 后填值** —— `application.yml` 会加载 `.env`，
+> 本地与 docker compose 共用同一份配置源。下面是等价的 export 写法：
 
 ```bash
 # License 签名密钥（KMS=local）
 export PRIVATE_KEY_PATH=/path/to/private.key
 export PUBLIC_KEY_PATH=/path/to/public.key
 
-# 数据库
+# 数据库（DB_PASSWORD 无默认值，缺失即拒启）
 export DB_USERNAME=postgres
-export DB_PASSWORD=postgres
+export DB_PASSWORD='<强口令>'
 
 # 管理端 API 密钥（逗号分隔，用于 X-API-Key 鉴权，缺失则启动失败）
 export ADMIN_API_KEYS=admin-key-0001,admin-key-0002
 
-# 支付渠道密钥（按需配置，未配置渠道不启用）
+# 账号体系：令牌签名密钥（≥32B）与验证码 pepper（生产必配）
+export ACCOUNT_JWT_SECRET="$(openssl rand -base64 48)"
+export ACCOUNT_CODE_PEPPER="$(openssl rand -hex 16)"
+
+# 邮箱口令（无默认值）与应用对外基址（无默认值，缺失即拒启）
+export MAIL_PASSWORD='<邮箱口令>'
+export APP_BASE_URL=http://localhost:8000
+
+# 支付渠道密钥（按需配置，未配置渠道不启用；键名见 .env.example 与 docs/上线准备工作.md §2）
 export STRIPE_API_KEY=sk_live_xxx
 export STRIPE_WEBHOOK_SECRET=whsec_xxx
-# export ALIPAY_APP_ID=...  export ALIPAY_PRIVATE_KEY=...
-# export WECHAT_APP_ID=...  export WECHAT_MCH_ID=...  export WECHAT_API_V3_KEY=...
+# export ALIPAY_APP_ID=...  export ALIPAY_PRIVATE_KEY=...  export ALIPAY_GATEWAY_URL=...
+# export WECHAT_APP_ID=...  export WECHAT_MCH_ID=...  export WECHAT_API_KEY=...
 # export PADDLE_API_KEY=...  export PAYPAL_CLIENT_ID=...  export PAYPAL_CLIENT_SECRET=...
 
 ```
 
-> 配置优先级：环境变量 > `application.yml`。生产部署务必替换所有占位密钥，并启用 PostgreSQL + Flyway（schema 归迁移脚本管理，`ddl-auto: validate`）。
+> 配置优先级：环境变量 / `.env` > `application.yml`。生产部署务必替换所有凭据，并以 `SPRING_PROFILES_ACTIVE=prod` 启动
+> （关闭 Swagger、强制真发邮件；见 `application-prod.yml`），同时启用 PostgreSQL + Flyway（schema 归迁移脚本管理，`ddl-auto: validate`）。
 
 ### 3. 启动服务
 
@@ -148,30 +152,30 @@ docker compose logs -f app
 
 ```bash
 # ① 发送邮箱验证码（purpose=REGISTER | RESET_PASSWORD）
-curl -X POST http://localhost:8080/api/account/verification-code \
+curl -X POST http://localhost:8000/api/account/verification-code \
   -H "Content-Type: application/json" \
   -d '{"email":"user@example.com","purpose":"REGISTER"}'
 
 # ② 注册（emailCode 必填；成功即返回令牌，无需再登录）
-curl -X POST http://localhost:8080/api/account/register \
+curl -X POST http://localhost:8000/api/account/register \
   -H "Content-Type: application/json" \
   -d '{"email":"user@example.com","password":"Passw0rd2026","emailCode":"483920"}'
 
 # ③ 登录
-curl -X POST http://localhost:8080/api/account/login \
+curl -X POST http://localhost:8000/api/account/login \
   -H "Content-Type: application/json" \
   -d '{"email":"user@example.com","password":"Passw0rd2026"}'
 # → data: {"accessToken":"eyJhbGciOi...","expiresIn":604800,"user":{...}}
 
 # ④ 当前用户 / ⑤ 登出 / ⑥ 改密（均需登录）
-curl http://localhost:8080/api/account/me -H "Authorization: Bearer <token>"
-curl -X POST http://localhost:8080/api/account/logout -H "Authorization: Bearer <token>"
-curl -X POST http://localhost:8080/api/account/password/change -H "Authorization: Bearer <token>" \
+curl http://localhost:8000/api/account/me -H "Authorization: Bearer <token>"
+curl -X POST http://localhost:8000/api/account/logout -H "Authorization: Bearer <token>"
+curl -X POST http://localhost:8000/api/account/password/change -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"oldPassword":"Passw0rd2026","newPassword":"NewPassw0rd2026"}'
 
 # ⑦ 找回密码（公开；凭验证码重置，不需要旧密码）
-curl -X POST http://localhost:8080/api/account/password/reset \
+curl -X POST http://localhost:8000/api/account/password/reset \
   -H "Content-Type: application/json" \
   -d '{"email":"user@example.com","code":"483920","newPassword":"NewPassw0rd2026"}'
 ```
@@ -231,7 +235,7 @@ curl -X POST http://localhost:8080/api/account/password/reset \
 #    可用 SKU（V4 种子）：pro-buyout / pro-plus-buyout / pro-subscription / pro-plus-subscription
 #    I7：请求体带 provider 可**一步下单**——直接创建支付并返回二维码/跳转链接，
 #        免去第 2 步；不带 provider 则先返回 paymentMethods 列表，由用户选择后再走第 2 步。
-curl -X POST http://localhost:8080/api/checkout/create \
+curl -X POST http://localhost:8000/api/checkout/create \
   -H "Content-Type: application/json" \
   -d '{
     "productId": "pro-buyout",
@@ -245,55 +249,55 @@ curl -X POST http://localhost:8080/api/checkout/create \
   }'
 
 # 2) 选择支付方式（公开）：返回二维码 / 跳转链接
-curl -X POST http://localhost:8080/api/checkout/{checkoutId}/select-provider \
+curl -X POST http://localhost:8000/api/checkout/{checkoutId}/select-provider \
   -H "Content-Type: application/json" \
   -d '{"provider": "alipay"}'
 
 # 3) 轮询支付状态（公开）：渠道确认已支付后返回 license / redeemCode
-curl http://localhost:8080/api/checkout/{checkoutId}/status
+curl http://localhost:8000/api/checkout/{checkoutId}/status
 ```
 
 ### 订单查询
 
 ```bash
 # 按订单 ID（I2：原 /api/orders/{orderId} 已收敛到此）
-curl "http://localhost:8080/api/admin/orders?orderId={orderId}" -H "X-API-Key: admin-key-0001"
+curl "http://localhost:8000/api/admin/orders?orderId={orderId}" -H "X-API-Key: admin-key-0001"
 
 # 按业务订单号（原 /api/orders/number/{orderNumber}）
-curl "http://localhost:8080/api/admin/orders?orderNumber=ORD-20260914-0001" -H "X-API-Key: admin-key-0001"
+curl "http://localhost:8000/api/admin/orders?orderNumber=ORD-20260914-0001" -H "X-API-Key: admin-key-0001"
 
 # 按状态过滤（原 /api/admin/orders/status/{status}）
-curl "http://localhost:8080/api/admin/orders?status=PAID" -H "X-API-Key: admin-key-0001"
+curl "http://localhost:8000/api/admin/orders?status=PAID" -H "X-API-Key: admin-key-0001"
 
 # 全部订单
-curl "http://localhost:8080/api/admin/orders" -H "X-API-Key: admin-key-0001"
+curl "http://localhost:8000/api/admin/orders" -H "X-API-Key: admin-key-0001"
 ```
 
 ### 许可证管理
 
 ```bash
 # 为已支付订单签发许可证（I4：由原 /api/licenses/issue/{orderId} 归口到管理端；幂等）
-curl -X POST http://localhost:8080/api/admin/orders/{orderNumber}/issue \
+curl -X POST http://localhost:8000/api/admin/orders/{orderNumber}/issue \
   -H "X-API-Key: admin-key-0001"
 
 # 验证许可证（公开，离线校验用）
-curl http://localhost:8080/api/licenses/verify/{licenseKey}
+curl http://localhost:8000/api/licenses/verify/{licenseKey}
 
 # 查询 License（I3：一个端点替代「按客户查询」与「订单下 License 列表」，含失效件）
-curl "http://localhost:8080/api/admin/licenses?customerEmail=buyer@example.com" -H "X-API-Key: admin-key-0001"
-curl "http://localhost:8080/api/admin/licenses?orderNumber=ORD-20260914-0001" -H "X-API-Key: admin-key-0001"
-curl "http://localhost:8080/api/admin/licenses?status=REISSUED" -H "X-API-Key: admin-key-0001"
+curl "http://localhost:8000/api/admin/licenses?customerEmail=buyer@example.com" -H "X-API-Key: admin-key-0001"
+curl "http://localhost:8000/api/admin/licenses?orderNumber=ORD-20260914-0001" -H "X-API-Key: admin-key-0001"
+curl "http://localhost:8000/api/admin/licenses?status=REISSUED" -H "X-API-Key: admin-key-0001"
 
 # 查询 License 详情（含失效件；verify 对失效件返回 400，查失效件用本接口）
-curl "http://localhost:8080/api/admin/licenses/{licenseKey}" \
+curl "http://localhost:8000/api/admin/licenses/{licenseKey}" \
   -H "X-API-Key: admin-key-0001"
 
 # 吊销许可证（吊销唯一入口；D2 起客户端自吊销端点已删除）
-curl -X POST "http://localhost:8080/api/admin/licenses/{licenseKey}/revoke?reason=用户申请退款" \
+curl -X POST "http://localhost:8000/api/admin/licenses/{licenseKey}/revoke?reason=用户申请退款" \
   -H "X-API-Key: admin-key-0001"
 
 # 换机重发（管理端）：原证置 REISSUED，新证绑定新机器码
-curl -X POST "http://localhost:8080/api/admin/licenses/{licenseKey}/reissue?newMachineId=NEW-MACHINE-ID&reason=changed_pc" \
+curl -X POST "http://localhost:8000/api/admin/licenses/{licenseKey}/reissue?newMachineId=NEW-MACHINE-ID&reason=changed_pc" \
   -H "X-API-Key: admin-key-0001"
 ```
 
@@ -305,20 +309,20 @@ curl -X POST "http://localhost:8080/api/admin/licenses/{licenseKey}/reissue?newM
 
 ```bash
 # 批量生成（I5：归口到管理端，且**返回码明文列表**——原实现只返回数量，生成后无法取回）
-curl -X POST "http://localhost:8080/api/admin/redeem-codes/generate?productSku=pro-buyout&count=100" \
+curl -X POST "http://localhost:8000/api/admin/redeem-codes/generate?productSku=pro-buyout&count=100" \
   -H "X-API-Key: admin-key-0001"
 # → {"success":true,"count":100,"codes":["K7D2-9FQA-M3PZ-88BC", ...]}
 
 # 导出/对账（I6：按产品 SKU + 状态检索，均可不传）
-curl "http://localhost:8080/api/admin/redeem-codes?productSku=pro-buyout&status=UNUSED" \
+curl "http://localhost:8000/api/admin/redeem-codes?productSku=pro-buyout&status=UNUSED" \
   -H "X-API-Key: admin-key-0001"
 
 # 撤销兑换码（归口到管理端）
-curl -X POST http://localhost:8080/api/admin/redeem-codes/revoke/K7D2-9FQA-M3PZ-88BC \
+curl -X POST http://localhost:8000/api/admin/redeem-codes/revoke/K7D2-9FQA-M3PZ-88BC \
   -H "X-API-Key: admin-key-0001"
 
 # 兑换码兑换 License（公开；唯一保留在 /api/redeem/** 的端点）：传入 machineId 即绑定该设备
-curl -X POST http://localhost:8080/api/redeem/redeem \
+curl -X POST http://localhost:8000/api/redeem/redeem \
   -H "Content-Type: application/json" \
   -d '{
     "code": "ABCD-EFGH-IJKL-MNOP",
@@ -332,7 +336,7 @@ curl -X POST http://localhost:8080/api/redeem/redeem \
 ```bash
 # 对已完成支付订单发起退款（管理端，需 X-API-Key）
 # 退款目标交易号取自 Payment 实体记录，渠道退款失败不会谎报 REFUNDED
-curl -X POST "http://localhost:8080/api/admin/orders/{orderNumber}/refund?reason=用户申请" \
+curl -X POST "http://localhost:8000/api/admin/orders/{orderNumber}/refund?reason=用户申请" \
   -H "X-API-Key: admin-key-0001"
 ```
 
@@ -450,7 +454,7 @@ billing-license-service/
 ├── src/main/resources/
 │   ├── application.yml       # 主配置（含 management/actuator、security、payment；KMS 为纯本地文件方案）
 │   ├── application-docker.yml
-│   └── db/migration/         # Flyway 迁移脚本 V1–V8
+│   └── db/migration/         # Flyway 迁移脚本 V1–V11
 ├── src/test/                 # 单元测试 + 集成测试（含 @SpringBootTest 上下文闸门、OpenAPI 文档可用性）
 ├── scripts/{db,deploy,ops}/  # 运维脚本（package/run/healthcheck/show_migrations…）
 └── pom.xml                   # Maven 配置（Java 21 + Spring Boot 4.0.6）
@@ -533,4 +537,4 @@ Payload 包含：
 mvn test
 ```
 
-当前共 **129 个测试，0 失败 0 错误**（2026-09-14 实跑 `mvn test` 复核：`Tests run: 129, Failures: 0, Errors: 0, Skipped: 0`；覆盖 5 渠道策略与退款契约、收银台/订单状态机、兑换码、订阅生命周期、限流淘汰、审计切面、异常脱敏、OpenAPI 文档可用性与响应壳一致性、ApplicationContext 加载与 `healthEndpoint` Bean 装配）。
+当前共 **188 个测试，0 失败 0 错误**（2026-09-18 实跑 `mvn test` 复核：`Tests run: 188, Failures: 0, Errors: 0, Skipped: 0`，并已接入 CI：`.github/workflows/ci.yml`；覆盖 5 渠道策略与退款契约、收银台/订单状态机、兑换码、订阅生命周期、限流淘汰、审计切面、异常脱敏、OpenAPI 文档可用性与响应壳一致性、ApplicationContext 加载与 `healthEndpoint` Bean 装配）。

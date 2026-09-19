@@ -225,8 +225,22 @@ class LicenseServiceTest {
             e.getEventType() == LicenseEvent.EventType.VERIFY_FAILED));
     }
 
-    // ---------------- A2：批量签发绑 machineCode ----------------
+    @Test
+    void verifyLicense_shouldNotRefreshLastVerifiedAt_whenVerificationFails() {
+        // K7：lastVerifiedAt 语义 = 最后一次**成功**校验；失败路径不得刷新该字段（旧实现先写后判）
+        License license = signedActiveLicense("LIC-K7");
+        license.setSignedToken("   ");
+        license.setLastVerifiedAt(null);
+        when(licenseRepository.findByLicenseKey("LIC-K7")).thenReturn(Optional.of(license));
+        when(licenseRepository.save(any(License.class))).thenAnswer(i -> i.getArgument(0));
 
+        assertThrows(BusinessException.class, () -> licenseService.verifyLicense("LIC-K7"));
+
+        assertNull(license.getLastVerifiedAt(), "校验失败不应刷新 lastVerifiedAt");
+        verify(licenseRepository, never()).save(any(License.class));
+    }
+
+    // ---------------- A2：批量签发绑 machineCode ----------------
     @Test
     void issueLicensesForOrder_shouldBindMachineCode_whenOrderHasMachineCode() {
         Order order = paidOrder("MACHINE-BATCH");

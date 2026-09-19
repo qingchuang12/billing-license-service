@@ -1,0 +1,40 @@
+# 生产专用 profile（K12，2026-09-18 新建）
+#
+# 用法：SPRING_PROFILES_ACTIVE=prod（容器里由 docker-compose.yml 的
+#      `SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE:-docker}` 传入；jar 直跑则 export 该变量）。
+#
+# 为什么需要它：application.yml 是「开发友好」的基线（Swagger 开着、日志宽松），
+# 生产若不额外切换口径，会把这些开发期便利一起带上线。本文件把生产口径**固化下来**，
+# 不依赖运维逐项记得设环境变量。
+#
+# 与 docker profile 的关系：docker profile 只管 schema 护栏（ddl-auto/flyway）。
+# 生产同时需要两者时，可写 SPRING_PROFILES_ACTIVE=prod,docker（Spring 支持多 profile 逗号分隔），
+# 因此这里也重复声明了那两个护栏值，单独用 prod 时同样成立。
+
+spring:
+  jpa:
+    hibernate:
+      # 生产 schema 由 Flyway 全权管理，Hibernate 仅校验（禁止自动改表）
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+# 生产关闭 API 文档：/v3/api-docs 与 Swagger UI 都是匿名可访问的，
+# 会把全部端点、参数与错误码结构暴露给外部（渗透测试的现成地图）。
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+account:
+  # 生产必须真发邮件：验证码只写日志会让注册/找回密码链路对真实用户静默失效。
+  # 前提是 SMTP 已配置并实测可达（见 docs/上线准备工作.md §7-C）。
+  code-log-only: false
+
+logging:
+  level:
+    # 生产禁用 DEBUG：会打印 License token 与支付回调 payload 等敏感信息
+    com.billing.license: INFO
+    org.springframework.security: INFO
