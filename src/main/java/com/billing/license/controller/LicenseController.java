@@ -1,6 +1,7 @@
 package com.billing.license.controller;
 
 import com.billing.license.dto.LicenseResponse;
+import com.billing.license.dto.UnbindRequest;
 import com.billing.license.service.LicenseService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -9,10 +10,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 /**
  * License 控制器：仅保留**公开在线校验**端点。
@@ -47,5 +45,21 @@ public class LicenseController {
     public ResponseEntity<LicenseResponse> verifyLicense(
             @Parameter(description = "License 密钥", required = true) @PathVariable String licenseKey) {
         return ResponseEntity.ok(licenseService.verifyLicense(licenseKey));
+    }
+
+    /**
+     * 释放本机绑定（换绑场景）：持有旧授权签名 token 即证明归属，校验通过且机器码匹配后清空 machineCode。
+     * 与「吊销」语义不同——仅释放设备绑定，不取消授权本身（不置 REVOKED）。
+     */
+    @Operation(summary = "释放本机绑定（公开）",
+            description = "换绑新授权时释放旧授权在当前设备的绑定；需 token 验签通过且机器码与绑定设备一致。不吊销授权本身。")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "释放成功"),
+            @ApiResponse(responseCode = "400", description = "token 无效 / 机器码不匹配 / 授权不存在或已吊销")
+    })
+    @PostMapping("/unbind")
+    public ResponseEntity<Void> unbindDevice(@RequestBody UnbindRequest request) {
+        licenseService.unbindDevice(request.getSignedToken(), request.getMachineId());
+        return ResponseEntity.ok().build();
     }
 }

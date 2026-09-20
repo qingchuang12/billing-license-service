@@ -1,29 +1,32 @@
-# plan-3.1 · 业务完整性收口后的收尾验证（唯一活动 plan）
+# plan-3.1 · 第二轮业务完整性审计发现（唯一活动 plan）
 
-> 版本：v3.2（2026-09-20）· 唯一活动 plan（billing-license-service）。
-> 本版记录：业务完整性审查（B1-B9）已按川哥指示执行落地，`mvn -o test` 全绿（212/0/0）。已交付项按用户规则清除，仅保留待用户侧/环境阻塞的收尾验证。
+> 版本：v3.3（2026-09-20）· 唯一活动 plan（billing-license-service + ai-tools）。
+> 前情（已交付，留一行证据）：B1-B9 已落地、`mvn -o test` 212/0/0；Flyway V1..V12 已合并为单一 `V1__baseline_schema.sql` 并实机迁移验证；端到端冒烟已跑通（隧道→远程 PG 18.3→8000，B4 去重复测通过）。本版并入第二轮全面审计（支付/账户/前端三域）新发现，逐条附证据。
+> 审计口径：三域并行只读走查（支付回调域子代理 + 账户安全域与 ai-tools 前端域实机读码）；只列**已确认**问题，不重复 B1-B9。
 
-## 本版决策与交付（留一行证据，随 plan 清理）
-- **B1 独立注册端点：保留**（川哥 2026-09-20 拍板「账户注册接口依旧保留」）。故 B6 语义随之调整为「查无账户静默成功」（防枚举），不再回 EMAIL_NOT_PURCHASED。
-- **B2/B7 已交付**：`PaymentService.updatePaymentStatus` 改 4 参（paymentId→transactionId→订单号 三路回退定位），查无降级为 warn 日志不再抛异常阻断发货；`WebhookController` 死代码路径复活为真实兜底。
-- **B3 已交付**：`WebhookController.revokeOnChannelRefund` 处理渠道侧 REFUNDED/CANCELLED，吊销订单全部非 REVOKED License + `Order.markRefunded()`，与管理端同口径。
-- **B4 已交付**：`CheckoutService.selectProvider` 增会话去重（已 PAID / 同渠道 PENDING 复用），防连点双重收银台。
-- **B5 核实无需改**：邮件发送已 `@Async`（独立线程、无事务），发货事务不受邮件失败回滚影响。
-- **B6 已交付**：`AccountService.resetPassword` 查无账户静默返回，不泄露邮箱是否为付费客户。
-- **B8 已交付**：`SecurityConfig` 将 `/checkout/**`、`/account/**` 收紧为仅 `GET` permitAll。
-- **B9 已交付**：`RedeemCodeService` 兑换按客户+产品幂等，已签发 License 重试直接返回既有 License。
-- 验证：`mvn -o test` → Tests run: 212, Failures: 0, Errors: 0, BUILD SUCCESS（WebhookControllerTest 10/10、AccountServiceTest 15/15）。
+## TODOS（仅未完成，按严重度）
 
-## Flyway 脚本合并（2026-09-20 已完成，留证据一行随 plan 清理）
-- 上线前收敛：原 V1..V12 合并为单一 `V1__baseline_schema.sql`（15 建表/13 改表按序拼接）。空库临时库验证等价（15 表/184 列/产品种子 4 条与逐版一致，差异仅 Flyway 自建历史表）；测试库 DROP SCHEMA 重置后经 Flyway 干净迁移至 v1，Hibernate validate 通过，应用启动成功、`/api/products` 200。
-- 注意：改脚本后需清 `target/classes/db/migration` 旧编译产物，否则新旧 V1 撞版本号（Found more than one migration with version 1）。
+- [ ] **C1 HIGH（支付/订阅正确性）Paddle 订阅事件字段错配致 NPE，首激活绑不上 License** — `PaddleStrategy.java:293-294`：判空用 `current_billing_period`（Paddle v2 真实字段），取值却 `data.get("current_period")`（不存在）返回 null，紧接 `period.has("starts_at")` 抛 NPE。NPE 被外层 catch（:329）吞掉 → status 置 FAILED，但 :288 已 set subscriptionId。进入 `SubscriptionService.processSubscriptionEvent` 后：非 SUCCESS 不置 ACTIVE、不 bindOrRenewLicense → Paddle 订阅首激活恒不绑 License（licenseId 恒 null、status 恒 PENDING）；后续续期因 licenseId==null 被当「首次绑定」不延期（`SubscriptionService.java:129`），周期时长丢失。**修复**：`data.get("current_billing_period")`，字段名与判空一致。
 
-## 端到端冒烟（2026-09-20 已跑通，留证据一行随 plan 清理）
-- SSH 隧道 `10001→远程1001` 建立，后端经隧道连远程 PostgreSQL 18.3，Flyway 迁至 V12，Tomcat 起于 8000。启动关键：`.env` 的 `DB_PASSWORD` 为空会覆盖默认值导致 SCRAM 认证失败，需以环境变量传真实口令 `DB_PASSWORD=XGTjfWhkfd3QXJA7`（仓库调试口令，与 license/license 配套）。
-- `GET /api/products` 200；`POST /api/checkout/create` 200 建会话；`POST /api/checkout/{id}/select-provider` 生成支付宝表单+订单号；**B4 去重复测通过**：同一 checkoutId 二次选同渠道复用既有订单，未新建第二个收银台。
-- 注意 `/actuator/health` 含 MailHealthIndicator，SMTP 慢连要 11~21s，curl 需给足超时（≥25s）或走 readiness 分组。
+- [ ] **C2 HIGH（幂等并发/重复发货）Webhook 发货路径与轮询补偿路径未共享锁，issueLicense 无按单幂等** — `WebhookController.fulfillOrder`（:316-368）全程无锁；而 `CheckoutService`（getStatus :291、compensateFromChannel :368）用 `orderLock(orderNumber)` 串行化。`LicenseService.issueLicense`（:44-89）直接 build+save，无 `findByOrderId` 存在性检查（对比 CheckoutService.getStatus :294 先查后发）；`Order` 实体无 `@Version`。跨事务「检查 canFulfill—markPaid」非原子且无行锁/唯一约束兜底 → Webhook 线程与客户端轮询补偿线程并发各读到 PENDING 时，同一订单可签发两张 License。**修复**：Webhook fulfillOrder 复用同一 orderLock 或对 Order 加悲观/乐观锁，并给 issueLicense 加按订单存在性检查。
 
-## TODOS（仅未完成 · 待用户侧）
+- [ ] **C3 HIGH/CRITICAL（前端授权绕过）ai-tools 特性门禁开关来自明文可改配置、无完整性校验** — `feature-gate.ts:49-50`：`cfg.enabled=false` 或 `cfg.killSwitch=true` 时对所有权益键返回 `{allowed:true}`（fail-open 全放行）。`config.ts:43` 以 `JSON.parse(fs.readFileSync(...))` 读取 `resources/license/license.config.json`（`constants.ts:28/31` EXTERNAL_LICENSE_DIR=license、CONFIG_FILE_NAME=license.config.json），`bool()` 直接取 `enabled`/`killSwitch`，**无签名/HMAC/anchor 完整性校验**。用户改一个明文文件（enabled:false）即绕过全部 R1 门禁。**待确认设计意图**：killSwitch 显为「应急停用」有意为之；但 enabled/killSwitch 对终端用户可达即等于授权绕过。**修复方向**：enabled/killSwitch 纳入 vault/anchor 签名保护，或与激活令牌绑定，明文配置仅允许收紧不允许放开。
 
-- [ ] **N6 报错文案实机复测** — 后端已在线（8000）；浏览器复测真实报错文案需人工 GUI，待川哥过一遍。
-- [ ] **B2/B3 回调路径实机验证** — 发货/渠道退款吊销需真实支付宝异步通知或构造签名回调触发，冒烟未覆盖；建议用管理端造单或沙箱回调复核。
+- [ ] **C4 MEDIUM（枚举/写放大）公开 verify 端点无限流且每次失败写库** — `LicenseController.java:46` `/api/licenses/verify/{licenseKey}` permitAll（SecurityConfig:85-86）且无 RateLimit 依赖；`LicenseService.verifyLicense` 每次校验失败均 `recordLicenseEvent(...VERIFY_FAILED...)` 落库（inactive/expired/badsig 三处）。攻击者可高频遍历 licenseKey → license_event 表无界增长 + 探测某 key 是否存在（错误码区分 NOT_FOUND/INVALID/EXPIRED）。**修复**：verify 端点接入 RateLimitService（按 IP/机器码），失败事件采样或按窗口去重落库。
+
+- [ ] **C5 MEDIUM（资损/欺诈）订阅首充绕过金额校验** — `WebhookController.processWebhook` 订阅分支（:213-225）在金额校验（:229-235）之前 `return`，订阅首充直接 `self.fulfillOrder(orderId)`（:219）不做 `amountValidator.validateAmount`，与一次性支付口径不一致（验签兜底在，但金额防篡改缺失）。**修复**：订阅首充在 fulfillOrder 前对携带金额的事件补金额校验，无金额字段的续期事件豁免。
+
+- [ ] **C6 MEDIUM（幂等）reserveEvent 用 save 而非 saveAndFlush，唯一约束冲突延到 commit** — `PaymentEvent.java:26-28` 主键 `@GeneratedValue(UUID)` 由 Hibernate 内存生成，`save()`（`WebhookController.java:301`）不触发 INSERT；:303 try-catch 想捕 `DataIntegrityViolationException` 优雅去重，但冲突要到 commit（在 processWebhook 事务拦截器、catch 之外）才暴露 → 并发重复投递时渠道收 500+整事务回滚而非设计中的 200「Already processed」（重复发货最终仍被约束+回滚阻止，不会双发，但语义与注释不符、渠道会重试）。**修复**：reserveEvent 内改 `saveAndFlush` 让冲突在 try 内同步抛出。
+
+- [ ] **N6 报错文案实机复测**（结转）— 后端已在线（8000）；浏览器复测真实报错文案需人工 GUI，待川哥过一遍。
+
+- [ ] **B2/B3 回调路径实机验证**（结转）— 发货/渠道退款吊销需真实支付宝异步通知或构造签名回调触发，冒烟未覆盖；建议用管理端造单或沙箱回调复核。
+
+## 待核实（未下结论，需确认设计意图）
+- **微信/支付宝渠道退款未映射 REFUNDED/CANCELLED**：`WechatPayStrategy.parseWebhookPayload`（:456-462）只认 trade_state SUCCESS/NOTPAY，退款通知 `REFUND.SUCCESS` 无 trade_state → 落 FAILED，不触发 `revokeOnChannelRefund`；`AlipayStrategy` 仅 `TRADE_CLOSED→CANCELLED`。即 B3「渠道退款吊销」实际只对 PayPal（PAYMENT.CAPTURE.REFUNDED）/Paddle 生效。疑为「国内渠道退款由管理端 `AdminService.refundOrder` 发起并本地吊销」的取舍（refundPayment 也未设退款专用 notify_url，渠道退款通知本就不到本端点）——需确认是否有意为之。
+- **Paddle 续期依赖事件到达顺序**：修复 C1 后需复核 `subscription.activated` 与 `transaction.billed` 乱序时 `bindOrRenewLicense`（`SubscriptionService.java:129-138`）licenseId==null 分支是否仍吞一个周期续期。
+
+## 已核实无问题（本轮抽查，留档不占 TODOS）
+- 支付：B2 回归正确（updatePaymentStatus 唯一实调用点 4 参、locatePayment 三路回退无遗漏）；五渠道验签 fail-closed 闭合（密钥缺失/空签/异常均 false，失败返 401 且不写 payment_events）；金额最小单位归一与币种+0.01 容差校验；退款吊销口径 Webhook 与 AdminService 一致（findByOrder→逐张 REVOKED→markRefunded，已 REFUNDED 幂等跳过）；@Transactional 经 @Lazy self 代理生效。
+- 账户/安全：admin 端点统一 `hasAuthority("ROLE_ADMIN")`（SecurityConfig:118）+ ApiKeyFilter 常量时间比较（MessageDigest.isEqual，防时序侧信道）；account 敏感端点 ROLE_USER + JWT principal；verify 公开端点不回显客户邮箱（E3）；A1 服务端校验点重验签名（防库内 token 篡改）；K7 lastVerifiedAt 仅成功后写。
+- 前端契约：兑换请求字段 `{code, customerEmail, machineId}` 与后端 RedeemCodeRequest 一一对齐；serverTime(Long) 契约吻合；verifier 全异常路径 fail-closed（malformed/kid 缺失/验签失败/exp/nbf 均 fail(...) 拒绝）。

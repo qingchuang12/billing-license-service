@@ -34,6 +34,18 @@ public class Product {
     
     @Column(columnDefinition = "TEXT")
     private String description;
+
+    /**
+     * 英文产品名（收银台双语展示用，K16 延伸）。中文名见 {@link #name}。
+     */
+    @Column(name = "name_en")
+    private String nameEn;
+
+    /**
+     * 英文产品描述（收银台双语展示用，K16 延伸）。中文描述见 {@link #description}。
+     */
+    @Column(name = "description_en", columnDefinition = "TEXT")
+    private String descriptionEn;
     
     @Column(nullable = false)
     private BigDecimal price;

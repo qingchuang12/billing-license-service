@@ -291,7 +291,7 @@ public class PaddleStrategy implements PaymentStrategy {
                         webhookPayload.setOrderId(data.get("custom_data").get("order_id").asText());
                     }
                     if (data.has("current_billing_period")) {
-                        JsonNode period = data.get("current_period");
+                        JsonNode period = data.get("current_billing_period");
                         if (period.has("starts_at")) {
                             webhookPayload.setCurrentPeriodStart(parsePaddleDateTime(period.get("starts_at").asText()));
                         }

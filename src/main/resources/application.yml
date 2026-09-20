@@ -18,7 +18,7 @@ spring:
     username: ${DB_USERNAME:license}
     # K10（2026-09-18）：口令类配置一律**无默认值**——缺失即拒启（fail-fast 真生效），
     # 避免仓库里的默认口令被带到线上。本地联调值写进项目根 .env（已 gitignore），键名见 .env.example。
-    password: ${DB_PASSWORD:XGTjfWhkfd3QXJA7}
+    password: ${DB_PASSWORD:}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -40,7 +40,7 @@ spring:
     port: ${MAIL_PORT:587}
     username: ${MAIL_USERNAME:service@ywhome.top}
     # K10（2026-09-18）：邮箱口令无默认值（fail-fast）；原先内联在仓库里的真值已移出到 .env
-    password: ${MAIL_PASSWORD:service@123.top}
+    password: ${MAIL_PASSWORD:}
     from-address: ${MAIL_FROM_ADDRESS:service@ywhome.top}
     properties:
       mail:
@@ -76,6 +76,15 @@ billing:
   license-check-interval-hours: 24
   # 默认 License 有效期（天）
   default-license-duration-days: 365
+  # 权益特性显示名（中/英），配置驱动：改名只需改此处，前端零发版。
+  # 键必须与 products.features 中的特性键一致（UPPER_SNAKE）。
+  feature-labels:
+    OFFLINE: { zh: "离线可用", en: "Offline capable" }
+    MULTI_DEVICE: { zh: "多设备授权", en: "Multi-device" }
+    EMAIL_SUPPORT: { zh: "邮件支持", en: "Email support" }
+    PRIORITY_SUPPORT: { zh: "优先支持", en: "Priority support" }
+    # 原名 API_ACCESS（2026-09-20 经 V3 迁移统一改名为 CLOUD_SYNC）
+    CLOUD_SYNC: { zh: "云同步", en: "Cloud sync" }
   # H8：是否信任反向代理注入的 X-Forwarded-For 作为客户端真实 IP。
   # 默认 false（仅按 TCP remoteAddr 限流），避免攻击者伪造 XFF 绕过限流/风控。
   # 仅在确知前方是可信代理（如本服务的 ingress/gateway）时置 true。
@@ -104,24 +113,23 @@ payment:
     app-id: ${ALIPAY_APP_ID:9021000150680771}
     # 商户应用私钥（RSA2，PKCS8），用于下单请求签名
     private-key: ${ALIPAY_PRIVATE_KEY:MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCVNbKBzEEkMD43DmunOfCWqvXSbELoa5cuMeYYHcT0bSr4VrM9GqB0Oi2BbUUtzp6U8dfR2ddtIsFF0fktRvTI9vqsP0GVKgBF2fN7cpqBYOSS/FZSCpA44cvCkGPe7Xp6ZHOos+r5zuVA+URS8Yi3EK6NZLnqQoDj/JLSFA1Nl3f4f1TzUvu28lbkfG/D5rJ01HEmcDx90DvoXqtpD3V995CpIHxbfJR5WWNde0RYBAMJMWvMCSkhKPL7DuQmeAwNem8BFjvUYw3BabyffffS5SNKfQCD7uaXhweBEriKNIIFYv6SZL10QGKxvQalFGCXULdAVTass+Rdw/z+/WqZAgMBAAECggEAAqSt4eDFcqesInuN6qt7GKA0tKKYWNe3GOlnYxv75jyc20Nl73ouR4DUV4uhAxu68XaLVTtftp48AEmk+WldYsYFUNHaDpNs58/hoVk5ZXta8UOpH9DyFx/g5TR7oHJijhKDfgSZ8Az7QLhpvnJq8ptIDFcxd/XvpJpP24rhZXN3VNl7SaEfHjVnj5Ug10VbLIGgZhe9lhNrsdl0rDtJh/1j58HAbhuHottEb855eUlmjcwkjoKzNeV/JqzNZFM8Ux8vsYf7l50ROvIMujo4ZA/Fo+fds3aJkV5TZw24OuegGogwtQ74zgjjtcGez+PzfoYnS7DVXcP5A3kmySCFkQKBgQD8Q+c1cvvMChrgRD3FmlnHWoDppO3T9ih0A1W+kr/e+ltv4OjaoP7ACFl9z71Tl5dNeQ/sHD/4fshaeASt6779+80Xq9dtSVq04Iz2wrvokeyBQEX6Lxs1v7IztW7+l1oJ3GIZ/r3j8bbv9N6Xvj907fLPYyC7J6NbDH3yvd7/VQKBgQCXazWHjXr2fjN2aIblKwzuOFu1boQFyVzcj+OLqnC3FkJoaXpm4toOIIndYQAHS5ZrNgNuyN3CCFAMPH2Esvot9nFn7sjP9IGoCO58J4TYSYjnyfAcTwqWn9kROy915afAq3l0ES/PXY91PcnNKbH/LmfeMkoUMaQZbQUn9dxWNQKBgHvQQBzFsLw2gXZtR/xCg6oKy5bhcjFEchpuwJjmofGo41QICYG03xQVhQbw/TWYA5TsxFnYi7VFVMTCf1l1iapS+hiSKQvkovZ/9+/tKBk/9dqCV1Yx5KL+0VH7zNx8IJ8SYbvsgfrs2iLwBohnwfF8EF6lgp0ZGV5IxVBszJR5AoGAN8wD372c8DQ1Fo8SFmS00Rvnf4YIFHHNTGGhghf+jRkgw4UK29sAa3BGHVPfRNDvzvYKccqHHTce+ENaJYomcsV7qMbvLOJ23MrdxtZxN5pxXqilWGkwB61DufvLU3CbTn5htQmYSpu5f4STVozk0JnzIIf7kFFynQP1gHIzDXkCgYEA85hB4G/pz54M0kXYhWSAjYgQFGewXuDSDGapAaNiWXq+zUoHOXGYHynKIdcrSbY9uenNxxDZyRNPpKYfUn2Iq2I5YHAjlPX154bg8oKfdo5GICSjqSfnnUF/GBBCOkEksValK+Ye1VRzHsgq/mnVquUa6Ah4twDD/cpa2fktoE0=}
-    # 支付宝公钥，用于异步通知验签（不是商户公钥，勿填错）
-    public-key: MIIDszCCApugAwIBAgIQICUHKbWZEouV6yFdw1tCtjANBgkqhkiG9w0BAQsFADCBkTELMAkGA1UE
-                BhMCQ04xGzAZBgNVBAoMEkFudCBGaW5hbmNpYWwgdGVzdDElMCMGA1UECwwcQ2VydGlmaWNhdGlv
-                biBBdXRob3JpdHkgdGVzdDE+MDwGA1UEAww1QW50IEZpbmFuY2lhbCBDZXJ0aWZpY2F0aW9uIEF1
-                dGhvcml0eSBDbGFzcyAyIFIxIHRlc3QwHhcNMjUwNzI5MDY0NTQ0WhcNMjYwNzI5MDY0NTQ0WjCB
-                hDELMAkGA1UEBhMCQ04xHzAdBgNVBAoMFnFleGtybzMyMjVAc2FuZGJveC5jb20xDzANBgNVBAsM
-                BkFsaXBheTFDMEEGA1UEAww65pSv5LuY5a6dKOS4reWbvSnnvZHnu5zmioDmnK/mnInpmZDlhazl
-                j7gtMjA4ODcyMTA3NDQ1ODY3MzCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALdoKqCq
-                5BQQFGRix8/j7BXfWQXbN9W6/nMdsCWhlyAQAa8V2iAi2lmHGQwU5Jya6GQZ9Fq6h8wd3GJe5fQs
-                fHMYnYnGqilqawtxbZBcwiHAgN61Up8MVtoVSuNuPpE2YdUo1GLtovPNT+tOJnIUkaPfShnvF3LV
-                JXxXz+oY5A3h8G/O4lpKWCwGD2fG8jNjteEO8Ma/PbupZ7dqdvRsgKHsZPr3UMk85M3ukv8U1psg
-                qQXhmP1noNmW3QArx03bVsjdSX7bSSV3Rm9IDUVvHHG3YBY6NPc53moQbYuLSGu37Yf+c2rGuuwq
-                H6xBpkVSZyjBL9vuYkI8u8y0FMclyKcCAwEAAaMSMBAwDgYDVR0PAQH/BAQDAgTwMA0GCSqGSIb3
-                DQEBCwUAA4IBAQDBNKbPrzvEW8GUyyT9vsuoDkEjklCG9iS1IV6umK+Eg0k08FnR93xhPU8gQpTe
-                ShNmQQPtDGFgFnU5wqQqnl/SZ6Gx8YD8+h/cF83UgJJ1aofH1qFjCwFATfJ55iR4rbuUuovYmfE2
-                EO9NlJRr3izrDsJF78ISIEHceWTQXqmyEqDV4oZyZeHpT4wq140OY94V6FnsjkqSth2v6yZxqUgx
-                gBNvDN/UW39hnZXN7C+BzMRJWIJo37raxGoyYatW54OYIuzT2ILPnOser9LtfbEpikcBADcJQ862
-                3M+WffomHWk3YpF9lqwuqKppEPGAUgcRwSf2qCfQPbHO5iChf0T4
+    # 支付宝公钥，用于异步通知验签（**不是**商户应用公钥，勿填错）。
+    # 必须是「支付宝公钥」纯 RSA 公钥：base64 以 MIIBIjANBgkq 开头、单行、无换行与空格。
+    # 切勿填 X.509 公钥证书（以 MIID 开头）——本工程走 AlipaySignature.rsaCheckV1（纯公钥模式），
+    # 传证书会直接抛 InvalidKeyException: Unable to decode key content，下单与回调验签全链路失败。
+    # 由 .env 的 ALIPAY_PUBLIC_KEY 注入（K10：无默认值，缺失即该渠道不可用）。
+    public-key: ${ALIPAY_PUBLIC_KEY:}
+    # 加签模式：PUBLIC_KEY（普通公钥）/ CERT（公钥证书）。
+    # 留空 = 自动判定：下面三份证书路径齐全即走证书模式，否则走公钥模式。
+    # 必须与应用在开放平台选择的加签方式一致，否则网关返回 isv.invalid-signature。
+    sign-mode: ${ALIPAY_SIGN_MODE:}
+    # 证书模式专用（三份 crt，从开放平台下载；路径可为 classpath: 或绝对/相对文件路径）：
+    #   app-cert-path     应用公钥证书 appCertPublicKey_*.crt
+    #   alipay-cert-path  支付宝公钥证书 alipayCertPublicKey_RSA2.crt
+    #   root-cert-path    支付宝根证书 alipayRootCert.crt
+    app-cert-path: ${ALIPAY_APP_CERT_PATH:}
+    alipay-cert-path: ${ALIPAY_ALIPAY_CERT_PATH:}
+    root-cert-path: ${ALIPAY_ROOT_CERT_PATH:}
     # 异步通知地址：默认由 app.base-url 派生，需与支付宝后台配置的 Notify URL 一致
     notify-url: ${ALIPAY_NOTIFY_URL:${app.base-url}/api/webhooks/alipay}
     # 网页支付完成后的回跳地址

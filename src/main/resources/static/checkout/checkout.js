@@ -43,7 +43,8 @@
 
   /* ------------------------------------------------------------------
      产品展示元数据（K8 决策 B + K16）
-     仅承载展示文案（双语 name/desc/unit/benefits/推荐位）与 SKU 白名单，
+     仅承载「尚未后端化」的展示位：双语 unit + 推荐位 + SKU 白名单
+     （name/desc/权益显示名已改由后端下发，见 DISPLAY 下方合并逻辑与 renderPlanCards）。
      价格（priceCny/priceUsd）与档位/周期校验一律来自 GET /api/products（K16 端点）。
      SKU 必须与 V4__product_tiers_and_seed.sql 一致；错配会在 create 时 400（PRODUCT_NOT_FOUND）。
      - pro-buyout            Pro 买断        tier=PRO       lifetime
@@ -52,36 +53,24 @@
      - pro-plus-subscription 订阅 Pro Plus   tier=PRO_PLUS  monthly
      ------------------------------------------------------------------ */
   // 构建标记：用于排查「浏览器标签页缓存了旧脚本」的支持场景（F12 控制台可见）
-  console.info('[checkout] build 2026-09-19-2 · requestJson 已剥统一响应壳');
+  console.info('[checkout] build 2026-09-20-5 · 权益名+产品名/描述改读后端（配置/DB 驱动），前端不再写死权益字典');
 
   var DISPLAY = {
     'pro-buyout': {
       tier: 'PRO', cycle: 'lifetime', recommended: false,
-      name: { zh: 'Pro 买断', en: 'Pro Lifetime' },
-      desc: { zh: 'Pro 一次性买断授权', en: 'One-time Pro license' },
-      unit: { zh: '一次性付款', en: 'one-time payment' },
-      benefits: ['plan.benefit.offline', 'plan.benefit.multiDevice', 'plan.benefit.emailSupport']
+      unit: { zh: '一次性付款', en: 'one-time payment' }
     },
     'pro-plus-buyout': {
       tier: 'PRO_PLUS', cycle: 'lifetime', recommended: true,
-      name: { zh: 'Pro Plus 高级版', en: 'Pro Plus Lifetime' },
-      desc: { zh: 'Pro Plus 一次性买断授权', en: 'One-time Pro Plus license' },
-      unit: { zh: '一次性付款', en: 'one-time payment' },
-      benefits: ['plan.benefit.offline', 'plan.benefit.multiDevice', 'plan.benefit.prioritySupport', 'plan.benefit.apiAccess']
+      unit: { zh: '一次性付款', en: 'one-time payment' }
     },
     'pro-subscription': {
       tier: 'PRO', cycle: 'monthly', recommended: false,
-      name: { zh: '订阅 Pro', en: 'Pro Monthly' },
-      desc: { zh: 'Pro 按月订阅', en: 'Pro monthly subscription' },
-      unit: { zh: '每月自动续费，可随时取消', en: 'billed monthly, cancel anytime' },
-      benefits: ['plan.benefit.offline', 'plan.benefit.multiDevice', 'plan.benefit.emailSupport']
+      unit: { zh: '每月自动续费，可随时取消', en: 'billed monthly, cancel anytime' }
     },
     'pro-plus-subscription': {
       tier: 'PRO_PLUS', cycle: 'monthly', recommended: false,
-      name: { zh: '订阅 Pro Plus', en: 'Pro Plus Monthly' },
-      desc: { zh: 'Pro Plus 按月订阅', en: 'Pro Plus monthly subscription' },
-      unit: { zh: '每月自动续费，可随时取消', en: 'billed monthly, cancel anytime' },
-      benefits: ['plan.benefit.offline', 'plan.benefit.multiDevice', 'plan.benefit.prioritySupport', 'plan.benefit.apiAccess']
+      unit: { zh: '每月自动续费，可随时取消', en: 'billed monthly, cancel anytime' }
     }
   };
 
@@ -105,6 +94,9 @@
     if (s === 'QUARTERLY') return 'quarterly';
     return 'lifetime';
   }
+
+  // 权益显示名已配置化：后端 /api/products 直接下发 featureViews（{key,labelZh,labelEn}），
+  // 前端不再维护权益键→i18n 映射与字典（渲染见 renderPlanCards）。
 
   /**
    * 产品目录取值入口（K8 决策 B + K16）。
@@ -130,10 +122,10 @@
           priceCny: cny,
           priceUsd: usd,
           recommended: d.recommended,
-          name: d.name,
-          desc: d.desc,
+          name: { zh: dto.name, en: (dto.nameEn != null ? dto.nameEn : dto.name) },
+          desc: { zh: dto.description, en: (dto.descriptionEn != null ? dto.descriptionEn : dto.description) },
           unit: d.unit,
-          benefits: d.benefits
+          featureViews: (dto && dto.featureViews) || []
         });
       });
       if (!merged.length) {
@@ -232,11 +224,6 @@
       'plan.currencyNote': '价格随界面语言切换：中文界面以人民币（CNY）结算，英文界面以美元（USD）结算。',
       'plan.recommended': '推荐',
       'plan.priceSuffix.monthly': '/月',
-      'plan.benefit.offline': '离线可用',
-      'plan.benefit.multiDevice': '多设备授权',
-      'plan.benefit.emailSupport': '邮件支持',
-      'plan.benefit.prioritySupport': '优先支持',
-      'plan.benefit.apiAccess': 'API 访问',
 
       'form.emailLabel': '电子邮箱',
       'form.emailHint': '授权凭证与订单通知将发送到此邮箱。',
@@ -371,11 +358,6 @@
       'plan.currencyNote': 'Pricing follows your interface language: CNY for Chinese, USD for English.',
       'plan.recommended': 'Recommended',
       'plan.priceSuffix.monthly': '/mo',
-      'plan.benefit.offline': 'Offline capable',
-      'plan.benefit.multiDevice': 'Multiple devices',
-      'plan.benefit.emailSupport': 'Email support',
-      'plan.benefit.prioritySupport': 'Priority support',
-      'plan.benefit.apiAccess': 'API access',
 
       'form.emailLabel': 'Email address',
       'form.emailHint': 'Your license credential and order updates are sent here.',
@@ -816,8 +798,10 @@
       var tierLabel = pickText(TIER_LABELS[product.tier] || { zh: product.tier, en: product.tier });
       var p = pickPrice(product);
       var price = p.symbol + formatMoney(p.value) + (product.cycle === 'monthly' ? t('plan.priceSuffix.monthly') : '');
-      var benefits = product.benefits.map(function (key) {
-        return '<li class="plan-card__benefit">' + esc(t(key)) + '</li>';
+      var benefits = product.featureViews.map(function (fv) {
+        var label = (lang === 'zh' || !fv.labelEn) ? fv.labelZh : fv.labelEn;
+        if (!label) label = fv.key;
+        return '<li class="plan-card__benefit">' + esc(label) + '</li>';
       }).join('');
 
       return '' +
@@ -834,7 +818,7 @@
               '<span class="plan-card__amount">' + esc(price) + '</span>' +
               '<span class="plan-card__unit">' + esc(pickText(product.unit)) + '</span>' +
               '<span class="plan-card__desc">' + esc(pickText(product.desc)) + '</span>' +
-              '<span class="plan-card__benefits">' + benefits + '</span>' +
+              '<ul class="plan-card__benefits">' + benefits + '</ul>' +
             '</span>' +
           '</label>' +
         '</li>';

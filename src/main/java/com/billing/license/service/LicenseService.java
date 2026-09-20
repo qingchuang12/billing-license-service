@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -52,6 +53,16 @@ public class LicenseService {
         if (order.getPaymentStatus() != Order.PaymentStatus.PAID) {
             throw new BusinessException("ORDER_NOT_PAID",
                 "Order must be paid before issuing licenses");
+        }
+
+        // C2（重复发货幂等）：按订单查存量 License，已签发则复用不二签。
+        // Webhook 发货路径与客户端轮询补偿路径分属不同 Bean、无法共享 CheckoutService 私有锁，
+        // 故以「按订单存在性检查」作为跨路径/跨实例的持久幂等兜底（与 generateCode 按订单幂等同口径）。
+        List<License> existingByOrder = licenseRepository.findByOrder(order);
+        if (existingByOrder != null && !existingByOrder.isEmpty()) {
+            License reuse = existingByOrder.get(0);
+            log.info("订单已存在 License，复用不二签：orderId={}, licenseKey={}", orderId, reuse.getLicenseKey());
+            return reuse;
         }
 
         // Get first product from order items
@@ -186,6 +197,55 @@ public class LicenseService {
         recordLicenseEvent(license, LicenseEvent.EventType.REVOKED, license.getMachineCode(),
             "Revoked");
         log.info("Revoked license: {}", licenseKey);
+    }
+
+    /**
+     * 释放本机绑定（换绑场景）：仅清空 {@code machineCode}，不吊销授权本身、不动 {@code REVOKED} 状态。
+     *
+     * <p>归属校验（防远端解绑他人授权）：须持有旧授权的签名 token（验签通过），且 token 内绑定的机器码
+     * 与请求机器码、与服务端记录的 {@code machineCode} 三者一致。换绑发生在同一台设备，正常匹配。
+     *
+     * <p>与「吊销」（管理端退款/违规）和「换机重发」（标记旧证 REISSUED 并签发新证）语义均不同：
+     * 本方法只让旧授权可脱离当前设备复用，不取消其有效性。
+     */
+    @Transactional
+    public void unbindDevice(String signedToken, String machineId) {
+        if (signedToken == null || signedToken.isBlank()) {
+            throw new BusinessException("UNBIND_TOKEN_REQUIRED", "signedToken is required");
+        }
+        if (!licenseIssuer.verifyLicense(signedToken)) {
+            throw new BusinessException("UNBIND_TOKEN_INVALID", "signedToken signature verification failed");
+        }
+        Map<String, Object> claims;
+        try {
+            claims = licenseIssuer.decodePayload(signedToken);
+        } catch (Exception e) {
+            throw new BusinessException("UNBIND_TOKEN_INVALID", "signedToken payload unreadable");
+        }
+        Object licObj = claims.get("lic");
+        Object midObj = claims.get("mid");
+        if (!(licObj instanceof String lic) || lic.isBlank()) {
+            throw new BusinessException("UNBIND_TOKEN_INVALID", "signedToken missing license key");
+        }
+        String tokenMid = midObj instanceof String ? (String) midObj : null;
+
+        License license = licenseRepository.findByLicenseKey(lic)
+            .orElseThrow(() -> new BusinessException("LICENSE_NOT_FOUND", "License not found: " + lic));
+        if (license.getStatus() == License.LicenseStatus.REVOKED) {
+            throw new BusinessException("LICENSE_REVOKED", "Cannot unbind a revoked license");
+        }
+
+        // 归属校验：请求机器码须与本机绑定及 token 绑定机器码一致
+        if (machineId == null || machineId.isBlank()
+                || !machineId.equals(license.getMachineCode())
+                || (tokenMid != null && !tokenMid.equals(machineId))) {
+            throw new BusinessException("UNBIND_MACHINE_MISMATCH", "machineId does not match the bound device");
+        }
+
+        license.setMachineCode(null);
+        licenseRepository.save(license);
+        recordLicenseEvent(license, LicenseEvent.EventType.UNBOUND, machineId, "Device binding released (switch)");
+        log.info("License device binding released: {}", lic);
     }
 
     /**

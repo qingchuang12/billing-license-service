@@ -1,8 +1,11 @@
 package com.billing.license.config;
 
+import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
-import lombok.Data;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Billing configuration properties
@@ -42,6 +45,12 @@ public class BillingProperties {
      */
     private Risk risk = new Risk();
 
+    /**
+     * 权益特性显示名（中/英），配置驱动（收银台 K16 延伸）。
+     * 键必须与 products.features 中的特性键一致（UPPER_SNAKE）；改名只需改此处，前端零发版。
+     */
+    private Map<String, FeatureLabel> featureLabels = new HashMap<>();
+
     @Data
     public static class Risk {
         /** 同一邮箱在窗口期内最大下单/创建收银台次数 */
@@ -66,5 +75,12 @@ public class BillingProperties {
         private int redeemFailureMax = 10;
         /** 兑换失败频控窗口（分钟） */
         private int redeemFailureWindowMinutes = 10;
+    }
+
+    /** 权益特性显示名（中/英） */
+    @Data
+    public static class FeatureLabel {
+        private String zh;
+        private String en;
     }
 }

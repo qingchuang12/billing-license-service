@@ -120,7 +120,8 @@ class WebhookControllerTest {
             PaymentMethod.ALIPAY, "payload", "bad-sig", Map.of());
         assertEquals(401, resp.getStatusCode().value());
         // B12：签名失败时不再写入 payment_events（避免 eventId="unknown-<ts>" 污染幂等表）
-        verify(paymentEventRepository, never()).save(any(PaymentEvent.class));
+        // C6：生产代码用 saveAndFlush 强制同步 INSERT（唯一约束冲突需在 try 内捕获），verify 口径须一致
+        verify(paymentEventRepository, never()).saveAndFlush(any(PaymentEvent.class));
     }
 
     @Test
@@ -161,7 +162,7 @@ class WebhookControllerTest {
         verify(licenseService).issueLicense("ORD-1", "M1");
         verify(emailService).sendPaymentSuccessEmail(eq("u@e.com"), anyString(), anyString(), anyDouble(), any());
         // 记录支付事件（已处理）
-        verify(paymentEventRepository).save(argThat(e -> Boolean.TRUE.equals(e.getProcessed())));
+        verify(paymentEventRepository).saveAndFlush(argThat(e -> Boolean.TRUE.equals(e.getProcessed())));
     }
 
     /**

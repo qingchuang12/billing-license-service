@@ -294,4 +294,61 @@ class LicenseServiceTest {
             e.getEventType() == LicenseEvent.EventType.ISSUED
             && "MACHINE-NEW".equals(e.getMachineId())));
     }
+
+    // ---------------- R6：释放本机绑定（换绑场景） ----------------
+
+    @Test
+    void unbindDevice_shouldClearMachineCodeAndRecordUnboundEvent_whenTokenValidAndMachineMatches() {
+        License license = signedActiveLicense("LIC-UNBIND-OK");
+        when(licenseRepository.findByLicenseKey("LIC-UNBIND-OK")).thenReturn(Optional.of(license));
+        when(licenseRepository.save(any(License.class))).thenAnswer(i -> i.getArgument(0));
+
+        licenseService.unbindDevice(license.getSignedToken(), "M1");
+
+        // 仅释放绑定，不吊销：machineCode 清空，status 不变
+        assertNull(license.getMachineCode(), "换绑解绑应清空 machineCode");
+        assertEquals(License.LicenseStatus.ACTIVE, license.getStatus(), "解绑不应改变授权状态");
+        verify(licenseEventRepository).save(argThat(e ->
+            e.getEventType() == LicenseEvent.EventType.UNBOUND
+            && "M1".equals(e.getMachineId())));
+    }
+
+    @Test
+    void unbindDevice_shouldThrow_whenTokenBlank() {
+        assertThrows(BusinessException.class, () -> licenseService.unbindDevice("   ", "M1"));
+    }
+
+    @Test
+    void unbindDevice_shouldThrow_whenTokenSignatureInvalid() {
+        License license = signedActiveLicense("LIC-UNBIND-BAD");
+        // 篡改 payload 段（不动签名段）→ 验签必然失败
+        String[] parts = license.getSignedToken().split("\\.");
+        String forgedPayload = Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("{\"lic\":\"FORGED\"}".getBytes(StandardCharsets.UTF_8));
+        String tampered = parts[0] + "." + forgedPayload + "." + parts[2];
+
+        assertThrows(BusinessException.class, () -> licenseService.unbindDevice(tampered, "M1"));
+        verify(licenseRepository, never()).save(any(License.class));
+    }
+
+    @Test
+    void unbindDevice_shouldThrow_whenMachineMismatch() {
+        License license = signedActiveLicense("LIC-UNBIND-MM");
+        when(licenseRepository.findByLicenseKey("LIC-UNBIND-MM")).thenReturn(Optional.of(license));
+
+        // 请求机器码与 token / 服务端绑定不一致 → 拒绝（防远端解绑他人授权）
+        assertThrows(BusinessException.class,
+            () -> licenseService.unbindDevice(license.getSignedToken(), "OTHER-MACHINE"));
+        verify(licenseRepository, never()).save(any(License.class));
+    }
+
+    @Test
+    void unbindDevice_shouldThrow_whenLicenseRevoked() {
+        License license = signedActiveLicense("LIC-UNBIND-REV");
+        license.setStatus(License.LicenseStatus.REVOKED);
+        when(licenseRepository.findByLicenseKey("LIC-UNBIND-REV")).thenReturn(Optional.of(license));
+
+        assertThrows(BusinessException.class,
+            () -> licenseService.unbindDevice(license.getSignedToken(), "M1"));
+    }
 }

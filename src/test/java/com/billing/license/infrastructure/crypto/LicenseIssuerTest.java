@@ -117,9 +117,9 @@ class LicenseIssuerTest {
     @Test
     void issueLicense_shouldWriteFeat_whenFeaturesValidJson() {
         Map<String, Object> payload =
-            issuer.decodePayload(issuer.issueLicense(license(product(null, null, "[\"OFFLINE\",\"API_ACCESS\"]"))));
+            issuer.decodePayload(issuer.issueLicense(license(product(null, null, "[\"OFFLINE\",\"CLOUD_SYNC\"]"))));
 
-        assertEquals(java.util.List.of("OFFLINE", "API_ACCESS"), payload.get("feat"));
+        assertEquals(java.util.List.of("OFFLINE", "CLOUD_SYNC"), payload.get("feat"));
     }
 
     @Test

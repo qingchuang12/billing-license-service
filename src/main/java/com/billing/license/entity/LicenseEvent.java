@@ -25,7 +25,9 @@ public class LicenseEvent {
         REDEEMED,
         REISSUED,
         REVOKED,
-        VERIFY_FAILED
+        VERIFY_FAILED,
+        /** 释放本机绑定（换绑场景）：仅清空 machineCode，不吊销授权本身 */
+        UNBOUND
     }
 
     @Id

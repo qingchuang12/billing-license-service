@@ -211,6 +211,16 @@ public class WebhookController {
         // 订阅事件携带 subscriptionId；首充委托 fulfillOrder 签发 License + 标记订单 PAID，
         // 续费时订单已 PAID，fulfillOrder 幂等跳过；随后订阅服务绑定/续期/作废 License
         if (webhookData.getSubscriptionId() != null) {
+            // C5（资损/欺诈修复）：订阅首充携带金额时先做金额防篡改校验，与一次性支付同口径；
+            // 续期/取消等无金额字段的生命周期事件豁免（validateAmount 对空金额返 false，故仅在有金额时校验）。
+            // R4：金额不符仅返回 400 且**不预留幂等记录**，故校验必须在 reserveEvent 之前，确保合法重试可重新校验。
+            if (webhookData.getOrderId() != null && webhookData.getAmount() != null) {
+                Order subOrder = orderRepository.findByOrderNumber(webhookData.getOrderId()).orElse(null);
+                if (subOrder != null && !amountValidator.validateAmount(subOrder, webhookData)) {
+                    logger.error("订阅首充金额校验失败：orderId={}", webhookData.getOrderId());
+                    return ResponseEntity.status(400).body("Amount mismatch");
+                }
+            }
             // R1：发放前先原子预留幂等记录，并发重复投递由唯一约束兜底
             if (!reserveEvent(method, eventId, webhookData, payload, true)) {
                 return ResponseEntity.ok("Already processed");
@@ -298,7 +308,10 @@ public class WebhookController {
                 .processed(processed)
                 .payload(payload)
                 .build();
-            paymentEventRepository.save(event);
+            // C6：主键为应用内生成 UUID，save() 的 INSERT 会延迟到 commit（在本 try-catch 之外的事务拦截器），
+            // 导致并发重复投递的唯一约束冲突绕过此处 catch、在 commit 时抛出 → 渠道收 500 而非设计的 200「已处理」。
+            // saveAndFlush 强制同步 INSERT，使冲突在 try 内立即抛 DataIntegrityViolationException 被优雅去重。
+            paymentEventRepository.saveAndFlush(event);
             return true;
         } catch (org.springframework.dao.DataIntegrityViolationException e) {
             logger.info("支付事件已存在（并发去重）：provider={}, eventId={}", method.name(), dedupId);

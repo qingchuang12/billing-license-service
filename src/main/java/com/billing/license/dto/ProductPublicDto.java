@@ -8,6 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * 公开产品目录 DTO（K16）。
@@ -28,7 +29,13 @@ public class ProductPublicDto {
     private Product.BillingCycle billingCycle;
     private PlanTier tier;
     private String features;
+    /** 权益特性视图（配置驱动的中英文显示名），收银台渲染用；原始键见 {@link #features} */
+    private List<FeatureView> featureViews;
     private Integer licenseDurationDays;
+    /** 英文产品名（收银台双语展示用，K16 延伸） */
+    private String nameEn;
+    /** 英文产品描述（收银台双语展示用，K16 延伸） */
+    private String descriptionEn;
     private Integer updateUntilDays;
     private Integer maxMajorVersion;
     private Boolean active;
@@ -43,10 +50,22 @@ public class ProductPublicDto {
                 .billingCycle(p.getBillingCycle())
                 .tier(p.getTier())
                 .features(p.getFeatures())
+                .nameEn(p.getNameEn())
+                .descriptionEn(p.getDescriptionEn())
                 .licenseDurationDays(p.getLicenseDurationDays())
                 .updateUntilDays(p.getUpdateUntilDays())
                 .maxMajorVersion(p.getMaxMajorVersion())
                 .active(p.getActive())
                 .build();
+    }
+
+    /** 单个权益特性视图（键 + 中英文显示名），由 ProductController 关联 BillingProperties.featureLabels 后填充 */
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class FeatureView {
+        private String key;
+        private String labelZh;
+        private String labelEn;
     }
 }
