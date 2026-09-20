@@ -24,6 +24,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -225,20 +226,19 @@ class AccountServiceTest {
     }
 
     /**
-     * N5（2026-09-20）：新邮箱不允许单独建号——账号只在购买/兑换时由系统创建。
-     * 此前查无账户伪装成 CODE_INVALID，与「验证码真的填错了」不可区分，
-     * 用户按页面「未注册也能设置密码」的承诺操作必然失败且拿不到真实原因。
+     * B6（2026-09-20，账户枚举修复）：保留注册端点后，账号可在购买/兑换外单独创建，
+     * 原「查无账户抛 EMAIL_NOT_PURCHASED」既语义不再成立、又构成账户枚举神谕（暴露邮箱是否注册/付费）。
+     * 现改为：查无账户时静默成功返回（不抛异常、不改库），与成功路径同响应，攻击者无法凭返回值区分。
      */
     @Test
-    void resetPassword_emailWithoutPurchase_rejectedWithExplicitCode() {
+    void resetPassword_emailWithoutAccount_silentlySucceedsWithoutEnumerationLeak() {
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.empty());
 
-        BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.resetPassword(EMAIL, "123456", PASSWORD, "1.2.3.4"));
+        // 不抛任何异常（防枚举：与"密码已重置"同响应）
+        assertDoesNotThrow(() -> service.resetPassword(EMAIL, "123456", PASSWORD, "1.2.3.4"));
 
-        assertEquals("EMAIL_NOT_PURCHASED", ex.getErrorCode(),
-            "无购买记录的邮箱必须给出明确错误码，不得伪装成验证码错误");
-        assertTrue(ex.getMessage().contains("购买"), "文案应指向下一步动作（先购买或兑换）");
+        // 验证码仍被消费（上一步），但绝不落库任何用户变更
+        verify(userRepository, never()).save(any(User.class));
     }
 
     /** 已存在账号（购买时创建）的正常重置路径：密码更新 + 旧令牌全部失效 */

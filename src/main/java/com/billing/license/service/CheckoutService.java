@@ -171,6 +171,22 @@ public class CheckoutService {
             .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "Order not found: " + session.getOrderId()));
 
         PaymentMethod method = resolveMethod(request.getProvider());
+
+        // B4（双重扣款修复）：selectProvider 幂等前置校验，避免用户连点/重复提交生成第二个真实收银台。
+        // 1) 会话已支付：直接返回状态，绝不再创建支付。
+        if (session.getStatus() == CheckoutSession.Status.PAID) {
+            log.info("会话已支付，忽略重复选择支付方式：checkoutId={}", checkoutId);
+            return buildResumeResponse(session, session.getProvider() != null ? session.getProvider() : method);
+        }
+        // 2) 同一渠道且已创建过支付入口（PENDING + 已有 providerSessionId）：复用既有支付，不重复创建。
+        if (session.getStatus() == CheckoutSession.Status.PENDING
+                && method == session.getProvider()
+                && session.getProviderSessionId() != null && !session.getProviderSessionId().isEmpty()) {
+            log.info("同渠道重复选择，复用既有支付入口（幂等）：checkoutId={}, provider={}", checkoutId, method);
+            return buildResumeResponse(session, method);
+        }
+        // 3) 其余情况（首次选择 / 切换到不同渠道）走正常创建流程。
+
         PaymentResponse paymentResponse = paymentService.createPayment(order, method);
 
         // H5 修复：落库订单所选支付渠道，供管理端退款 resolveMethod(order.getPaymentProvider()) 使用。
@@ -302,6 +318,26 @@ public class CheckoutService {
     // R5：获取订单级发放锁（单实例串行化，避免并发轮询重复签发）
     private Object orderLock(String orderNumber) {
         return fulfillmentLocks.computeIfAbsent(orderNumber, k -> new Object());
+    }
+
+    /**
+     * B4：从既有会话构造响应（复用已创建的支付入口，不再创建新支付），
+     * 用于「同渠道重复选择」与「会话已支付」两种幂等返回。
+     */
+    private CheckoutResponse buildResumeResponse(CheckoutSession session, PaymentMethod method) {
+        CheckoutResponse.CheckoutResponseBuilder resp = CheckoutResponse.builder()
+            .checkoutId(session.getCheckoutId())
+            .orderNumber(session.getOrderNumber())
+            .status(session.getStatus().name())
+            .provider(method.name());
+        if (session.getPayUrl() != null && !session.getPayUrl().isEmpty()) {
+            resp.payUrl(session.getPayUrl());
+            resp.paymentMode("redirect");
+        }
+        if (session.getExpiresAt() != null) {
+            resp.expiresAt(session.getExpiresAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
+        }
+        return resp.build();
     }
 
     private PaymentMethod resolveMethod(String provider) {

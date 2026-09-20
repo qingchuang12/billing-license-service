@@ -184,6 +184,22 @@ public class RedeemCodeService {
 
         // Validate status
         if (redeemCode.getStatus() != RedeemCode.RedeemCodeStatus.UNUSED) {
+            // B9（幂等修复）：兑换成功后 HTTP 响应在返回途中丢失，客户端重试原本会撞 CODE_ALREADY_USED
+            // 而永远拿不到已签发的 License（资损：钱已付、码已耗、License 拿不到）。
+            // 现改为：若是「同一兑换人」重试同一枚 USED 码，直接返回其已签发的 License（幂等）；
+            // 非本人或找不到对应 License 才按已用/已撤销/过期报错。
+            if (redeemCode.getStatus() == RedeemCode.RedeemCodeStatus.USED
+                    && redeemCode.getUsedBy() != null
+                    && request.getCustomerEmail() != null && !request.getCustomerEmail().isBlank()) {
+                UUID retryCustomerId = customerIdentityService.resolveOrCreate(request.getCustomerEmail());
+                if (redeemCode.getUsedBy().equals(retryCustomerId)) {
+                    License existing = findRedeemedLicense(redeemCode, retryCustomerId);
+                    if (existing != null) {
+                        log.info("兑换码重试幂等命中，返回已签发 License：licenseKey={}", existing.getLicenseKey());
+                        return existing;
+                    }
+                }
+            }
             throw new BusinessException("CODE_ALREADY_USED",
                 "This code has already been used");
         }
@@ -238,6 +254,23 @@ public class RedeemCodeService {
         return license;
     }
     
+    /**
+     * B9：定位某兑换人凭该兑换码已签发的 License。
+     * RedeemCode 无直接 License 外键，按「兑换人 + 该码绑定产品」在其名下 License 中匹配
+     * （兑换签发的 License order 为 null，用 customerId + product 足以唯一定位单码单用场景）。
+     * 找不到返回 null（调用方回落 CODE_ALREADY_USED）。
+     */
+    private License findRedeemedLicense(RedeemCode redeemCode, UUID customerId) {
+        UUID productId = redeemCode.getProduct() != null ? redeemCode.getProduct().getId() : null;
+        if (productId == null) {
+            return null;
+        }
+        return licenseRepository.findByCustomerIdOrderByIssuedAtDesc(customerId).stream()
+            .filter(l -> l.getProduct() != null && productId.equals(l.getProduct().getId()))
+            .findFirst()
+            .orElse(null);
+    }
+
     /**
      * Revoke a redeem code
      */

@@ -50,6 +50,10 @@ public class WebhookController {
     
     @Autowired
     private PaymentRepository paymentRepository;
+
+    // B3：渠道退款/取消回调吊销该订单下的 License（与管理端退款同口径）
+    @Autowired
+    private com.billing.license.repository.LicenseRepository licenseRepository;
     
     @Autowired
     private LicenseService licenseService;
@@ -231,25 +235,38 @@ public class WebhookController {
         }
 
         // 6. 更新支付状态
+        // B2：传入业务订单号，供 paymentId/transactionId 定位失败时回退（PayPal 存 Order ID、
+        // 回调却是 capture ID 的错配场景）；updatePaymentStatus 查无一律降级返回 null，绝不抛异常阻断发货。
         Payment payment = paymentService.updatePaymentStatus(
             webhookData.getPaymentId(),
             PaymentStatus.valueOf(webhookData.getStatus()),
-            webhookData.getTransactionId()
+            webhookData.getTransactionId(),
+            webhookData.getOrderId()
         );
         if (payment == null) {
-            logger.warn("支付记录不存在，尝试按订单号创建：paymentId={}", webhookData.getPaymentId());
+            logger.warn("支付记录未定位到，仅按订单号继续发货/退款流程：paymentId={}, orderId={}",
+                webhookData.getPaymentId(), webhookData.getOrderId());
         } else {
             payment.setMethod(method);
             paymentRepository.save(payment);
         }
 
-        // 7. 支付成功 → 原子预留幂等记录（前置到发货之前），再执行发货
-        if ("SUCCESS".equals(webhookData.getStatus())) {
+        // 7. 按支付状态分流：成功发货 / 退款·取消吊销 / 其余仅审计
+        String status = webhookData.getStatus();
+        if ("SUCCESS".equals(status)) {
             // R1：并发重复投递时唯一约束保证仅一个请求能预留成功，其余返回 Already processed
             if (!reserveEvent(method, eventId, webhookData, payload, true)) {
                 return ResponseEntity.ok("Already processed");
             }
             self.fulfillOrder(webhookData.getOrderId());
+        } else if ("REFUNDED".equals(status) || "CANCELLED".equals(status)) {
+            // B3（资损/欺诈修复）：渠道侧退款/取消回调必须吊销 License 并置订单为已退款，
+            // 与管理端人工退款（AdminService.refundOrder）同口径——否则客户退款后 License 仍可用。
+            // 先原子预留幂等记录，避免重复投递重复吊销。
+            if (!reserveEvent(method, eventId, webhookData, payload, true)) {
+                return ResponseEntity.ok("Already processed");
+            }
+            self.revokeOnChannelRefund(webhookData.getOrderId(), status);
         } else {
             // 非 SUCCESS（如 FAILED/PENDING）仍记录审计，但不发货
             reserveEvent(method, eventId, webhookData, payload, true);
@@ -348,5 +365,49 @@ public class WebhookController {
         }
 
         logger.info("发货完成：orderId={}", orderId);
+    }
+
+    /**
+     * B3（资损/欺诈修复）：渠道侧退款/取消回调触发的 License 吊销 + 订单置退款。
+     *
+     * <p>与管理端人工退款（{@link com.billing.license.service.AdminService#refundOrder}）同口径吊销，
+     * 但**不再回调渠道退款**——本方法由渠道退款/取消事件驱动，资金已在渠道侧退回，此处只做本地对账联动。
+     * 订阅类退款由 {@code subscriptionService} 分支单独处理（携带 subscriptionId），不进入本路径。
+     *
+     * <p>幂等：订单已 REFUNDED 直接跳过；License 已 REVOKED 不重复吊销。
+     */
+    @Transactional
+    public void revokeOnChannelRefund(String orderId, String status) {
+        if (orderId == null || orderId.isEmpty()) {
+            logger.warn("退款/取消回调缺订单号，无法吊销 License：status={}", status);
+            return;
+        }
+        Order order = orderRepository.findByOrderNumber(orderId).orElse(null);
+        if (order == null) {
+            logger.warn("退款/取消回调对应订单不存在：orderId={}, status={}", orderId, status);
+            return;
+        }
+        if (order.getPaymentStatus() == Order.PaymentStatus.REFUNDED) {
+            logger.info("订单已是退款态，跳过重复吊销：orderId={}", orderId);
+            return;
+        }
+
+        // 吊销该订单下所有未吊销 License（与 AdminService.refundOrder 同口径）
+        var licenses = licenseRepository.findByOrder(order);
+        int revoked = 0;
+        for (var license : licenses) {
+            if (license.getStatus() != com.billing.license.entity.License.LicenseStatus.REVOKED) {
+                license.setStatus(com.billing.license.entity.License.LicenseStatus.REVOKED);
+                license.setRevokedAt(java.time.LocalDateTime.now());
+                licenseRepository.save(license);
+                revoked++;
+            }
+        }
+
+        // 订单置退款态（状态机唯一出口，保证 status 与 paymentStatus 一致）
+        order.markRefunded();
+        orderRepository.save(order);
+
+        logger.info("渠道退款/取消对账完成：orderId={}, status={}, 吊销 License {} 张", orderId, status, revoked);
     }
 }

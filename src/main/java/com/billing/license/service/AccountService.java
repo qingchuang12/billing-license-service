@@ -189,13 +189,16 @@ public class AccountService {
         // 先校验验证码：验证码本身错误仍落 CODE_INVALID
         verificationCodeService.verifyAndConsume(email, VerificationCode.CodePurpose.RESET_PASSWORD, code);
 
-        // N5（2026-09-20）：新邮箱不允许单独建号——账号只在购买/兑换时由系统创建。
-        // 此前查无账户伪装成 CODE_INVALID，与「验证码真的填错了」不可区分，
-        // 用户按页面「未注册也能设置密码」的承诺操作必然失败且拿不到真实原因（UI 恒显兜底文案）。
-        // 现改为明确错误码 + 指向下一步动作的文案；不泄露该邮箱是否有订单等敏感信息。
-        User user = userRepository.findByEmail(email)
-            .orElseThrow(() -> new BusinessException("EMAIL_NOT_PURCHASED",
-                "该邮箱名下暂无购买记录，请先使用该邮箱完成购买或兑换后再设置密码"));
+        // B6（账户枚举修复，2026-09-20）：注册端点保留后，账号可在购买/兑换外单独创建，
+        // 原「查无账户抛 EMAIL_NOT_PURCHASED」既语义不再成立（不再等价于"未购买"），
+        // 又构成账户枚举神谕（暴露该邮箱是否存在/是否付费客户）。
+        // 现改为：查无账户时静默成功返回（与成功路径同响应），不泄露该邮箱是否注册。
+        // 验证码已在上一步消费——攻击者即便猜测也无法凭返回值区分"邮箱不存在"与"密码已重置"。
+        User user = userRepository.findByEmail(email).orElse(null);
+        if (user == null) {
+            log.info("找回密码：邮箱无对应账户，静默返回（防枚举）");
+            return;
+        }
         if (user.getStatus() != User.UserStatus.ACTIVE) {
             throw new BusinessException("ACCOUNT_DISABLED", "账号已被停用，请联系客服");
         }

@@ -91,11 +91,14 @@ public class SecurityConfig {
                 // 收银台静态页（/checkout/index.html + css/js 资产）：客户端「在线激活」跳转的落地页，
                 // 买家在支付前是匿名状态，必须与 /api/checkout/** 同批放行；页面自身无数据，仅静态资产。
                 // 注意不是 /api/checkout（接口已在上行放行）——少了这条，页面会被 anyRequest().denyAll() 拦成 401。
-                .requestMatchers("/checkout/**").permitAll()
+                // B8：仅放行 GET（静态页只读）。收窄误暴露面——若将来有控制器误映射到该前缀，
+                // 其 POST/PUT/DELETE 不会被这条静态放行规则意外放过（落入 anyRequest().denyAll()）。
+                .requestMatchers(HttpMethod.GET, "/checkout/**").permitAll()
                 // 「我的授权」静态页（/account/index.html + 资产，U2）：登录前页面自身无数据，
                 // 鉴权由页面内的 /api/account/** 调用凭 JWT 完成，静态资产与 /checkout/** 同口径放行。
                 // 同样注意不是 /api/account（接口已在上方按 ROLE_USER 保护，两条路径互不影响）。
-                .requestMatchers("/account/**").permitAll()
+                // B8：同样仅放行 GET。
+                .requestMatchers(HttpMethod.GET, "/account/**").permitAll()
                 // v2.10 账号公开端点：**必须逐条声明在 /api/account/** 之前**。
                 // Spring Security 按声明顺序取首个匹配规则，若把宽松的 /api/account/** 写在前面，
                 // 登录接口也会要求令牌 —— 未登录用户永远拿不到令牌，形成死锁。

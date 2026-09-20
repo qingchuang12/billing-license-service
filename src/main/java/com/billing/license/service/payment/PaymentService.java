@@ -33,6 +33,10 @@ public class PaymentService {
     
     @Autowired
     private PaymentRepository paymentRepository;
+
+    // B2：paymentId/transactionId 均定位失败时，按业务订单号回退查 Payment（订单号 → Order UUID → Payment）
+    @Autowired
+    private com.billing.license.repository.OrderRepository orderRepository;
     
     /**
      * 创建支付订单
@@ -81,28 +85,75 @@ public class PaymentService {
     }
     
     /**
-     * 更新支付状态（Webhook 回调后调用）
+     * 更新支付状态（Webhook 回调后调用）。
+     *
+     * <p>B2/B7（资损修复）：回调携带的 {@code paymentId} 与落库口径可能不一致——
+     * PayPal 下单存 Order ID，回调却是 capture ID；Stripe 一次性支付存 Session ID，
+     * 部分事件却带 payment_intent。原实现「按 paymentId 查无即抛 RuntimeException」会在
+     * {@code processWebhook} 内 fulfillOrder 之前中断整个事务，导致已扣款订单永不发货、
+     * 渠道对同一 500 反复重试。
+     *
+     * <p>现改为多路定位（paymentId → transactionId → 订单号回退），且**查无一律降级为
+     * 日志并返回 null**，绝不抛异常阻断发货：发货由 {@code fulfillOrder} 按订单号独立驱动，
+     * Payment 记录仅用于对账，缺失不应挡住 License 签发。
+     *
+     * @param orderNumber 回调解析出的业务订单号，用于 paymentId/transactionId 均定位失败时回退
+     */
+    @Transactional
+    public Payment updatePaymentStatus(String paymentId, PaymentStatus status, String transactionId, String orderNumber) {
+        Payment payment = locatePayment(paymentId, transactionId, orderNumber);
+        if (payment == null) {
+            logger.warn("支付记录不存在，跳过状态更新（不阻断发货）：paymentId={}, transactionId={}, orderNumber={}",
+                paymentId, transactionId, orderNumber);
+            return null;
+        }
+
+        payment.setStatus(status);
+        if (transactionId != null) {
+            payment.setTransactionId(transactionId);
+        }
+        if (PaymentStatus.SUCCESS.name().equals(status.name())) {
+            payment.setPaidAt(LocalDateTime.now());
+        }
+        return paymentRepository.save(payment);
+    }
+
+    /**
+     * 兼容旧签名（无订单号回退）。保留供既有调用方/测试使用。
      */
     @Transactional
     public Payment updatePaymentStatus(String paymentId, PaymentStatus status, String transactionId) {
-        Optional<Payment> paymentOpt = paymentRepository.findByPaymentId(paymentId);
-        
-        if (paymentOpt.isPresent()) {
-            Payment payment = paymentOpt.get();
-            payment.setStatus(status);
-            
-            if (transactionId != null) {
-                payment.setTransactionId(transactionId);
+        return updatePaymentStatus(paymentId, status, transactionId, null);
+    }
+
+    /**
+     * 多路定位支付记录：先按 paymentId，再按渠道交易号，最后按订单号（Order UUID）回退。
+     * 全部落空返回 null（交由调用方降级处理，不抛异常）。
+     */
+    private Payment locatePayment(String paymentId, String transactionId, String orderNumber) {
+        if (paymentId != null) {
+            Optional<Payment> byId = paymentRepository.findByPaymentId(paymentId);
+            if (byId.isPresent()) {
+                return byId.get();
             }
-            
-            if (PaymentStatus.SUCCESS.name().equals(status.name())) {
-                payment.setPaidAt(LocalDateTime.now());
-            }
-            
-            return paymentRepository.save(payment);
         }
-        
-        throw new RuntimeException("支付记录不存在：" + paymentId);
+        if (transactionId != null) {
+            Optional<Payment> byTxn = paymentRepository.findByTransactionId(transactionId);
+            if (byTxn.isPresent()) {
+                return byTxn.get();
+            }
+        }
+        if (orderNumber != null) {
+            // 回调订单号是业务单号（orderNumber），Payment.orderIdStr 存 Order UUID → 需先换取 UUID
+            Optional<com.billing.license.entity.Order> order = orderRepository.findByOrderNumber(orderNumber);
+            if (order.isPresent()) {
+                Optional<Payment> byOrder = paymentRepository.findByOrderIdStr(order.get().getId().toString());
+                if (byOrder.isPresent()) {
+                    return byOrder.get();
+                }
+            }
+        }
+        return null;
     }
     
     /**

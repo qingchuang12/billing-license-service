@@ -41,6 +41,7 @@ class WebhookControllerTest {
     private PaymentService paymentService;
     private OrderRepository orderRepository;
     private PaymentRepository paymentRepository;
+    private com.billing.license.repository.LicenseRepository licenseRepository;
     private LicenseService licenseService;
     private RedeemCodeService redeemCodeService;
     private EmailNotificationService emailService;
@@ -56,6 +57,7 @@ class WebhookControllerTest {
         paymentService = mock(PaymentService.class);
         orderRepository = mock(OrderRepository.class);
         paymentRepository = mock(PaymentRepository.class);
+        licenseRepository = mock(com.billing.license.repository.LicenseRepository.class);
         licenseService = mock(LicenseService.class);
         redeemCodeService = mock(RedeemCodeService.class);
         emailService = mock(EmailNotificationService.class);
@@ -69,6 +71,7 @@ class WebhookControllerTest {
         setField(controller, "paymentService", paymentService);
         setField(controller, "orderRepository", orderRepository);
         setField(controller, "paymentRepository", paymentRepository);
+        setField(controller, "licenseRepository", licenseRepository);
         setField(controller, "licenseService", licenseService);
         setField(controller, "redeemCodeService", redeemCodeService);
         setField(controller, "emailNotificationService", emailService);
@@ -145,7 +148,8 @@ class WebhookControllerTest {
         when(orderRepository.findByOrderNumber("ORD-1")).thenReturn(Optional.of(order));
         when(amountValidator.validateAmount(any(Order.class), any())).thenReturn(true);
         Payment payment = new Payment();
-        when(paymentService.updatePaymentStatus(any(), any(), any())).thenReturn(payment);
+        // B2：updatePaymentStatus 现为 4 参（末位传业务订单号供回退定位）
+        when(paymentService.updatePaymentStatus(any(), any(), any(), any())).thenReturn(payment);
         when(paymentRepository.save(any(Payment.class))).thenAnswer(i -> i.getArgument(0));
 
         ResponseEntity<String> resp = controller.processWebhook(
@@ -158,6 +162,68 @@ class WebhookControllerTest {
         verify(emailService).sendPaymentSuccessEmail(eq("u@e.com"), anyString(), anyString(), anyDouble(), any());
         // 记录支付事件（已处理）
         verify(paymentEventRepository).save(argThat(e -> Boolean.TRUE.equals(e.getProcessed())));
+    }
+
+    /**
+     * B2（资损修复）：支付记录定位失败（如 PayPal 存 Order ID、回调却是 capture ID）时，
+     * updatePaymentStatus 返回 null 不再抛异常，发货必须照常按订单号进行。
+     */
+    @Test
+    void processWebhook_shouldStillFulfill_whenPaymentRecordNotLocated() {
+        PaymentStrategy strategy = stubStrategy(true);
+        when(factory.getStrategy(PaymentMethod.ALIPAY)).thenReturn(strategy);
+        when(paymentEventRepository.existsByProviderAndEventId(anyString(), anyString())).thenReturn(false);
+
+        Order order = Order.builder().orderNumber("ORD-1").machineCode("M1")
+            .totalAmount(new BigDecimal("99.00")).currency(Currency.CNY).email("u@e.com").build();
+        when(orderRepository.findByOrderNumber("ORD-1")).thenReturn(Optional.of(order));
+        when(amountValidator.validateAmount(any(Order.class), any())).thenReturn(true);
+        // 关键：定位失败返回 null（模拟 id 错配）
+        when(paymentService.updatePaymentStatus(any(), any(), any(), any())).thenReturn(null);
+
+        ResponseEntity<String> resp = controller.processWebhook(
+            PaymentMethod.ALIPAY, "payload", "sig", Map.of());
+
+        assertEquals(200, resp.getStatusCode().value());
+        // 尽管 Payment 未定位，仍按订单号发货签发 License（不被 500 中断）
+        verify(licenseService).issueLicense("ORD-1", "M1");
+    }
+
+    /**
+     * B3（资损/欺诈修复）：渠道退款回调必须吊销该订单下 License 并置订单为已退款，
+     * 且不再走发货路径。
+     */
+    @Test
+    void processWebhook_shouldRevokeLicense_whenChannelRefunded() {
+        PaymentStrategy strategy = mock(PaymentStrategy.class);
+        when(strategy.verifyWebhookSignature(anyString(), any(), any())).thenReturn(true);
+        when(strategy.getPaymentMethod()).thenReturn(PaymentMethod.PAYPAL);
+        WebhookPayload refund = new WebhookPayload();
+        refund.setOrderId("ORD-9");
+        refund.setPaymentId("cap_9");
+        refund.setTransactionId("cap_9");
+        refund.setEventType("PAYMENT.CAPTURE.REFUNDED");
+        refund.setStatus(PaymentStatus.REFUNDED.name());
+        when(strategy.parseWebhookPayload(anyString())).thenReturn(refund);
+        when(factory.getStrategy(PaymentMethod.PAYPAL)).thenReturn(strategy);
+        when(paymentEventRepository.existsByProviderAndEventId(anyString(), anyString())).thenReturn(false);
+        when(paymentService.updatePaymentStatus(any(), any(), any(), any())).thenReturn(null);
+
+        Order order = Order.builder().orderNumber("ORD-9").email("u@e.com").build();
+        when(orderRepository.findByOrderNumber("ORD-9")).thenReturn(Optional.of(order));
+        com.billing.license.entity.License lic = com.billing.license.entity.License.builder()
+            .licenseKey("K-9").status(com.billing.license.entity.License.LicenseStatus.ACTIVE).build();
+        when(licenseRepository.findByOrder(order)).thenReturn(java.util.List.of(lic));
+
+        ResponseEntity<String> resp = controller.processWebhook(
+            PaymentMethod.PAYPAL, "payload", "sig", Map.of());
+
+        assertEquals(200, resp.getStatusCode().value());
+        // License 被吊销
+        assertEquals(com.billing.license.entity.License.LicenseStatus.REVOKED, lic.getStatus());
+        verify(licenseRepository).save(lic);
+        // 未走发货
+        verify(licenseService, never()).issueLicense(anyString(), anyString());
     }
 
     @Test
