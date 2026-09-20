@@ -105,7 +105,7 @@
       'auth.passwordLabel': 'Password',
       'auth.login': 'Sign in',
       'auth.loginBusy': 'Signing in…',
-      'auth.toReset': 'Never registered / forgot password? Set a password with an email code',
+      'auth.toReset': 'Forgot password? Set a new one with an email code',
       'auth.codeLabel': 'Email verification code',
       'auth.sendCode': 'Send code',
       'auth.sendCodeBusy': 'Sending…',
@@ -122,6 +122,9 @@
       'err.network': 'Network error, please retry later',
       'err.generic': 'Operation failed, please retry later',
       'err.sessionExpired': 'Session expired, please sign in again',
+      'err.accessDenied': 'You do not have access to this resource',
+      'err.invalidCredentials': 'Incorrect email or password',
+      'err.emailNotPurchased': 'No purchase found for this email. Please buy or redeem first',
       'license.title': 'My Licenses',
       'license.desc': 'Keys used to activate the software; click "Copy" and paste into the activation box.',
       'license.key': 'Key',
@@ -203,13 +206,33 @@
     return 'UNKNOWN';
   }
 
-  /** 把非 2xx 响应归一成 {kind:'api', status, code, message} */
+  /**
+   * 错误码 → i18n 文案键（N5）：服务端消息是中文，英文界面下不应直出中文。
+   * 命中此表时优先用页面语言，未命中才回显服务端 message。
+   */
+  var ERROR_TEXT = {
+    EMAIL_NOT_PURCHASED: 'err.emailNotPurchased',
+    INVALID_CREDENTIALS: 'err.invalidCredentials',
+    UNAUTHORIZED: 'err.sessionExpired',
+    ACCESS_DENIED: 'err.accessDenied'
+  };
+
+  /**
+   * 把非 2xx 响应归一成 {kind:'api', status, code, message}（N4）
+   * - code 兼容两种壳体：新壳 `$.code` 与旧自拼体的 `$.errorCode`（成功壳的 SUCCESS 不算错误码）
+   * - message 兜底到内层 `$.data.message`，防止「结构一变就只剩通用文案」重演
+   */
   function buildApiError(status, payload) {
+    var raw = payload || {};
+    var rawCode = raw.errorCode || (raw.code && raw.code !== 'SUCCESS' ? raw.code : '');
+    var message = raw.message
+      || (raw.data && raw.data.message)
+      || '';
     return {
       kind: 'api',
       status: status,
-      code: (payload && payload.errorCode) ? String(payload.errorCode) : defaultCodeFor(status),
-      message: (payload && payload.message) ? String(payload.message) : ''
+      code: rawCode ? String(rawCode) : defaultCodeFor(status),
+      message: String(message)
     };
   }
 
@@ -286,6 +309,10 @@
 
   function errText(err, fallbackKey) {
     if (err && err.kind === 'network') return t('err.network');
+    var mapped = (err && err.code) ? ERROR_TEXT[err.code] : '';
+    if (mapped) return t(mapped);
+    // 401/403：此前空 body 落兜底文案，现在补统一 JSON，这里再按状态兜一层
+    if (err && (err.status === 401 || err.status === 403)) return t('err.sessionExpired');
     if (err && err.message) return err.message;
     return t(fallbackKey || 'err.generic');
   }

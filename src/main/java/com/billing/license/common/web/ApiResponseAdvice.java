@@ -35,7 +35,11 @@ public class ApiResponseAdvice implements ResponseBodyAdvice<Object> {
             if (pkg.startsWith("org.springdoc")) {
                 return false;
             }
-            if (pkg.contains(".exception.") || pkg.contains(".webhook.")) {
+            // N2：`.exception.` 这条判断从未生效——包名为 com.billing.license.exception，
+            // 结尾没有多余的点，contains(".exception.") 恒为 false，故异常处理器的返回值曾被二次包壳。
+            // 改为 endsWith/contains 双写，并保留 beforeBodyWrite 里的 instanceof 兜底。
+            if (pkg.endsWith(".exception") || pkg.contains(".exception.")
+                    || pkg.endsWith(".webhook") || pkg.contains(".webhook.")) {
                 return false;
             }
         }

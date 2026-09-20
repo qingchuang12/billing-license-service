@@ -35,6 +35,8 @@ public class LicenseService {
     private final RateLimitService rateLimitService;
     // E3（客户标识邮箱化）：按 userId 解析邮箱，用于签发/重发等管理端出参回填 customerEmail
     private final UserRepository userRepository;
+    // C8：机器码首次出现账本——购买签发时顺带登记，供客户端把试用起点回溯到「这台机器最早来过」的时间
+    private final MachineRegistryService machineRegistryService;
     
     /**
      * Issue a license bound to a specific machine code
@@ -78,6 +80,8 @@ public class LicenseService {
         license.setSignedToken(signedToken);
 
         licenseRepository.save(license);
+        // C8：登记这台机器的首次出现时间（幂等，只刷新 last_seen_at）
+        machineRegistryService.touch(machineCode, MachineRegistryService.SRC_PURCHASE);
         recordLicenseEvent(license, LicenseEvent.EventType.ISSUED, machineCode, "Issued for order " + orderId);
         log.info("License issued successfully: {}", licenseKey);
 

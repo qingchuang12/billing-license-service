@@ -33,6 +33,8 @@ public class RedeemCodeService {
     private final RateLimitService rateLimitService;
     // E1（客户标识邮箱化）：对外邮箱 → 内部 userId 解析；未注册自动建访客账户
     private final CustomerIdentityService customerIdentityService;
+    // C8：机器码首次出现账本——兑换签发时顺带登记，堵住「删档重装再领一次试用」
+    private final MachineRegistryService machineRegistryService;
 
     // B8：使用密码学安全随机源生成兑换码，替代可预测的 Math.random()
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
@@ -228,6 +230,8 @@ public class RedeemCodeService {
 
         licenseRepository.save(license);
         redeemCodeRepository.save(redeemCode);
+        // C8：登记这台机器的首次出现时间（幂等）
+        machineRegistryService.touch(request.getMachineId(), MachineRegistryService.SRC_REDEEM);
 
         log.info("Code redeemed successfully, license issued: {}", licenseKey);
 

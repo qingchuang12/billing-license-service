@@ -84,7 +84,8 @@ class LicenseServiceTest {
             licenseRepository, orderRepository, licenseEventRepository,
             licenseIssuer, billingProperties, email,
             mock(com.billing.license.service.risk.RateLimitService.class),
-            userRepository);
+            userRepository,
+            mock(MachineRegistryService.class));
 
         customerId = UUID.randomUUID();
         productId = UUID.randomUUID();

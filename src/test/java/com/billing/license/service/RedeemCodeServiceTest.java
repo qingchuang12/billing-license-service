@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Optional;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -35,6 +35,7 @@ class RedeemCodeServiceTest {
     private LicenseIssuer licenseIssuer;
     private RateLimitService rateLimitService;
     private CustomerIdentityService customerIdentityService;
+    private MachineRegistryService machineRegistryService;
     private RedeemCodeService redeemCodeService;
 
     @BeforeEach
@@ -46,9 +47,11 @@ class RedeemCodeServiceTest {
         licenseIssuer = mock(LicenseIssuer.class);
         rateLimitService = mock(RateLimitService.class);
         customerIdentityService = mock(CustomerIdentityService.class);
+        machineRegistryService = mock(MachineRegistryService.class);
         redeemCodeService = new RedeemCodeService(
             redeemCodeRepository, licenseRepository, productRepository,
-            orderRepository, licenseIssuer, rateLimitService, customerIdentityService);
+            orderRepository, licenseIssuer, rateLimitService, customerIdentityService,
+            machineRegistryService);
     }
 
     /** 桩一个可用的未使用兑换码及其签发/落库路径。 */

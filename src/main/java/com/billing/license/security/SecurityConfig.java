@@ -5,14 +5,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -86,6 +84,10 @@ public class SecurityConfig {
                 // 公开端点：收银台、支付回调、License 在线校验、兑换码兑换、公开产品目录
                 .requestMatchers("/api/webhooks/**", "/api/checkout/**", "/api/products/**",
                     "/api/licenses/verify/**", "/api/redeem/redeem").permitAll()
+                // C8：机器码首次出现时间查询（客户端首跑 / 兑换前联网问一次，用于把试用起点回溯到
+                // 服务端最早见到这台机器的时间，堵住「删档重装再领一次试用」）。
+                // 只读、无 PII：机器码是硬件派生的随机串，响应只有两个时间戳。
+                .requestMatchers("/api/licenses/machine/**").permitAll()
                 // 收银台静态页（/checkout/index.html + css/js 资产）：客户端「在线激活」跳转的落地页，
                 // 买家在支付前是匿名状态，必须与 /api/checkout/** 同批放行；页面自身无数据，仅静态资产。
                 // 注意不是 /api/checkout（接口已在上行放行）——少了这条，页面会被 anyRequest().denyAll() 拦成 401。
@@ -112,8 +114,10 @@ public class SecurityConfig {
                 // 校验的是同一份 security.admin-api-keys（纯冗余），故收敛为单 header、统一在此鉴权。
                 .requestMatchers("/api/admin/**").hasAuthority("ROLE_ADMIN")
                 .anyRequest().denyAll())
-            .exceptionHandling(ex -> ex.authenticationEntryPoint(
-                new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
+            // N3：401/403 也要返回可读 JSON（原 HttpStatusEntryPoint 只回空 body，页面只能显示兜底文案）
+            .exceptionHandling(ex -> ex
+                .authenticationEntryPoint(new JsonAuthenticationEntryPoint())
+                .accessDeniedHandler(new JsonAccessDeniedHandler()))
             .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class)
             // 用户令牌过滤器与 API Key 过滤器并列：各认各的凭证，任一命中即写入对应身份
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

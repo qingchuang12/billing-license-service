@@ -45,4 +45,13 @@ public record ApiResponse<T>(
     public static ApiResponse<Void> fail(String code, String message) {
         return new ApiResponse<>(false, code, message, null, null, LocalDateTime.now());
     }
+
+    /**
+     * 带 traceId 的失败响应（N2，2026-09-20）。
+     * 供 {@code GlobalExceptionHandler} 与鉴权入口点/拒绝处理器使用：它们自行生成 traceId，
+     * 不走 MDC，必须显式带入，否则故障排查时拿不到关联 ID。
+     */
+    public static ApiResponse<Void> fail(String code, String message, String traceId) {
+        return new ApiResponse<>(false, code, message, null, traceId, LocalDateTime.now());
+    }
 }

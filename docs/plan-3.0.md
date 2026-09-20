@@ -1,6 +1,7 @@
 # plan v3.0 · 上线验证 + 授权硬化（合并活动 plan）
 
-> 版本：v3.12（2026-09-19）· 唯一活动 plan。仓库内可改项已收口；剩余为决策 / 外部资源 / 跨仓任务。K8-billing 与 K16 已落地（见「已完成」）。
+> 版本：v3.13（2026-09-20）· 唯一活动 plan。仓库内可改项已收口；剩余为决策 / 外部资源 / 跨仓任务。K8-billing 与 K16 已落地（见「已完成」）。
+> **v3.13 追加（2026-09-20）**：N1-N5「错误提示回传修复」——用户报 `/account/`「设置密码并登录」恒报「操作失败，请稍后重试」。已确认根因（见「已完成」N1）。决策：**新邮箱不允许单独建号**，只有购买时由系统帮用户建号。
 > **v3.12 追加（2026-09-19）**：新增 U1-U3「用户密钥自助管理」（已确认：JWT 登录视角 / 证书+订阅+订单 / API+简单静态页）。
 > 当前状态：K8 支付页按新要求**迁入本服务**（与 API 同源），官网仅保留购买入口链接（交易页由本服务 `/checkout/` 托管，详见 `上线准备工作.md`）。
 > **2026-09-19 追记**：客户端侧激活联调完成（见「已完成」S1）；支付渠道（select-provider 的支付宝 INTERNAL_ERROR）**用户指示暂不处理**；`/checkout/**` 静态页放行已改 `SecurityConfig`，**待服务重启生效**。
@@ -13,11 +14,30 @@
 
 ## TODOS（仅未完成）
 
+- [ ] **N2 服务端：异常响应不再被二次包壳（`exception/GlobalExceptionHandler.java` + `dto/ApiResponse.java`）**
+      现状：全局异常处理器返回的是自拼 Map，被 `ApiResponseAdvice` 再包一层「成功壳」，真提示沉到 `data.message`，HTTP 状态虽是 400 但外层 `success=true`，第三方对接也会被误导。
+      做法：`ApiResponse` 补带 traceId 的 `fail(...)`；各 handler 改返回 `ResponseEntity<ApiResponse<Void>>`。`ApiResponseAdvice.beforeBodyWrite` 对 `body instanceof ApiResponse` 原样放行，不依赖 `supports()` 里那条已失效的包名判断。
+- [ ] **N3 鉴权：401 / 403 补统一 JSON 响应体（`security/` + `SecurityConfig`）**
+      现状：`anyRequest().denyAll()` 与无令牌访问受保护端点都返回空 body，客户端取不到任何提示。
+      做法：新增 authenticationEntryPoint（401）与 accessDeniedHandler（403），写 `ApiResponse.fail` JSON，结构与其他端点一致。
+- [ ] **N4 前端：错误提示兜底（`static/account/account.js` + `static/checkout/checkout.js`）**
+      做法：`buildApiError` 兼容 `payload.code || payload.errorCode`，message 兜底到内层 `payload.data.message`（防重演今日这类「结构变了就只报通用文案」）；401 单独给「登录状态已过期，请重新登录」。两页同改，口径一致。
+- [ ] **N5 文案与口径（后端 + 页面双语文案）**
+      已确认决策：**新邮箱不允许单独建号**，只有购买 / 兑换时由系统建号。
+      做法：`AccountService#resetPassword` 校验通过但查无此账户时，从伪装成 `CODE_INVALID` 改为明确错误码（如 `EMAIL_NOT_PURCHASED`）+ 文案「该邮箱名下暂无购买记录…」；`/account/` 页面去掉「未注册也能设置密码」的承诺（zh/en 字典与 index.html 静态兜底文案同步改）。
+- [ ] **N6 验证**：`mvn -o -B test` 全绿（新增契约测试：错误响应不得双层包裹、邮箱无购买记录的码）；静态资源同步 `target/classes` 后浏览器复测一次真实报错文案。
 - [ ] **K5 `update_until` / `max_major_version` 客户端不拦截（P2，待产品决策）**：客户端已解析两 claim 但未据此拦截——「硬阻断版本超范围」vs「仅作更新门控（updater）」，影响付费用户，需拍板。
 - [ ] **C5/C7 客户端离线 / 在线复核（跨仓，待产品决策）**：订阅到期 / 退款吊销延迟生效 vs 补在线复核端点，需拍板。
 - [ ] **C9 收银台读取产品 / 档位入口参数（跨仓，官网侧已就绪）**：官网产品区已按 `?product=ai-tools&productId=<sku>` 生成购买链接（SKU 与 `products.sku` 一致），但收银台页 `static/checkout/checkout.js` 的 `getQueryParams()` 目前仅消费 `machineId` / `checkoutId`，`init()`（约 L1704-1733）未读取产品参数 → 用户点档位后仍须在页内重新选档，"买哪个产品/档位"未被承接。需后端读取并预选：按 `item.sku === params.productId` 命中后写入 `state.product` 再 `renderPlanCards()`。多产品上线前必须补齐。
 
 ## 已完成（本 plan 收口）
+
+- **N1 错误提示全被吞的根因定位（2026-09-20，用户报 `/account/` 点「设置密码并登录」恒报「操作失败，请稍后重试」）**：
+  - **根因**：全局异常处理器 `GlobalExceptionHandler` 返回自拼 Map，被统一响应壳 `ApiResponseAdvice` **再包一层成功壳** —— HTTP 状态仍是 400，但响应体是 `{success:true, code:"SUCCESS", data:{success:false, errorCode:"CODE_INVALID", message:"验证码无效或已被使用"}}`。前端 `account.js` 只读顶层 `payload.message`（NON_NULL 下为 null）→ 取空 → 退回兜底文案 `操作失败，请稍后重试`。
+  - **已排除的猜测**：不是限流、不是 CSRF（`csrf.disable()`）、不是 SMTP；`@ExceptionHandler` 所在包名 `com.billing.license.exception` 含 `.exception.`，`ApiResponseAdvice.supports()` 里那条「异常包不包裹」的判断在 Spring Boot 4 下**对异常返回值不生效**（实测证据确凿），不能依赖它。
+  - **影响面（实测）**：所有 `GlobalExceptionHandler` 产出的错误（业务异常 / 参数校验 / 畸形 JSON）全部失真；此外 401/403/未知路径返回**空 body**，同样只能落到兜底文案。受影响的调用方不止本页（`checkout.js` 同写法）。
+  - **附带发现**：该按钮对「从未购买过的新邮箱」始终失败——`AccountService#resetPassword` 查无此账户直接抛 `CODE_INVALID`，与页面「未注册也能设置密码」的承诺相反（决策见 N5）。
+  - **副产物**：`/actuator/health` 与 liveness/readiness 探针实测均 HTTP 200，健康。
 
 - **U1-U3 用户密钥自助管理（2026-09-19，已确认范围：JWT 登录视角 / 证书+订阅+订单 / API+简单静态页）**：
   - **U1 API**：`GET /api/account/licenses|subscriptions|orders`（ROLE_USER，复用 `/api/account/**` 保护区，SecurityConfig 接口侧零改动）。新增 `AccountAssetService` + `AccountAssetController`（同挂 `/api/account` 前缀）；`CurrentUserResolver` 从 AccountController 提取共用；仓储新增三个按 customerId 时间倒序派生查询；新 DTO `SubscriptionView`（产品 SKU/名称批量解析防 N+1）；`LicenseResponse` 加 `machineCode`（加法改动，adminView 同步回填）。脱敏口径：licenseKey 完整回显、signedToken 不外发。

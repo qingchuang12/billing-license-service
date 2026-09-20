@@ -186,11 +186,16 @@ public class AccountService {
             throw new BusinessException("RESET_LIMIT", "找回密码操作过于频繁，请稍后再试");
         }
 
-        // 先校验验证码：邮箱未注册时同样落到 CODE_INVALID，不额外暴露「该邮箱是否存在」
+        // 先校验验证码：验证码本身错误仍落 CODE_INVALID
         verificationCodeService.verifyAndConsume(email, VerificationCode.CodePurpose.RESET_PASSWORD, code);
 
+        // N5（2026-09-20）：新邮箱不允许单独建号——账号只在购买/兑换时由系统创建。
+        // 此前查无账户伪装成 CODE_INVALID，与「验证码真的填错了」不可区分，
+        // 用户按页面「未注册也能设置密码」的承诺操作必然失败且拿不到真实原因（UI 恒显兜底文案）。
+        // 现改为明确错误码 + 指向下一步动作的文案；不泄露该邮箱是否有订单等敏感信息。
         User user = userRepository.findByEmail(email)
-            .orElseThrow(() -> new BusinessException("CODE_INVALID", "验证码无效或已被使用，请重新获取"));
+            .orElseThrow(() -> new BusinessException("EMAIL_NOT_PURCHASED",
+                "该邮箱名下暂无购买记录，请先使用该邮箱完成购买或兑换后再设置密码"));
         if (user.getStatus() != User.UserStatus.ACTIVE) {
             throw new BusinessException("ACCOUNT_DISABLED", "账号已被停用，请联系客服");
         }

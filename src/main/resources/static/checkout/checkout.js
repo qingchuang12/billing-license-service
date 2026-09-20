@@ -335,6 +335,10 @@
       'err.ENDPOINT_NOT_FOUND': '接口地址不存在，请检查服务端配置或稍后重试。',
       'err.INTERNAL_ERROR': '服务端出现异常，请稍后重试。',
       'err.ADMIN_UNAUTHORIZED': '未通过服务端鉴权，请联系管理员。',
+      'err.UNAUTHORIZED': '请求未通过服务端鉴权，请刷新页面或联系我们。',
+      'err.ACCESS_DENIED': '无权访问该接口，请刷新页面或联系我们。',
+      'err.MISSING_PARAMETER': '请求缺少必要参数，请刷新页面后重试。',
+      'err.METHOD_NOT_ALLOWED': '接口调用方式不正确，请刷新页面后重试。',
       'err.NETWORK': '网络连接失败，请检查网络后重试。',
       'err.TIMEOUT': '未检测到支付结果，已停止等待。若你已完成付款，请刷新本页重试，或联系 {{email}}。',
       'err.EXPIRED': '本次收银台会话已过期，请重新下单。',
@@ -470,6 +474,10 @@
       'err.ENDPOINT_NOT_FOUND': 'The API endpoint was not found. Check the server configuration or try later.',
       'err.INTERNAL_ERROR': 'The server hit an unexpected error. Please try again later.',
       'err.ADMIN_UNAUTHORIZED': 'Server authorization failed. Please contact the administrator.',
+      'err.UNAUTHORIZED': 'The request was not authorized. Please reload the page or contact us.',
+      'err.ACCESS_DENIED': 'Access to this endpoint is denied. Please reload the page or contact us.',
+      'err.MISSING_PARAMETER': 'The request is missing required parameters. Please reload and retry.',
+      'err.METHOD_NOT_ALLOWED': 'This endpoint was called incorrectly. Please reload and retry.',
       'err.NETWORK': 'Network connection failed. Please check your connection and retry.',
       'err.TIMEOUT': 'No payment result detected, so we stopped waiting. If you already paid, reload this page or contact {{email}}.',
       'err.EXPIRED': 'This checkout session has expired. Please start over.',
@@ -685,21 +693,30 @@
     });
   }
 
-  /** 把非 2xx 响应归一成 {status, code, message, traceId} */
+  /**
+   * 把非 2xx 响应归一成 {status, code, message, traceId}（N4）
+   * - code 兼容两种壳体：统一壳 `$.code` 与旧自拼体 `$.errorCode`（成功壳的 SUCCESS 不算错误码）
+   * - message 兜底到内层 `$.data.message`，防止「服务端结构一变就只剩通用文案」重演
+   */
   function buildApiError(status, payload, raw) {
-    var code = (payload && payload.errorCode) ? String(payload.errorCode) : defaultCodeFor(status);
+    var body = payload || {};
+    var rawCode = body.errorCode || (body.code && body.code !== 'SUCCESS' ? body.code : '');
+    var message = body.message
+      || (body.data && body.data.message)
+      || String(raw || '').slice(0, 200);
     return {
       kind: 'api',
       status: status,
-      code: code,
-      message: (payload && payload.message) ? String(payload.message) : String(raw || '').slice(0, 200),
-      traceId: (payload && payload.traceId) ? String(payload.traceId) : ''
+      code: rawCode ? String(rawCode) : defaultCodeFor(status),
+      message: String(message),
+      traceId: body.traceId ? String(body.traceId) : ''
     };
   }
 
   function defaultCodeFor(status) {
     if (status === 400) return 'VALIDATION_ERROR';
-    if (status === 401 || status === 403) return 'ADMIN_UNAUTHORIZED';
+    if (status === 401) return 'UNAUTHORIZED';
+    if (status === 403) return 'ACCESS_DENIED';
     if (status === 404 || status === 405) return 'ENDPOINT_NOT_FOUND';
     if (status >= 500) return 'INTERNAL_ERROR';
     return 'UNKNOWN';
@@ -1701,7 +1718,8 @@
 
   /** 用本地暂存的会话快照补全状态 */
   function hydrateFromSession(snapshot) {
-    if (snapshot.productId) {
+    // URL 参数（C9）优先级高于本地快照：用户是点了某个档位按钮才进来的，不该被上次的会话覆盖
+    if (snapshot.productId && !state.product) {
       state.product = products.filter(function (item) { return item.sku === snapshot.productId; })[0] || null;
     }
     if (snapshot.email) state.email = snapshot.email;
@@ -1737,6 +1755,12 @@
     // 先加载产品目录，再做初始化渲染与会话恢复
     fetchProducts().then(function (list) {
       products = Array.isArray(list) ? list : [];
+      // C9（2026-09-20）：官网产品区按钮携带 ?product=ai-tools&productId=<sku>，
+      // 命中即预选该档位——此前这两个参数没被消费，用户跳进来还得在页内重选一次。
+      var presetSku = String(params.productId || params.product || '').trim();
+      if (presetSku) {
+        state.product = products.filter(function (item) { return item.sku === presetSku; })[0] || null;
+      }
       applyLang(lang);
       renderMachineBox();
       renderSummary();
