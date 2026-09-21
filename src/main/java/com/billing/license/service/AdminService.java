@@ -15,6 +15,7 @@ import com.billing.license.service.notification.EmailNotificationService;
 import com.billing.license.service.payment.PaymentService;
 import com.billing.license.service.payment.impl.PaymentServiceFactory;
 import com.billing.license.service.payment.strategy.PaymentMethod;
+import com.billing.license.service.payment.strategy.PaymentStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
@@ -217,6 +218,11 @@ public class AdminService {
         order.setMetadata(appendMetadata(order.getMetadata(), "refundReason", reason));
         orderRepository.save(order);
 
+        // 退款流水：渠道退款成功后写入一条 REFUNDED 支付记录，使交易流水（Payment 表）
+        // 完整反映资金变动（此前退款只改订单状态、流水缺退款行）。与 markRefunded 同事务提交，
+        // 保证「状态 REFUNDED」与「流水有退款行」原子一致；同批失败则整体回滚、订单回到 PAID 供重试。
+        writeRefundPayment(order, method, channelPaymentId);
+
         if (order.getEmail() != null && !order.getEmail().isEmpty()) {
             // M5 修正：退款通知使用退款专用文案，不再复用「支付失败」模板
             emailNotificationService.sendRefundProcessedEmail(
@@ -225,6 +231,28 @@ public class AdminService {
 
         log.info("退款完成：orderNumber={}", orderNumber);
         return orderService.mapToResponse(order);
+    }
+
+    /**
+     * 写入一条 REFUNDED 支付流水（全额退款，与订单同币种）。
+     *
+     * <p>{@code payment_id} 唯一非空，不能复用原支付记录，故用 {@code REFUND-<orderId>-<时间戳>} 独立标识；
+     * {@code transactionId} 关联发起退款时使用的渠道交易号（{@code channelPaymentId}）以便追溯。
+     * {@code channel} 与 {@code method} 同源写入，对齐 {@code AccountingService.toView} 的展示口径。
+     */
+    private void writeRefundPayment(Order order, PaymentMethod method, String channelPaymentId) {
+        Payment refund = Payment.builder()
+                .orderIdStr(order.getId().toString())
+                .paymentId("REFUND-" + order.getId() + "-" + System.currentTimeMillis())
+                .transactionId(channelPaymentId)
+                .amount(order.getTotalAmount())
+                .currency(order.getCurrency())
+                .method(method)
+                .channel(method)
+                .status(PaymentStatus.REFUNDED)
+                .paidAt(LocalDateTime.now())
+                .build();
+        paymentRepository.save(refund);
     }
 
     /**

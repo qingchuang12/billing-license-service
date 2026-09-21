@@ -89,8 +89,7 @@ public class AccountingController {
 
     @Operation(summary = "交易流水明细",
             description = "每条支付记录一行（一次资金变动）。支持按渠道 / 状态 / 币种 / 时间过滤，带分页。"
-                    + "注意：当前退款只变更订单状态、不写 REFUNDED 支付记录，故退款不在此流水体现，"
-                    + "可经 overview/by-channel/by-product 的「已退款」维度查看。")
+                    + "管理端退款成功后会写入一条 REFUNDED 支付记录，故退款也在此流水体现（status=REFUNDED）。")
     @Audit(action = "VIEW_ACCOUNTING_TRANSACTIONS", target = "-")
     @GetMapping("/transactions")
     public ResponseEntity<Page<AccountTransactionView>> transactions(

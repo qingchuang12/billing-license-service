@@ -14,9 +14,11 @@ import com.billing.license.service.notification.EmailNotificationService;
 import com.billing.license.service.payment.PaymentService;
 import com.billing.license.service.payment.impl.PaymentServiceFactory;
 import com.billing.license.service.payment.strategy.PaymentMethod;
+import com.billing.license.service.payment.strategy.PaymentStatus;
 import com.billing.license.service.payment.strategy.PaymentStrategy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -141,6 +143,53 @@ class AdminServiceRefundTest {
         assertNotNull(license.getRevokedAt());
         // 退款通知已发送（M5 专用文案）
         verify(emailNotificationService).sendRefundProcessedEmail(eq("buyer@example.com"), eq("ORD-REF-1"), anyString());
+    }
+
+    @Test
+    void refundOrder_shouldWriteRefundedPayment_whenChannelSucceeds() {
+        Order order = paidOrder(PaymentMethod.STRIPE);
+        when(orderRepository.findByOrderNumber("ORD-REF-1")).thenReturn(Optional.of(order));
+        PaymentStrategy strategy = mock(PaymentStrategy.class);
+        when(strategy.refundPayment(any(), any(), any())).thenReturn(true);
+        when(paymentServiceFactory.getStrategy(PaymentMethod.STRIPE)).thenReturn(strategy);
+        when(licenseRepository.findByOrder(order)).thenReturn(List.of());
+        // 原支付记录：退款流水的 transactionId 应关联其 paymentId 以便追溯
+        Payment original = Payment.builder().paymentId("ch_real_abc123").build();
+        when(paymentRepository.findByOrderIdStr(order.getId().toString())).thenReturn(Optional.of(original));
+        when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
+        when(orderService.mapToResponse(any())).thenReturn(mock(OrderResponse.class));
+
+        adminService.refundOrder("ORD-REF-1", "用户申请");
+
+        // 退款成功后应写入一条 REFUNDED 支付流水，金额/币种与订单一致，channel/method 同源
+        ArgumentCaptor<Payment> captor = ArgumentCaptor.forClass(Payment.class);
+        verify(paymentRepository).save(captor.capture());
+        Payment refund = captor.getValue();
+        assertEquals(PaymentStatus.REFUNDED, refund.getStatus());
+        assertEquals(new BigDecimal("10.00"), refund.getAmount());
+        assertEquals(Currency.USD, refund.getCurrency());
+        assertEquals(PaymentMethod.STRIPE, refund.getChannel());
+        assertEquals(PaymentMethod.STRIPE, refund.getMethod());
+        assertEquals("ch_real_abc123", refund.getTransactionId());
+        assertEquals(order.getId().toString(), refund.getOrderIdStr());
+        assertTrue(refund.getPaymentId().startsWith("REFUND-"));
+    }
+
+    @Test
+    void refundOrder_shouldNotWritePayment_whenChannelFails() {
+        Order order = paidOrder(PaymentMethod.STRIPE);
+        when(orderRepository.findByOrderNumber("ORD-REF-1")).thenReturn(Optional.of(order));
+        PaymentStrategy strategy = mock(PaymentStrategy.class);
+        when(strategy.refundPayment(any(), any(), any())).thenReturn(false);
+        when(paymentServiceFactory.getStrategy(PaymentMethod.STRIPE)).thenReturn(strategy);
+        when(licenseRepository.findByOrder(order)).thenReturn(List.of());
+        when(paymentRepository.findByOrderIdStr(order.getId().toString())).thenReturn(Optional.empty());
+        when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
+
+        assertThrows(BusinessException.class, () -> adminService.refundOrder("ORD-REF-1", "用户申请"));
+
+        // 渠道退款失败：绝不能写入 REFUNDED 流水（钱没退成）
+        verify(paymentRepository, never()).save(any(Payment.class));
     }
 
     @Test
