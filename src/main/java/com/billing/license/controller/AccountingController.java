@@ -41,6 +41,10 @@ public class AccountingController {
 
     private static final int MAX_PAGE_SIZE = 200;
 
+    /** 单次查询最大时间跨度（天）。账务为低频运营查询且聚合在内存完成，
+     *  跨度过大会一次性拉全量记录进内存，故封顶一年（含闰年，366 天）。 */
+    private static final long MAX_RANGE_DAYS = 366;
+
     private final AccountingService accountingService;
 
     @Operation(summary = "收入总览",
@@ -151,6 +155,10 @@ public class AccountingController {
         LocalDateTime t = to != null ? to : now;
         if (f.isAfter(t)) {
             throw new BusinessException("INVALID_TIME_RANGE", "起始时间不能晚于结束时间");
+        }
+        if (java.time.Duration.between(f, t).toDays() > MAX_RANGE_DAYS) {
+            throw new BusinessException("TIME_RANGE_TOO_LARGE",
+                    "查询时间跨度不能超过 " + MAX_RANGE_DAYS + " 天，请缩小范围后重试");
         }
         return new LocalDateTime[]{f, t};
     }

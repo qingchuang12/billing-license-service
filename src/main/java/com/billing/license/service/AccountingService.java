@@ -181,7 +181,12 @@ public class AccountingService {
             jakarta.persistence.criteria.Path<LocalDateTime> createdAt = root.get("createdAt");
             ps.add(cb.between(createdAt, from, to));
             if (channel != null) {
-                ps.add(cb.equal(root.get("channel"), channel));
+                // 与 toView 展示口径对齐：展示取 channel，channel 为空时回退 method。
+                // 故过滤须匹配 channel = 目标，或（channel 为空且 method = 目标）的历史记录，
+                // 否则只有 method、channel 为空的存量支付会被漏掉却仍在列表按该渠道显示。
+                ps.add(cb.or(
+                        cb.equal(root.get("channel"), channel),
+                        cb.and(cb.isNull(root.get("channel")), cb.equal(root.get("method"), channel))));
             }
             if (status != null) {
                 ps.add(cb.equal(root.get("status"), status));

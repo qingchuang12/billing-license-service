@@ -1,6 +1,7 @@
 package com.billing.license.dto.accounting;
 
 import com.billing.license.entity.Currency;
+import com.billing.license.entity.PlanTier;
 import com.billing.license.entity.Product;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
@@ -34,7 +35,7 @@ public class AccountProductSummary {
     private String name;
 
     @Schema(description = "产品档位：PRO / PRO_PLUS", example = "PRO")
-    private Product.PlanTier tier;
+    private PlanTier tier;
 
     @Schema(description = "计费周期：ONE_TIME / MONTHLY / QUARTERLY / YEARLY / LIFETIME", example = "LIFETIME")
     private Product.BillingCycle billingCycle;
