@@ -19,6 +19,7 @@ import com.billing.license.service.payment.strategy.PaymentStrategy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -64,6 +65,9 @@ class AdminServiceRefundTest {
                 orderRepository, orderService, licenseRepository,
                 paymentServiceFactory, paymentService, emailNotificationService, paymentRepository,
                 customerIdentityService, userRepository);
+        // self 为 @Lazy 自注入代理，脱离 Spring 容器时为 null，直调 self.persistRefundFailed 会 NPE。
+        // 单测无事务，将 self 指向自身即可让 persistRefundFailed 正常执行（等价直调）。
+        ReflectionTestUtils.setField(adminService, "self", adminService);
     }
 
     private Order paidOrder(PaymentMethod provider) {

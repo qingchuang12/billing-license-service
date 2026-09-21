@@ -20,6 +20,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -52,6 +54,12 @@ public class AdminService {
 
     // i6：复用 ObjectMapper 构造 metadata JSON，避免手写拼接导致的转义/注入问题
     private static final ObjectMapper METADATA_MAPPER = new ObjectMapper();
+
+    // 自注入代理：使同类内 persistRefundFailed 的 @Transactional(REQUIRES_NEW) 经 AOP 代理生效
+    // （裸 this 自调用不走代理，REQUIRES_NEW 会失效）。非 final，不进 @RequiredArgsConstructor 构造函数。
+    @Autowired
+    @Lazy
+    private AdminService self;
 
     /**
      * 订单查询（I2 收敛）：支持按状态 / 订单号 / 订单 ID 过滤，三者全部留空即全量列表。
@@ -195,7 +203,7 @@ public class AdminService {
             // C8：退款失败态必须在独立事务（REQUIRES_NEW）中落库，否则随外层 @Transactional 回滚，
             // 导致 DB 永远 PAID、运营看不到待处理清单。内层提交后外层再抛异常回滚不影响已落库的失败态。
             try {
-                persistRefundFailed(order, reason);
+                self.persistRefundFailed(order, reason);
             } catch (Exception ex) {
                 log.error("标记退款失败态异常（内层事务）：orderNumber={}", orderNumber, ex);
             }
