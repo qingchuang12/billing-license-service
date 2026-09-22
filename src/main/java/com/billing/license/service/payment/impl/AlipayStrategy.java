@@ -362,7 +362,11 @@ public class AlipayStrategy implements PaymentStrategy {
             webhookPayload.setAmount(new BigDecimal(totalAmount != null ? totalAmount : "0"));
             webhookPayload.setCurrency("CNY");
             webhookPayload.setBuyerId(buyerId);
-            
+            // 支付宝异步通知唯一 ID（notify_id），用作幂等去重键。
+            // 退款通知与支付通知的 trade_no 相同，必须用 notify_id 区分，
+            // 否则退款通知会被支付事件的去重键拦截、License 永不吊销（资损）。
+            webhookPayload.setWebhookEventId(params.get("notify_id"));
+
             // 解析支付时间
             if (StringUtils.hasText(gmtPayment)) {
                 try {
@@ -378,7 +382,15 @@ public class AlipayStrategy implements PaymentStrategy {
             }
             
             // 转换状态
-            if ("TRADE_SUCCESS".equals(tradeStatus) || "TRADE_FINISHED".equals(tradeStatus)) {
+            // 支付宝异步退款结果通知（notify_type=refund）：其 trade_status 仍为原交易 SUCCESS，
+            // 必须按 notify_type/refund_status 判定，否则会被误判为支付成功而重复发货、且不会触发 License 吊销（资损）。
+            String notifyType = params.get("notify_type");
+            String refundStatus = params.get("refund_status");
+            if ("refund".equals(notifyType) || (refundStatus != null && !refundStatus.isEmpty())) {
+                // 退款成功（REFUND_SUCCESS）映射 REFUNDED 触发吊销；其余中间态（如 REFUND_PROCESSING）置 PENDING
+                webhookPayload.setStatus("REFUND_SUCCESS".equals(refundStatus)
+                        ? PaymentStatus.REFUNDED.name() : PaymentStatus.PENDING.name());
+            } else if ("TRADE_SUCCESS".equals(tradeStatus) || "TRADE_FINISHED".equals(tradeStatus)) {
                 webhookPayload.setStatus(PaymentStatus.SUCCESS.name());
             } else if ("TRADE_CLOSED".equals(tradeStatus)) {
                 webhookPayload.setStatus(PaymentStatus.CANCELLED.name());

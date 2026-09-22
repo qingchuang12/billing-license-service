@@ -217,6 +217,10 @@ public class StripeStrategy implements PaymentStrategy {
                     // 订阅的发票支付：由 invoice.paid 驱动，这里置空避免一次性分支重复发货
                     webhookPayload.setOrderId(null);
                     webhookPayload.setStatus(PaymentStatus.PENDING.name());
+                } else if ("charge.refunded".equals(eventType)) {
+                    // 退款事件：charge.refunded 携带 payment_intent 与 metadata.order_id，
+                    // 映射 REFUNDED 触发 License 吊销（与管理端退款同口径）；orderId/transactionId 已在上方从 charge 解析。
+                    webhookPayload.setStatus(PaymentStatus.REFUNDED.name());
                 }
             }
 

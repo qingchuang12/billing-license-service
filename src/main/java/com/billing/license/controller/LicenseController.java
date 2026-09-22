@@ -3,11 +3,13 @@ package com.billing.license.controller;
 import com.billing.license.dto.LicenseResponse;
 import com.billing.license.dto.UnbindRequest;
 import com.billing.license.service.LicenseService;
+import com.billing.license.service.risk.RateLimitService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -30,6 +32,7 @@ import org.springframework.web.bind.annotation.*;
 public class LicenseController {
     
     private final LicenseService licenseService;
+    private final RateLimitService rateLimitService;
     
     /**
      * 验证 License 有效性
@@ -43,7 +46,14 @@ public class LicenseController {
     })
     @GetMapping("/verify/{licenseKey}")
     public ResponseEntity<LicenseResponse> verifyLicense(
-            @Parameter(description = "License 密钥", required = true) @PathVariable String licenseKey) {
+            @Parameter(description = "License 密钥", required = true) @PathVariable String licenseKey,
+            HttpServletRequest request) {
+        // C4：公开端点频控——防止高频遍历 licenseKey（探测存在性 / license_event 表无界增长）
+        try {
+            rateLimitService.checkLicenseVerify(request.getRemoteAddr());
+        } catch (RateLimitService.RateLimitExceededException e) {
+            return ResponseEntity.status(429).<LicenseResponse>build();
+        }
         return ResponseEntity.ok(licenseService.verifyLicense(licenseKey));
     }
 

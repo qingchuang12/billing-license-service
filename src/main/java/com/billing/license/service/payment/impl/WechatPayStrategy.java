@@ -414,6 +414,12 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
 
             String eventType = root.has("event_type") ? root.get("event_type").asText() : "";
             webhookPayload.setEventType(eventType);
+            // 微信回调通知唯一 ID（顶层 id），用作幂等去重键。
+            // 退款通知（REFUND.SUCCESS）与支付通知（TRANSACTION.SUCCESS）的 transaction_id 相同，
+            // 必须用通知 id 区分，否则退款通知会被支付事件去重、License 永不吊销（资损）。
+            if (root.has("id")) {
+                webhookPayload.setWebhookEventId(root.get("id").asText());
+            }
 
             JsonNode resource = root.has("resource") ? root.get("resource") : null;
 
@@ -453,7 +459,11 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
                     webhookPayload.setTimestamp(System.currentTimeMillis());
                 }
 
-                if ("SUCCESS".equals(tradeState)) {
+                // 微信退款结果通知（event_type=REFUND.SUCCESS）：resource 内为退款单、无 trade_state，
+                // 必须映射 REFUNDED 才能触发 License 吊销，否则会落入上面 trade_state 缺失分支被误判为 FAILED。
+                if ("REFUND.SUCCESS".equals(eventType)) {
+                    webhookPayload.setStatus(PaymentStatus.REFUNDED.name());
+                } else if ("SUCCESS".equals(tradeState)) {
                     webhookPayload.setStatus(PaymentStatus.SUCCESS.name());
                 } else if ("NOTPAY".equals(tradeState)) {
                     webhookPayload.setStatus(PaymentStatus.PENDING.name());

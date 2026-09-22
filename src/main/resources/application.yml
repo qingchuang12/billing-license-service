@@ -110,9 +110,9 @@ payment:
   # 本地联调值放项目根 .env，生产用真实开放平台应用值（网关 https://openapi.alipay.com/gateway.do）。
   alipay:
     # 开放平台应用 ID（AppID）
-    app-id: ${ALIPAY_APP_ID:9021000150680771}
+    app-id: ${ALIPAY_APP_ID:}
     # 商户应用私钥（RSA2，PKCS8），用于下单请求签名
-    private-key: ${ALIPAY_PRIVATE_KEY:MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCVNbKBzEEkMD43DmunOfCWqvXSbELoa5cuMeYYHcT0bSr4VrM9GqB0Oi2BbUUtzp6U8dfR2ddtIsFF0fktRvTI9vqsP0GVKgBF2fN7cpqBYOSS/FZSCpA44cvCkGPe7Xp6ZHOos+r5zuVA+URS8Yi3EK6NZLnqQoDj/JLSFA1Nl3f4f1TzUvu28lbkfG/D5rJ01HEmcDx90DvoXqtpD3V995CpIHxbfJR5WWNde0RYBAMJMWvMCSkhKPL7DuQmeAwNem8BFjvUYw3BabyffffS5SNKfQCD7uaXhweBEriKNIIFYv6SZL10QGKxvQalFGCXULdAVTass+Rdw/z+/WqZAgMBAAECggEAAqSt4eDFcqesInuN6qt7GKA0tKKYWNe3GOlnYxv75jyc20Nl73ouR4DUV4uhAxu68XaLVTtftp48AEmk+WldYsYFUNHaDpNs58/hoVk5ZXta8UOpH9DyFx/g5TR7oHJijhKDfgSZ8Az7QLhpvnJq8ptIDFcxd/XvpJpP24rhZXN3VNl7SaEfHjVnj5Ug10VbLIGgZhe9lhNrsdl0rDtJh/1j58HAbhuHottEb855eUlmjcwkjoKzNeV/JqzNZFM8Ux8vsYf7l50ROvIMujo4ZA/Fo+fds3aJkV5TZw24OuegGogwtQ74zgjjtcGez+PzfoYnS7DVXcP5A3kmySCFkQKBgQD8Q+c1cvvMChrgRD3FmlnHWoDppO3T9ih0A1W+kr/e+ltv4OjaoP7ACFl9z71Tl5dNeQ/sHD/4fshaeASt6779+80Xq9dtSVq04Iz2wrvokeyBQEX6Lxs1v7IztW7+l1oJ3GIZ/r3j8bbv9N6Xvj907fLPYyC7J6NbDH3yvd7/VQKBgQCXazWHjXr2fjN2aIblKwzuOFu1boQFyVzcj+OLqnC3FkJoaXpm4toOIIndYQAHS5ZrNgNuyN3CCFAMPH2Esvot9nFn7sjP9IGoCO58J4TYSYjnyfAcTwqWn9kROy915afAq3l0ES/PXY91PcnNKbH/LmfeMkoUMaQZbQUn9dxWNQKBgHvQQBzFsLw2gXZtR/xCg6oKy5bhcjFEchpuwJjmofGo41QICYG03xQVhQbw/TWYA5TsxFnYi7VFVMTCf1l1iapS+hiSKQvkovZ/9+/tKBk/9dqCV1Yx5KL+0VH7zNx8IJ8SYbvsgfrs2iLwBohnwfF8EF6lgp0ZGV5IxVBszJR5AoGAN8wD372c8DQ1Fo8SFmS00Rvnf4YIFHHNTGGhghf+jRkgw4UK29sAa3BGHVPfRNDvzvYKccqHHTce+ENaJYomcsV7qMbvLOJ23MrdxtZxN5pxXqilWGkwB61DufvLU3CbTn5htQmYSpu5f4STVozk0JnzIIf7kFFynQP1gHIzDXkCgYEA85hB4G/pz54M0kXYhWSAjYgQFGewXuDSDGapAaNiWXq+zUoHOXGYHynKIdcrSbY9uenNxxDZyRNPpKYfUn2Iq2I5YHAjlPX154bg8oKfdo5GICSjqSfnnUF/GBBCOkEksValK+Ye1VRzHsgq/mnVquUa6Ah4twDD/cpa2fktoE0=}
+    private-key: ${ALIPAY_PRIVATE_KEY:}
     # 支付宝公钥，用于异步通知验签（**不是**商户应用公钥，勿填错）。
     # 必须是「支付宝公钥」纯 RSA 公钥：base64 以 MIIBIjANBgkq 开头、单行、无换行与空格。
     # 切勿填 X.509 公钥证书（以 MIID 开头）——本工程走 AlipaySignature.rsaCheckV1（纯公钥模式），
@@ -196,7 +196,7 @@ payment:
 account:
   # 用户令牌签名密钥（HS256，对称）：**无默认值**，缺失即启动失败（fail-fast）。
   # K10（2026-09-18）：原先内联的 base64 默认值已移出仓库；本地/生产均在 .env 或环境变量注入。
-  jwt-secret: ${ACCOUNT_JWT_SECRET:i3fak1VGOg2DYk8irHAOcljE9E13TECYVA91NOhYaIleBsSTAyR7WFo/9wuL2S/x}
+  jwt-secret: ${ACCOUNT_JWT_SECRET}
   # 令牌有效期（小时），默认 7 天
   token-ttl-hours: ${ACCOUNT_TOKEN_TTL_HOURS:168}
   # 注册是否强制邮箱验证码（联调期可临时置 false）
@@ -238,7 +238,7 @@ security:
   # 管理端密钥：**无默认值**，缺失即启动失败。多个密钥用英文逗号分隔。
   # K10（2026-09-18）：原先内联的 64 位默认值已移出仓库（注释自 2026-09-16 起即声明 fail-fast，
   # 但实际仍有默认值，属语义自相矛盾）；本地/联调值见项目根目录 .env，测试值见 application-test.yml。
-  admin-api-keys: ${ADMIN_API_KEYS:a44e2f9260a01791f013e64a67fa144acca56c9c00e9594ecaa84f4d3a2576aa}
+  admin-api-keys: ${ADMIN_API_KEYS}
 
 # 应用对外基址
 app:

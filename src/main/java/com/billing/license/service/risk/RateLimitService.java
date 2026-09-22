@@ -34,6 +34,10 @@ public class RateLimitService {
     private static final long EVICT_AFTER_MS = 60 * 60_000L; // 1 小时无活动即回收
     private static final int EVICT_THRESHOLD = 4096;          // 超过该条目数才触发，避免每次调用 O(n)
 
+    /** 公开 verify 端点频控：单 IP 每分钟上限（保守默认，后续可下沉到 BillingProperties 配置） */
+    private static final int VERIFY_MAX_PER_MIN = 60;
+    private static final int VERIFY_WINDOW_MIN = 1;
+
     /**
      * 检查某 key 在窗口内的事件数是否超过 max；
      * 超过则抛出异常（由调用方捕获转为 BusinessException）。
@@ -122,6 +126,14 @@ public class RateLimitService {
             throw new RateLimitExceededException("redeem-fail", ip, count, risk.getRedeemFailureMax());
         }
         return count;
+    }
+
+    /**
+     * 公开 verify 端点频控：防止攻击者高频遍历 licenseKey（探测某 key 是否存在 / license_event 表无界增长）。
+     * 按客户端 IP 限流，保守默认每分钟上限，待配置化后再提升。
+     */
+    public int checkLicenseVerify(String ip) {
+        return checkAndCount("license-verify", ip, VERIFY_MAX_PER_MIN, VERIFY_WINDOW_MIN);
     }
 
     /** 限流触发异常 */
