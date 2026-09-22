@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- 站点仅提供浅色主题：显式声明可避免浏览器自动暗色反色 -->
+  <meta name="color-scheme" content="light">
+  <meta name="robots" content="noindex, nofollow">
+  <title>管理统计 · 晏宁科技 Yaning Labs</title>
+  <meta name="description" content="平台账务统计查看（内部）：收入总览、分渠道/分产品统计、交易流水、趋势与对账差异。">
+  <meta name="theme-color" content="#4C5B61">
+
+  <!-- 有脚本时才启用隐藏态/动效的初始状态：无脚本环境下内容照常可见 -->
+  <script>document.documentElement.classList.add('js');</script>
+  <!-- 设计体系与收银台同源复用（design tokens + 通用组件）；页面专属样式见 admin.css -->
+  <link rel="stylesheet" href="../checkout/checkout.css">
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <!-- ======================= 顶部导航（精简版，与收银台同构） ======================= -->
+  <header class="site-header">
+    <div class="container site-header__inner">
+      <a class="brand" href="https://www.ywhome.top">
+        <span class="brand__name">晏宁科技</span>
+      </a>
+
+      <div class="site-header__actions">
+        <a class="btn btn--ghost btn--sm" href="https://www.ywhome.top">返回首页</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="admin" id="main">
+    <div class="container admin__inner">
+      <p class="admin__eyebrow">管理后台</p>
+      <h1 class="admin__title">平台账务统计</h1>
+      <p class="admin__sub">收入总览、分渠道 / 分产品统计、交易流水、时间趋势与对账差异（仅查询）。数据接口需管理 API Key。</p>
+
+      <noscript>
+        <p class="noscript-note">
+          本页面需要启用 JavaScript 才能查询。
+        </p>
+      </noscript>
+
+      <!-- ======================= 解锁卡片（未提供 Key 时显示） ======================= -->
+      <div class="panel auth-panel" id="authPanel">
+        <h2 class="panel__title">输入管理 API Key</h2>
+        <p class="panel__desc">Key 与管理接口（<code class="mono">X-API-Key</code>）同一份配置，仅在本机浏览器中保存，不会发送到其他服务。</p>
+
+        <form id="unlockForm" novalidate>
+          <div class="field">
+            <label class="field__label" for="keyInput">管理 API Key</label>
+            <input class="field__input" type="password" id="keyInput" name="key"
+                   autocomplete="off" spellcheck="false" placeholder="粘贴管理 API Key" required>
+          </div>
+          <div class="field field--check">
+            <label class="check-label">
+              <input type="checkbox" id="rememberKey" checked>
+              <span>记住本机（关闭浏览器后仍保留）</span>
+            </label>
+          </div>
+          <p class="form-error" id="authError" hidden></p>
+          <button class="btn btn--primary" type="submit" id="unlockBtn">进入</button>
+        </form>
+      </div>
+
+      <!-- ======================= 主视图（解锁后显示） ======================= -->
+      <div id="mainPanel" hidden>
+
+        <!-- 用户栏：解锁状态与退出 -->
+        <div class="userbar">
+          <p class="userbar__note">已解锁 · Key 保存在本机<span id="keyScopeNote"></span></p>
+          <button class="linklike" type="button" id="lockBtn">清除 Key 并退出</button>
+        </div>
+
+        <!-- 工具栏：时间范围 -->
+        <div class="panel toolbar-panel">
+          <div class="toolbar">
+            <div class="toolbar__range">
+              <div class="field">
+                <label class="field__label" for="fromInput">起始时间</label>
+                <input class="field__input" type="datetime-local" id="fromInput">
+              </div>
+              <div class="field">
+                <label class="field__label" for="toInput">结束时间</label>
+                <input class="field__input" type="datetime-local" id="toInput">
+              </div>
+              <button class="btn btn--primary" type="button" id="applyRange">查询</button>
+            </div>
+            <div class="toolbar__presets" role="group" aria-label="快捷时间范围">
+              <button class="chip" type="button" data-preset="today">今天</button>
+              <button class="chip" type="button" data-preset="7d">近 7 天</button>
+              <button class="chip" type="button" data-preset="30d">近 30 天</button>
+              <button class="chip" type="button" data-preset="month">本月</button>
+            </div>
+          </div>
+          <p class="form-error" id="rangeError" hidden></p>
+        </div>
+
+        <!-- 分区导航 -->
+        <nav class="tabs" id="tabs" aria-label="统计分区">
+          <button class="tabs__item is-active" type="button" data-tab="overview" aria-selected="true">收入总览</button>
+          <button class="tabs__item" type="button" data-tab="channel" aria-selected="false">分渠道</button>
+          <button class="tabs__item" type="button" data-tab="product" aria-selected="false">分产品</button>
+          <button class="tabs__item" type="button" data-tab="transactions" aria-selected="false">交易流水</button>
+          <button class="tabs__item" type="button" data-tab="trend" aria-selected="false">趋势</button>
+          <button class="tabs__item" type="button" data-tab="discrepancies" aria-selected="false">对账差异</button>
+        </nav>
+
+        <!-- 各分区面板（同一时间只显示一个） -->
+        <section class="panel data-panel" id="panel-overview" hidden>
+          <h2 class="panel__title">收入总览</h2>
+          <p class="panel__desc" id="overviewRangeNote"></p>
+          <p class="data-error" id="overviewError" hidden></p>
+          <div class="table-wrap" id="overviewTableWrap" hidden></div>
+          <p class="empty-note" id="overviewEmpty" hidden>该区间暂无订单数据。</p>
+        </section>
+
+        <section class="panel data-panel" id="panel-channel" hidden>
+          <h2 class="panel__title">分渠道统计</h2>
+          <p class="panel__desc">按支付渠道 × 币种汇总；历史订单无渠道时归入「未知渠道」。</p>
+          <p class="data-error" id="channelError" hidden></p>
+          <div class="table-wrap" id="channelTableWrap" hidden></div>
+          <p class="empty-note" id="channelEmpty" hidden>该区间暂无渠道数据。</p>
+        </section>
+
+        <section class="panel data-panel" id="panel-product" hidden>
+          <h2 class="panel__title">分产品统计</h2>
+          <p class="panel__desc">按产品 × 币种汇总，金额取自订单明细，按订单级支付状态归类。</p>
+          <p class="data-error" id="productError" hidden></p>
+          <div class="table-wrap" id="productTableWrap" hidden></div>
+          <p class="empty-note" id="productEmpty" hidden>该区间暂无产品数据。</p>
+        </section>
+
+        <section class="panel data-panel" id="panel-transactions" hidden>
+          <h2 class="panel__title">交易流水</h2>
+          <p class="panel__desc">每条支付记录一行（一次资金变动）；管理端退款成功也会写入 REFUNDED 流水。</p>
+          <div class="tx-filters">
+            <div class="field">
+              <label class="field__label" for="txChannel">渠道</label>
+              <select class="field__input" id="txChannel">
+                <option value="">全部</option>
+                <option value="ALIPAY">支付宝</option>
+                <option value="WECHAT_PAY">微信支付</option>
+                <option value="STRIPE">Stripe</option>
+                <option value="PADDLE">Paddle</option>
+                <option value="PAYPAL">PayPal</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="field__label" for="txStatus">状态</label>
+              <select class="field__input" id="txStatus">
+                <option value="">全部</option>
+                <option value="SUCCESS">成功</option>
+                <option value="REFUNDED">已退款</option>
+                <option value="FAILED">失败</option>
+                <option value="PENDING">待处理</option>
+                <option value="CANCELLED">已取消</option>
+                <option value="UNKNOWN">未知</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="field__label" for="txCurrency">币种</label>
+              <input class="field__input" type="text" id="txCurrency" placeholder="USD / CNY" autocomplete="off" spellcheck="false">
+            </div>
+            <button class="btn btn--ghost" type="button" id="txApply">筛选</button>
+          </div>
+          <p class="data-error" id="txError" hidden></p>
+          <div class="table-wrap" id="txTableWrap" hidden></div>
+          <p class="empty-note" id="txEmpty" hidden>该条件下暂无流水记录。</p>
+          <div class="pager" id="txPager" hidden>
+            <button class="btn btn--ghost btn--sm" type="button" id="txPrev">上一页</button>
+            <span class="pager__info" id="txPageInfo"></span>
+            <button class="btn btn--ghost btn--sm" type="button" id="txNext">下一页</button>
+          </div>
+        </section>
+
+        <section class="panel data-panel" id="panel-trend" hidden>
+          <h2 class="panel__title">收入趋势</h2>
+          <div class="tx-filters">
+            <div class="field">
+              <label class="field__label" for="trendGranularity">分桶粒度</label>
+              <select class="field__input" id="trendGranularity">
+                <option value="MONTH">按月</option>
+                <option value="DAY">按日</option>
+              </select>
+            </div>
+            <button class="btn btn--ghost" type="button" id="trendApply">刷新</button>
+          </div>
+          <p class="data-error" id="trendError" hidden></p>
+          <div class="table-wrap" id="trendTableWrap" hidden></div>
+          <p class="empty-note" id="trendEmpty" hidden>该区间暂无趋势数据。</p>
+        </section>
+
+        <section class="panel data-panel" id="panel-discrepancies" hidden>
+          <h2 class="panel__title">对账差异</h2>
+          <p class="panel__desc">订单与支付记录状态 / 金额不一致的疑点，按发现时间倒序；无输出即账实相符。</p>
+          <p class="data-error" id="discError" hidden></p>
+          <div class="table-wrap" id="discTableWrap" hidden></div>
+          <p class="empty-note" id="discEmpty" hidden>未发现对账差异。</p>
+        </section>
+
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p class="form-note">内部页面，请勿外传链接；接口鉴权：X-API-Key（ROLE_ADMIN）。</p>
+    </div>
+  </footer>
+
+  <script src="admin.js"></script>
+</body>
+</html>

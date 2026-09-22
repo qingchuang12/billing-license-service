@@ -33,27 +33,31 @@ public class BillingLicenseApplication {
     }
 
     /**
-     * 启动完成后打印 Swagger / OpenAPI 文档访问地址。
+     * 启动完成后打印管理入口访问地址。
      *
      * <p>K11/K12（2026-09-18）：端口回退值由 8080 改为 8000（与 `server.port` 一致——原值会让启动日志里的
-     * 地址与实际监听端口不符）；生产 profile 已关闭 springdoc，此时不再打印这套地址以免误导运维。
+     * 地址与实际监听端口不符）；生产 profile 已关闭 springdoc，文档地址不再打印以免误导运维。
+     *
+     * <p>2026-09-22：打印管理统计页（{@code /admin/}，Web 查看页）地址而非接口地址——页面自身
+     * 无数据（静态资产 GET 放行），数据接口仍需 X-API-Key + ROLE_ADMIN。该地址不依赖 springdoc，
+     * 生产 profile 下同样打印。
      *
      * @param env Spring 环境变量，用于读取文档开关与端口
      * @return CommandLineRunner
      */
     @Bean
-    public CommandLineRunner swaggerLogRunner(Environment env) {
+    public CommandLineRunner adminEntryLogRunner(Environment env) {
         return args -> {
-            if (!env.getProperty("springdoc.api-docs.enabled", Boolean.class, true)) {
-                return;
-            }
             String port = env.getProperty("server.port", "8000");
             String contextPath = env.getProperty("server.servlet.context-path", "");
             String baseUrl = "http://localhost:" + port + contextPath;
 
             log.info("========================================");
-            log.info("  Swagger UI:      {}/swagger-ui.html", baseUrl);
-            log.info("  OpenAPI JSON:    {}/v3/api-docs", baseUrl);
+            if (env.getProperty("springdoc.api-docs.enabled", Boolean.class, true)) {
+                log.info("  Swagger UI:      {}/swagger-ui.html", baseUrl);
+                log.info("  OpenAPI JSON:    {}/v3/api-docs", baseUrl);
+            }
+            log.info("  Admin console:   {}/admin/", baseUrl);
             log.info("========================================");
         };
     }
