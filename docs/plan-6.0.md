@@ -85,21 +85,25 @@ users.role VARCHAR(16) NOT NULL DEFAULT 'USER'   -- USER / ADMIN
 ### 需开发（服务端）
 - [ ] A6 管理员降权/停用时 `tokenVersion + 1` 立即踢下线（依赖角色变更入口，目前尚无该入口）
 - [x] A7 首个管理员的初始化手段（运维 SQL 直改，见 `scripts/db/promote-to-admin.sql`）
-- [ ] A8 统一 `@Audit` 的操作主体口径（区分 api-key 机器调用 vs 真人 userId）
-- [ ] A11 编译/回归验证：本机无 mvn，须经 IDEA MCP 执行 `mvn test`，确认 A1–A5 改动零编译错误
+- [x] A8 统一 `@Audit` 的操作主体口径 —— 已由 A12 落地：`AuditAspect.resolveActor` 改为优先
+      `@Audit(actor=)`，否则取 SecurityContext principal（userId），不再依赖 X-API-Key。
+- [x] A11 编译/回归验证 —— 已完成（2026-09-23）：经 IDEA MCP `mvn -B test` 全量
+      `Tests run: 219, Failures: 0, Errors: 0, Skipped: 0` + BUILD SUCCESS；安全/鉴权专项 14 例通过。
 - [x] A12 移除 X-API-Key 通道（B2 已拍板「移除」，2026-09-23 全部落地）：① 删 `ApiKeyAuthFilter.java`；② `SecurityConfig` 去注入/注册/CORS header + 更新注释；③ `application.yml`/`application-test.yml` 删 `admin-api-keys`/`api-key-header`；④ `AuditAspect` 去 X-API-Key 回退、统一 userId（解 A8）；⑤ `OpenApiConfig` scheme 改 Bearer + `requiresApiKey` 改；⑥ `OpenApiCustomizerTest` 断言改 Bearer；⑦ 前端 `/admin` 改 JWT 登录（吸收 A9/A10 最小集）；⑧ `README`/`接口调用时序图`/`上线准备工作` 的 X-API-Key 描述与 curl 示例全改 JWT；⑨ 操作类脚本同步：`docker-compose.yml`/`scripts/deploy/up.sh`/`scripts/deploy/run.sh`/`scripts/README.md` 去除 `ADMIN_API_KEYS` 依赖与 fail-fast 断言，`AccountProperties.java` 注释清理，`架构与业务流程设计.md` 补 A12 历史注记
 
 ### 需开发（前端）
 - [x] A9/A10 管理控制台登录（**吸收进 A12 最小集**：邮箱密码登录拿 JWT → 存证 → 请求带 `Authorization: Bearer` → 401 跳登录；完整控制台体验完善不再单列）
 
 ### 需决策（阻塞，需川哥拍板）
-- [ ] B1 `ADMIN` 是否同时授予 `ROLE_USER`（推荐：是，否则管理员无法自助登出/改密）——
-      **代码已按推荐项实现**（ADMIN 同时获 ROLE_USER + ROLE_ADMIN，见 `JwtAuthFilter`），待你确认；
-      若不认可，删掉其中一个 authority 即可回退。
+- [x] B1 `ADMIN` 是否同时授予 `ROLE_USER` —— **已拍板：是**（川哥 2026-09-23「这是常识」）。
+      ADMIN 同时获 `ROLE_USER + ROLE_ADMIN`（`JwtAuthFilter`），故可自助登出/改密；
+      已同步修正 `SecurityConfig` 中「管理员不放行 /api/account/**」的陈旧注释。
 - [x] B2 X-API-Key 是否保留？**已拍板：移除**（川哥 2026-09-23）。理由：B3 已落地、管理员账号可由运维 SQL 产生，JWT(ADMIN) 已能授 ROLE_ADMIN，X-API-Key 成冗余且更弱的管理员凭证（无法单个停用/改密/降权、审计主体割裂）。落地见 A12。
 - [x] B3 首个管理员的产生方式（运维 SQL 直改，川哥 2026-09-22 拍板；脚本见 `scripts/db/promote-to-admin.sql`）
 - [ ] B4 管理员是否强制更强口令策略 / 是否要求二次因子（MFA）
-- [ ] B5 管理员能否使用消费侧能力（查看/购买、我的许可证），还是严格限定只进管理端
+- [x] B5 管理员能否使用消费侧能力 —— **已拍板：能使用**（川哥 2026-09-23）。
+      B1 兼授 `ROLE_USER` 后管理员天然可访问 `/api/account/**`（我的许可证/订单/订阅）与公开端点，
+      无需额外改动。
 
 ### 待核实
 - [x] C1 现有集成测试与部署脚本对 X-API-Key 的依赖面，改造时需同步调整的范围（已全量排查并清除：`docker-compose.yml`/`scripts/deploy/{up,run}.sh`/`scripts/README.md` 的 `ADMIN_API_KEYS` 依赖与 fail-fast 断言已移除；仓库内无残留操作脚本依赖该变量）

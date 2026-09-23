@@ -105,9 +105,10 @@ public class SecurityConfig {
                     "/api/account/register",
                     "/api/account/login",
                     "/api/account/password/reset").permitAll()
-                // 其余账号端点（登出 / me / 改密）需用户令牌。
-                // 说明：管理员 JWT 不放行这些端点 —— 它们全部依赖「当前用户」上下文
-                // （principal 为 userId），管理端诉求走 /api/admin/**。
+                // 其余账号端点（登出 / me / 改密 / 我的许可证·订单）需用户令牌。
+                // 管理员因兼授 ROLE_USER（plan-6.0 / B1）同样通过本规则，即管理员可使用消费侧能力
+                // （B5：能使用）。这些端点依赖「当前用户」上下文（principal 为 userId），管理员 ID
+                // 本身即合法 userId，无歧义；管理端专属动作仍走下方 /api/admin/**（ROLE_ADMIN）。
                 .requestMatchers("/api/account/**").hasAuthority("ROLE_USER")
                 // 管理端与全部管理动作统一要求 ROLE_ADMIN；管理员账号登录后持 JWT（由 JwtAuthFilter
                 // 按 DB 现查角色授权）即获此权限。X-API-Key 通道已于 plan-6.0 / A12 移除。
