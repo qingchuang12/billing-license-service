@@ -21,7 +21,8 @@ import java.util.UUID;
 
 /**
  * 用户令牌鉴权过滤器（plan v2.10 / A2），与 {@link ApiKeyAuthFilter} <b>并列</b>而非互斥：
- * 两过滤器各认各的凭证，任一命中即写入对应身份（{@code ROLE_USER} / {@code ROLE_ADMIN}）。
+ * 两过滤器各认各的凭证，任一命中即写入对应身份。用户令牌按 {@code users.role} 授予（plan-6.0）：
+ * 消费者为 {@code ROLE_USER}；管理员为 {@code ROLE_USER + ROLE_ADMIN}。角色不写进 JWT，每请求现查。
  *
  * <p><b>只认 {@code Authorization: Bearer <token>}</b>，且仅此一处读取令牌。
  *
@@ -76,8 +77,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 log.debug("令牌版本失效（已登出/改密）：userId={}", userId);
                 return;
             }
-            var auth = new UsernamePasswordAuthenticationToken(
-                userId.toString(), null, AuthorityUtils.createAuthorityList("ROLE_USER"));
+            // A3（plan-6.0）：按 DB 现查的角色授予权限（角色不写进 JWT，降权即时生效）。
+            // ADMIN 同时授予 ROLE_USER —— 否则管理员调不了 /api/account/** 下的登出与改密，
+            // 那两个端点要求 ROLE_USER，只会 ROLE_ADMIN 的管理员连自助登出都做不到。
+            var authorities = user.getRole() == User.UserRole.ADMIN
+                ? AuthorityUtils.createAuthorityList("ROLE_USER", "ROLE_ADMIN")
+                : AuthorityUtils.createAuthorityList("ROLE_USER");
+            var auth = new UsernamePasswordAuthenticationToken(userId.toString(), null, authorities);
             SecurityContextHolder.getContext().setAuthentication(auth);
         } catch (ExpiredJwtException e) {
             log.debug("令牌已过期");

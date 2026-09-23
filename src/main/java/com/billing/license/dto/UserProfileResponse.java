@@ -37,6 +37,10 @@ public class UserProfileResponse {
             example = "ACTIVE", allowableValues = {"ACTIVE", "DISABLED"})
     private String status;
 
+    @Schema(description = "角色：USER=普通消费者 / ADMIN=管理员（plan-6.0 统一登录）",
+            example = "USER", allowableValues = {"USER", "ADMIN"})
+    private String role;
+
     @Schema(description = "注册时间（ISO-8601，无时区）", example = "2026-09-15T01:30:00")
     private LocalDateTime createdAt;
 
@@ -49,6 +53,7 @@ public class UserProfileResponse {
             .email(user.getEmail())
             .emailVerified(user.isEmailVerified())
             .status(user.getStatus() != null ? user.getStatus().name() : null)
+            .role(user.getRole() != null ? user.getRole().name() : null)
             .createdAt(user.getCreatedAt())
             .lastLoginAt(user.getLastLoginAt())
             .build();

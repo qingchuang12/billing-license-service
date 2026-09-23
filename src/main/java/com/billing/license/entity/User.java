@@ -44,6 +44,18 @@ public class User {
     @Builder.Default
     private UserStatus status = UserStatus.ACTIVE;
 
+    /**
+     * 角色：决定登录后获得的权限域（plan-6.0 统一登录）。
+     *
+     * <p><b>刻意不写入 JWT</b>：由 {@code JwtAuthFilter} 每请求从 DB 现查（该过滤器本就要查 User
+     * 校验 status 与 tokenVersion，零额外成本）。这样管理员被降权/停用时可<b>即时生效</b>，
+     * 并复用既有的 {@code tokenVersion + 1} 令其已签发令牌立即失效。
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private UserRole role = UserRole.USER;
+
     @Column(name = "email_verified", nullable = false)
     @Builder.Default
     private boolean emailVerified = false;
@@ -99,5 +111,13 @@ public class User {
         ACTIVE,
         /** 已停用（管理员操作），不可登录 */
         DISABLED
+    }
+
+    /** 角色：决定登录后可访问的权限域（plan-6.0 统一登录）。 */
+    public enum UserRole {
+        /** 普通消费者：仅 ROLE_USER，可访问 /api/account/** */
+        USER,
+        /** 管理员：ROLE_USER + ROLE_ADMIN，可访问 /api/admin/**（与 X-API-Key 通道并行） */
+        ADMIN
     }
 }

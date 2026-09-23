@@ -36,7 +36,7 @@
       'nav.home': '返回首页',
       'account.eyebrow': '我的授权',
       'account.title': '我的授权管理',
-      'account.sub': '查看购买/兑换时所用邮箱名下的 License 证书、订阅与订单。',
+      'account.sub': '查看购买/兑换时所用邮箱名下的许可证、订阅与订单。',
       'auth.loginTitle': '登录查看我的授权',
       'auth.loginDesc': '使用购买或兑换时填写的邮箱登录；当时未注册的邮箱，可用「设置密码」认领账户。',
       'auth.emailLabel': '电子邮箱',
@@ -60,9 +60,9 @@
       'err.network': '网络异常，请稍后重试',
       'err.generic': '操作失败，请稍后重试',
       'err.sessionExpired': '登录状态已过期，请重新登录',
-      'license.title': '我的证书（License）',
-      'license.desc': '激活软件所用的密钥；点击「复制」后粘贴到客户端激活框。',
-      'license.key': '密钥',
+      'license.title': '我的许可证（License）',
+      'license.desc': '激活软件所用的许可证；点击「复制」后粘贴到客户端激活框。',
+      'license.key': '许可证',
       'license.product': '产品',
       'license.status': '状态',
       'license.issuedAt': '签发时间',
@@ -126,8 +126,8 @@
       'err.invalidCredentials': 'Incorrect email or password',
       'err.emailNotPurchased': 'No purchase found for this email. Please buy or redeem first',
       'license.title': 'My Licenses',
-      'license.desc': 'Keys used to activate the software; click "Copy" and paste into the activation box.',
-      'license.key': 'Key',
+      'license.desc': 'Licenses used to activate the software; click "Copy" and paste into the activation box.',
+      'license.key': 'License',
       'license.product': 'Product',
       'license.status': 'Status',
       'license.issuedAt': 'Issued',
@@ -597,7 +597,7 @@
       setFormError('codeError', '');
     });
 
-    // 复制密钥（事件委托：表格行由脚本渲染）
+    // 复制许可证（事件委托：表格行由脚本渲染）
     document.addEventListener('click', function (event) {
       var btn = event.target.closest('[data-copy]');
       if (!btn) return;

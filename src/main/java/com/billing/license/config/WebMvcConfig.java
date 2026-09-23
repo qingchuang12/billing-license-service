@@ -24,5 +24,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
         registry.addViewController("/checkout/").setViewName("forward:/checkout/index.html");
         registry.addViewController("/account").setViewName("forward:/account/index.html");
         registry.addViewController("/account/").setViewName("forward:/account/index.html");
+        // 管理统计页（2026-09-22）：同源缺陷——只放行 /admin/** 时目录路径仍会 500，
+        // 与 /checkout、/account 一并 forward（启动日志打印的是 /admin/ 目录形式）。
+        registry.addViewController("/admin").setViewName("forward:/admin/index.html");
+        registry.addViewController("/admin/").setViewName("forward:/admin/index.html");
     }
 }

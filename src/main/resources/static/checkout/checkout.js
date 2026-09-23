@@ -203,7 +203,7 @@
   var I18N = {
     zh: {
       'meta.title': '获取 AI-Tools 授权 · 晏宁科技 Yaning Labs',
-      'meta.desc': '选择 AI-Tools 的 Pro / Pro Plus 授权档位并完成支付，即时获取 License 授权令牌或兑换码。',
+      'meta.desc': '选择 AI-Tools 的 Pro / Pro Plus 授权档位并完成支付，即时获取许可证或兑换码。',
 
       'a11y.skip': '跳到主要内容',
       'a11y.langSwitch': '切换语言：当前为中文，点击切换为英文',
@@ -213,7 +213,7 @@
 
       'checkout.eyebrow': '获取授权',
       'checkout.title': '获取 AI-Tools 授权',
-      'checkout.sub': '选择授权档位并完成支付，即可获得 License 授权令牌或兑换码；支持 Pro / Pro Plus 买断与订阅。',
+      'checkout.sub': '选择授权档位并完成支付，即可获得许可证或兑换码；支持 Pro / Pro Plus 买断与订阅。',
       'checkout.formTitle': '填写下单信息',
 
       'steps.choose': '选择档位',
@@ -277,13 +277,13 @@
       'done.pendingHint': '授权凭证暂未生成，通常几分钟内即可完成。若长时间未到账，请联系 {{email}} 并提供订单号。',
       'done.orderLabel': '订单号',
       'done.licenseTitle': '授权成功',
-      'done.licenseHint': '已为当前设备签发 License，请将下方授权令牌填入 AI-Tools 客户端即可使用。',
-      'done.licenseStep': '在 AI-Tools 客户端中打开「授权 / License」页面，粘贴上述令牌并保存。',
+      'done.licenseHint': '已为当前设备签发 License，请将下方许可证填入 AI-Tools 客户端即可使用。',
+      'done.licenseStep': '在 AI-Tools 客户端中打开「授权 / License」页面，粘贴上述许可证并保存。',
       'done.redeemTitle': '支付成功',
       'done.redeemHint': '请复制下方兑换码，在 AI-Tools 客户端中兑换激活。',
       'done.redeemStep1': '打开 AI-Tools 客户端的「授权 / License」页面，选择「使用兑换码」。',
       'done.redeemStep2': '粘贴兑换码并确认，客户端会自动绑定当前设备并完成授权。',
-      'done.copyLicense': '复制授权令牌',
+      'done.copyLicense': '复制许可证',
       'done.copyCode': '复制兑换码',
       'done.copied': '已复制到剪贴板',
       'done.copyFailed': '复制失败，请手动选中内容复制。',
