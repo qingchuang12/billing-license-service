@@ -90,6 +90,15 @@ billing:
   # 仅在确知前方是可信代理（如本服务的 ingress/gateway）时置 true。
   trust-x-forwarded-for: ${BILLING_TRUST_XFF:false}
   support-email: ${SUPPORT_EMAIL:service@ywhome.top}
+  # 自助退款策略（plan-4.1）：用户端按 License 剩余有效期**线性折算**退款额（可能构成部分退款）。
+  # 可退窗口即 License 有效期本身——权益到期即不可退；故此处不设「支付后 N 天」的申请窗口。
+  refund:
+    # 可退下限（订单币种）：折算额低于此值不开放自助退款，避免小额退款叠加渠道手续费反而倒亏
+    min-amount: ${BILLING_REFUND_MIN_AMOUNT:1.00}
+    # 同一用户退款申请频控：窗口内上限（防刷与探测）
+    user-refund-max: ${BILLING_REFUND_USER_MAX:5}
+    # 退款频控窗口（分钟）
+    user-refund-window-minutes: ${BILLING_REFUND_USER_WINDOW_MINUTES:60}
 
 # 支付渠道配置
 # 说明：多渠道可「同时启用并存」，互不冲突。下单时由客户端传入的 provider 决定走哪个渠道
@@ -231,6 +240,23 @@ account:
     reset-window-minutes: ${ACCOUNT_RESET_WINDOW_MINUTES:60}
     change-password-user-max: ${ACCOUNT_CHANGE_PWD_USER_MAX:3}
     change-password-window-minutes: ${ACCOUNT_CHANGE_PWD_WINDOW_MINUTES:60}
+  # 二次因子（MFA，plan-7.0 / M3）：管理员在管理台自助开启
+  mfa:
+    # 主密钥（≥32 字节）：**无默认值**，缺失即启动失败（fail-fast）。
+    # 用途：派生「票据签名密钥」与「TOTP 密钥加密密钥」两个互不相关的子密钥。
+    # ⚠️ 轮换本变量会使已绑定的 TOTP 密钥无法解密，需用 scripts/db/reset-admin-mfa.sql 重新绑定。
+    key: ${ACCOUNT_MFA_KEY}
+    # 一次性登录票据有效期（秒）：仅覆盖「输完动态码」这一小段时间，故取短值
+    ticket-ttl-seconds: ${ACCOUNT_MFA_TICKET_TTL_SECONDS:300}
+    # TOTP 时间步长与容错（±N 步，补偿时钟偏差；RFC 6238 §5.2 建议最多容忍 1 步）
+    totp-step-seconds: ${ACCOUNT_MFA_TOTP_STEP_SECONDS:30}
+    totp-window-steps: ${ACCOUNT_MFA_TOTP_WINDOW_STEPS:1}
+    # 单张票据允许的动态码校验失败次数，达限即作废票据
+    verify-fail-max: ${ACCOUNT_MFA_VERIFY_FAIL_MAX:5}
+    # 邮箱验证码兜底（恢复路径）。档次低于 TOTP（邮箱与登录标识同源），可按需关闭
+    email-fallback-enabled: ${ACCOUNT_MFA_EMAIL_FALLBACK_ENABLED:true}
+    # 认证器 App 中显示的签发者名
+    issuer: ${ACCOUNT_MFA_ISSUER:BillingLicenseService}
 
 # 应用对外基址
 app:

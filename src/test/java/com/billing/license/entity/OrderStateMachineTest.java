@@ -50,9 +50,22 @@ class OrderStateMachineTest {
         assertFalse(o.canFulfill());
     }
 
+    /**
+     * plan-4.1：部分退款只改 paymentStatus，status 保持 PAID。
+     * 这样既精确表达「退了一部分」，又让 canFulfill() 仍为 false，阻断重复发货。
+     */
     @Test
-    void markRefundFailed_keepsPaid_andNeverMarksRefunded() {
+    void markPartiallyRefunded_setsPaymentStatusOnly_andKeepsFulfillBlocked() {
         Order o = fresh();
+        o.markPaid();
+        o.markPartiallyRefunded();
+        assertEquals(Order.PaymentStatus.PARTIALLY_REFUNDED, o.getPaymentStatus());
+        assertEquals(Order.OrderStatus.PAID, o.getStatus());
+        assertFalse(o.canFulfill());
+    }
+
+    @Test
+    void markRefundFailed_keepsPaid_andNeverMarksRefunded() {        Order o = fresh();
         o.markPaid();
         o.markRefundFailed();
         // H4：退款渠道失败，内部置失败态，但支付状态保持 PAID（钱未退）

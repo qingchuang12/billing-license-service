@@ -3,7 +3,7 @@
 > 本目录是 billing-license-service 所有**运维脚本、构建/部署、数据库迁移**的统一入口。
 > 项目尚未上线，脚本以「可读、可直接执行、无占位死代码」为原则。
 > **上线执行手册见 [`../docs/上线准备工作.md`](../docs/上线准备工作.md)**（含渠道配置、密钥生成实测命令、上线当天清单）。
-> 当前活动计划见 [`../docs/plan-3.0.md`](../docs/plan-3.0.md)。
+> 当前活动计划见 [`../docs/plan-7.0.md`](../docs/plan-7.0.md)。
 
 ## 目录结构
 
@@ -21,24 +21,19 @@
 （`application.yml` 中 `spring.flyway.enabled=true`，`locations=classpath:db/migration`）。
 **无需手动执行 SQL**；重新部署即自动增量迁移。
 
-### 迁移清单（V1–V11，禁止合并、禁止首次部署后修改）
+### 迁移清单（V1–V7，禁止合并、禁止首次部署后修改）
 
 | 版本 | 主题 | 关键内容 |
 |---|---|---|
-| V1 | 初始库表 | `products` / `orders` / `order_items` / `licenses` / `redeem_codes` / `payment_transactions` / `payments` |
-| V2 | 收银台与事件 | `checkout_sessions`、`license_events`、`payment_events` 表 |
-| V3 | 换机重发审计 | `licenses.machine_code` / `reissued_from` / `revoked_at` |
-| V4 | 三档产品模型（B16） | `products.tier` / `features`，四类种子（Pro/Pro Plus × 买断/订阅） |
-| V5 | 订阅制（B18） | `subscriptions` 表（托管 Paddle/Stripe 生命周期对账） |
-| V6 | 双币种定价（B19） | `products.price_cny` / `price_usd`，按区域取价；回填（USD 沿用 price，CNY 示例汇率 7.2） |
-| V7 | Webhook 幂等与轮询冷却 | `payment_events(provider, event_id)` 唯一约束（并发重复投递由 DB 原子去重）+ `checkout_sessions.last_compensated_at`（`getStatus` 轮询冷却窗口） |
-| V8 | 审计日志 | `audit_logs` 表（方案 B：`@Audit` 注解 + `AuditAspect` 异步独立事务落库） |
-| V9 | License 状态语义 | 删除 `licenses.activated_at`；状态 ACTIVE/EXPIRED/REVOKED/REISSUED 语义固定 |
-| V10 | 账号体系（v2.10） | `users` + `verification_codes` 表 |
-| V11 | 产品更新门槛（A3） | `products.update_until_days` / `max_major_version`（买断默认 730 天/大版本 1） |
+| V1 | 全量基线 | 14 张核心表：`products` / `orders` / `order_items` / `licenses` / `redeem_codes` / `payment_transactions` / `payments` / `checkout_sessions` / `license_events` / `payment_events` / `audit_logs` / `users` / `verification_codes` / `machine_first_seen`；历史增量序列（档位 / 订阅 / 双币种 / 账号 / 审计等，原 V2–V11）已按注释分段并入本文件 |
+| V2 | 产品文案双语化（K16 延伸） | `products.name_en` / `description_en` |
+| V3 | 产品权益键改名 | `feature.api_access` → `cloud_sync` |
+| V4 | 账务统计索引 | `orders` / `payments` 的 `created_at` 时间范围查询索引 |
+| V5 | 统一登录用户角色（plan-6.0 / A1） | `users.role`（管理员判定） |
+| V6 | 管理员 MFA（plan-7.0 / B8） | `users` 增二次因子四列（详见 `V6__users_mfa.sql`） |
+| V7 | 机器「已转正」标记（plan-7.0 / D3，B7 = B） | `machine_first_seen.converted_at`（NULL = 未转正；首次置位后不回收） |
 
-> ⚠️ **迁移文件一经首次部署即被 Flyway 校验和锁定**：之后不得再编辑内容（增列请新建 Vx+1）。
-> V11 已入库（`e785a8a`），**同样受校验和保护**——即使它从未在真实库执行过，也不可再改文件。
+> ⚠️ **迁移文件一经首次部署即被 Flyway 校验和锁定**：之后不得再编辑内容（变更请新建版本号，下一个可用 **V8**）。
 > 上线前如需补充头注释可直接修改；上线后修改会导致启动失败。
 
 查看已执行迁移：
@@ -119,12 +114,14 @@ docker compose logs -f app
 |---|---|
 | `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | 数据库连接（`DB_PASSWORD` 无默认值，缺失即启动失败，fail-fast） |
 | `ACCOUNT_JWT_SECRET` / `ACCOUNT_CODE_PEPPER` | 用户令牌签名密钥（≥32B）/ 验证码哈希 pepper（生产必配）；管理端鉴权复用同一账号体系（管理员 JWT） |
-| `MAIL_PASSWORD` | SMTP 口令（无默认值）；`MAIL_HOST` / `MAIL_PORT` / `MAIL_USERNAME` 有默认值 |
+| `ACCOUNT_MFA_KEY` | 二次因子主密钥（≥32B，**无默认值，缺失即拒启**）：派生半认证票据签名密钥与 TOTP 密钥加密密钥（B8）。轮换前须先跑 `db/reset-admin-mfa.sql` |
 | `MAIL_PASSWORD` | SMTP 口令（无默认值）；`MAIL_HOST` / `MAIL_PORT` / `MAIL_USERNAME` 有默认值 |
 | `APP_BASE_URL` | 对外基址，用于拼接各渠道回调/回跳地址（**无默认值，缺失即拒启**） |
 | `PAYMENT_ENABLED_CHANNELS` | 启用的支付渠道（逗号分隔；留空=按各渠道配置齐全度自动启用） |
 | `SPRING_PROFILES_ACTIVE` | `docker`（默认，schema 护栏）/ `prod`（关 Swagger、强制真发邮件）/ `prod,docker` |
 | `BILLING_TRUST_XFF` | 置于可信反代之后时置 `true`，否则限流会把所有用户当成同一 IP |
+| `BILLING_REFUND_MIN_AMOUNT` | 自助退款可退下限（订单币种，默认 `1.00`）；折算额低于此值不开放自助退款 |
+| `BILLING_REFUND_USER_MAX` / `BILLING_REFUND_USER_WINDOW_MINUTES` | 自助退款频控（同一用户，默认 5 次 / 60 分钟） |
 | `PRIVATE_KEY_PATH` / `PUBLIC_KEY_PATH` | 签名密钥路径（默认 `/keys/private.key` / `/keys/public.key`；本地可用 `./keys/*.key` 相对路径） |
 | `BILLING_LICENSE_KID` | 签发用的 kid（默认 `license-key-1`）；轮换时改新值并保留旧 kid 公钥（见下方轮换流程） |
 | `ACCOUNT_CODE_LOG_ONLY` | 验证码只写日志（仅联调兜底）；**生产必须 `false`**（prod profile 已强制） |

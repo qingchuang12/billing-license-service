@@ -23,6 +23,10 @@ public @interface Audit {
     /** 补充信息（SpEL），如 "#reason"；默认 "" */
     String detail() default "";
 
-    /** 常量 actor 覆盖（特殊场景，如客户端自吊销填 "client"）；默认空 → 从请求头密钥哈希推导 */
+    /**
+     * 常量 actor 覆盖（特殊场景，如客户端自吊销填 "client"）；
+     * 默认空 → 取 {@code SecurityContext} 的登录主体（JWT 的 userId），未登录记为 "anonymous"。
+     * 注：A12（2026-09-23）移除 X-API-Key 通道后，不再有「从请求头密钥哈希推导」的路径。
+     */
     String actor() default "";
 }

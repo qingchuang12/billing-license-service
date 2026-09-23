@@ -174,6 +174,7 @@
                   <th data-i18n="order.status">订单状态</th>
                   <th data-i18n="order.payment">支付状态</th>
                   <th data-i18n="order.createdAt">下单时间</th>
+                  <th data-i18n="order.action">操作</th>
                 </tr>
               </thead>
               <tbody id="orderBody"></tbody>
@@ -181,6 +182,37 @@
           </div>
           <p class="empty-note" id="orderEmpty" hidden data-i18n="common.empty">暂无记录</p>
         </section>
+      </div>
+
+      <!-- 退款确认弹层（plan-4.1）：原因输入 + 明示「退款将吊销该订单全部 License」 -->
+      <div class="modal" id="refundModal" hidden>
+        <div class="modal__backdrop" id="refundBackdrop"></div>
+        <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="refundTitle">
+          <h2 class="modal__title" id="refundTitle" data-i18n="refund.title">申请退款</h2>
+          <p class="modal__desc" id="refundDesc"></p>
+          <div class="field">
+            <label class="field__label" for="refundReason" data-i18n="refund.reasonLabel">退款原因（可选）</label>
+            <textarea class="field__input modal__textarea" id="refundReason" rows="3" maxlength="200"></textarea>
+          </div>
+          <p class="form-error" id="refundError" role="alert" hidden></p>
+          <div class="modal__actions">
+            <button class="btn btn--ghost" id="refundCancelBtn" type="button" data-i18n="refund.cancel">取消</button>
+            <button class="btn btn--primary" id="refundConfirmBtn" type="button" data-i18n="refund.confirm">确认退款</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal" id="unbindModal" hidden>
+        <div class="modal__backdrop" id="unbindBackdrop"></div>
+        <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="unbindTitle">
+          <h2 class="modal__title" id="unbindTitle" data-i18n="unbind.title">释放设备绑定</h2>
+          <p class="modal__desc" id="unbindDesc"></p>
+          <p class="form-error" id="unbindError" role="alert" hidden></p>
+          <div class="modal__actions">
+            <button class="btn btn--ghost" id="unbindCancelBtn" type="button" data-i18n="unbind.cancel">取消</button>
+            <button class="btn btn--primary" id="unbindConfirmBtn" type="button" data-i18n="unbind.confirm">确认解绑</button>
+          </div>
+        </div>
       </div>
 
       <!-- 屏幕阅读器状态播报区 -->

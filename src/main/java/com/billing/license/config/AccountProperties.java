@@ -53,6 +53,54 @@ public class AccountProperties {
 
     private Risk risk = new Risk();
 
+    /** 二次因子（MFA）配置（plan-7.0 / M1，B8 定案） */
+    private Mfa mfa = new Mfa();
+
+    /**
+     * 二次因子（MFA）配置。
+     *
+     * <p><b>为什么只有一个密钥 {@code key}</b>：MFA 需要两个互相隔离的密钥——票据签名密钥与
+     * TOTP 密钥加密密钥——若让运维各配一个，是两份额外的部署负担。这里改为用同一个主密钥
+     * 经 HMAC-SHA256 派生两个<b>互不相关</b>的子密钥（见 {@code MfaKeyDeriver}），
+     * 既满足密钥隔离（一处泄漏不波及另一用途），运维也只多配一个环境变量。
+     *
+     * <p><b>fail-fast</b>：{@code key} 不设默认值，缺失或过短即启动失败——与
+     * {@code jwt-secret} 同风格。宁可升级时明确报错，也不要留下「看似正常、实则密钥缺失」
+     * 的中间态（那种状态下 MFA 要么不可用、要么降级为明文存储）。
+     */
+    @Data
+    public static class Mfa {
+
+        /**
+         * MFA 主密钥（≥32 字节）；派生票据签名密钥与 TOTP 密钥加密密钥。
+         * 不设默认值，缺失即启动失败（环境变量 {@code ACCOUNT_MFA_KEY}）。
+         */
+        private String key;
+
+        /** 一次性登录票据有效期（秒）。短时效——票据只是「密码已通过」的临时凭证 */
+        private int ticketTtlSeconds = 300;
+
+        /** TOTP 时间步长（秒），RFC 6238 标准值为 30 */
+        private int totpStepSeconds = 30;
+
+        /** TOTP 校验允许的时间步容错（前后各 N 步），补偿客户端与服务器的时钟偏差 */
+        private int totpWindowSteps = 1;
+
+        /** 单张票据允许的动态码校验失败次数，达限即作废票据（6 位码空间仅 10^6） */
+        private int verifyFailMax = 5;
+
+        /**
+         * 是否允许邮箱验证码作为兜底因子（恢复路径）。
+         *
+         * <p><b>默认开启但档次低于 TOTP</b>：邮箱与登录标识同源，其「因子独立性」弱于
+         * 独立的认证器设备。关闭后，认证器丢失只能走运维脚本 {@code reset-admin-mfa.sql}。
+         */
+        private boolean emailFallbackEnabled = true;
+
+        /** otpauth URI 的 issuer 展示名（认证器 App 中显示） */
+        private String issuer = "BillingLicenseService";
+    }
+
     /**
      * 账号风控阈值。
      *

@@ -1,20 +1,18 @@
 package com.billing.license.service;
 
+import com.billing.license.config.BillingProperties;
 import com.billing.license.dto.LicenseResponse;
 import com.billing.license.dto.OrderResponse;
 import com.billing.license.dto.SubscriptionView;
-import com.billing.license.entity.Product;
-import com.billing.license.entity.Subscription;
-import com.billing.license.entity.User;
+import com.billing.license.entity.*;
 import com.billing.license.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.UUID;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -39,6 +37,8 @@ public class AccountAssetService {
     private final ProductRepository productRepository;
     private final UserRepository userRepository;
     private final OrderService orderService;
+    /** plan-4.1：退款折算下限（billing.refund.min-amount），用于订单列表的退款入口显隐 */
+    private final BillingProperties billingProperties;
 
     /** 本人名下 License 列表，签发时间倒序。 */
     @Transactional(readOnly = true)
@@ -73,11 +73,38 @@ public class AccountAssetService {
             .toList();
     }
 
-    /** 本人名下订单列表，下单时间倒序；映射复用 {@link OrderService}（AdminService 同口径）。 */
+    /**
+     * 本人名下订单列表，下单时间倒序；映射复用 {@link OrderService}（AdminService 同口径）。
+     *
+     * <p>plan-4.1：额外回填 {@code refundable} / {@code refundableAmount}，作为前端
+     * 「申请退款」按钮的显隐依据与金额提示。按订单**批量**取 License（防 N+1），
+     * 再交给 {@link RefundPolicy} 折算；管理端列表不填这两个字段（口径隔离）。
+     */
     @Transactional(readOnly = true)
     public List<OrderResponse> listMyOrders(UUID userId) {
-        return orderRepository.findByCustomerIdOrderByCreatedAtDesc(userId).stream()
-            .map(orderService::mapToResponse)
+        List<Order> orders = orderRepository.findByCustomerIdOrderByCreatedAtDesc(userId);
+        if (orders.isEmpty()) {
+            return List.of();
+        }
+
+        // 按订单归组；兑换码签发的 License 无订单（order 为 null），必须跳过，
+        // 否则分组时空指针——它们本就不属于任何订单，无「订单退款」语义。
+        Map<UUID, List<License>> licensesByOrder = licenseRepository
+            .findByOrderIdIn(orders.stream().map(Order::getId).toList()).stream()
+            .filter(license -> license.getOrder() != null && license.getOrder().getId() != null)
+            .collect(Collectors.groupingBy(license -> license.getOrder().getId()));
+
+        LocalDateTime now = LocalDateTime.now();
+        BigDecimal minAmount = billingProperties.getRefund().getMinAmount();
+        return orders.stream()
+            .map(order -> {
+                OrderResponse response = orderService.mapToResponse(order);
+                Optional<RefundPolicy.Quote> quote = RefundPolicy.quote(
+                    order, licensesByOrder.getOrDefault(order.getId(), List.of()), now, minAmount);
+                response.setRefundable(quote.isPresent());
+                quote.ifPresent(q -> response.setRefundableAmount(q.amount()));
+                return response;
+            })
             .toList();
     }
 

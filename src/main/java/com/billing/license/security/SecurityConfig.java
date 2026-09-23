@@ -28,8 +28,10 @@ import java.util.List;
  * 3. 管理端与全部管理动作（/api/admin/**：订单签发/退款、License 作废/换机、兑换码生成/撤销）
  *    必须由管理员账号登录后持 JWT（ROLE_ADMIN）访问，否则 401。
  * 4. 鉴权模型共两档（plan-6.0 / A12）：公开 / 用户（Authorization: Bearer JWT → ROLE_USER；管理员账号登录后额外获 ROLE_ADMIN）。X-API-Key 通道已于 2026-09-23 移除。
- *    账号公开端点（发码、注册、登录、找回密码）逐条 permitAll 并声明在 /api/account/** 之前，
+ *    账号公开端点（发码、注册、登录、找回密码、二次因子校验）逐条 permitAll 并声明在 /api/account/** 之前，
  *    其余账号端点需 ROLE_USER；管理端由同一 JwtAuthFilter 按 DB 现查角色授权（管理员账号额外获 ROLE_ADMIN），权限域严格隔离。
+ *    其中「二次因子校验」两个端点属**半认证**（plan-7.0 / M3）：无访问令牌而持一次性票据，
+ *    permitAll 是必需的形态，把关在方法内（票据由独立派生密钥签名，见 MfaTicketService）。
  * 5. 其余一切请求默认拒绝（denyAll），避免遗漏暴露。
  * 6. 无状态（STATELESS）+ 关闭 CSRF（纯 API、令牌鉴权，无浏览器会话，CSRF 不适用）。
  * 7. H9：CORS 按配置白名单开放（默认不开放跨域），仅在部署独立前端域名时显式配置。
@@ -76,7 +78,14 @@ public class SecurityConfig {
                 .requestMatchers("/v3/api-docs", "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 // 公开端点：收银台、支付回调、License 在线校验、兑换码兑换、公开产品目录
                 .requestMatchers("/api/webhooks/**", "/api/checkout/**", "/api/products/**",
-                    "/api/licenses/verify/**", "/api/redeem/redeem").permitAll()
+                    "/api/licenses/verify/**", "/api/redeem/redeem",
+                    // plan-7.0 方案 A：激活端点「可选鉴权」——兑换码分支匿名可调，
+                    // 许可证密钥分支的「必须登录」在 CredentialBindingService 内判定（不靠本行拦截）。
+                    // 放行是必要的：若改 hasAuthority(ROLE_USER)，匿名兑换能力会被一并封掉。
+                    "/api/licenses/activate",
+                    // plan-7.0 / D2：客户端「自动上报绑定」——凭 signedToken 验签证明归属（E1 = ①），
+                    // 无需登录，故必须放行；真伪与归属由方法内「验签 + 授权状态」把关。
+                    "/api/licenses/report-binding").permitAll()
                 // C8：机器码首次出现时间查询（客户端首跑 / 兑换前联网问一次，用于把试用起点回溯到
                 // 服务端最早见到这台机器的时间，堵住「删档重装再领一次试用」）。
                 // 只读、无 PII：机器码是硬件派生的随机串，响应只有两个时间戳。
@@ -97,6 +106,14 @@ public class SecurityConfig {
                 // /account/** 同口径放行。同样不是 /api/admin（接口在下方按 ROLE_ADMIN 保护）。
                 // B8：同样仅放行 GET。页面含 noindex 头，且所有数据仍需管理员 JWT 才能取到。
                 .requestMatchers(HttpMethod.GET, "/admin/**").permitAll()
+                // plan-7.0 / M3：二次因子的两个「半认证」端点。此刻调用者还没有访问令牌，
+                // 只有一枚「密码已通过」的一次性票据，故必须放行——若要求 ROLE_USER，
+                // 未过第二因子者永远拿不到令牌，形成死锁（与登录端点同坑）。
+                // 真正的把关是方法内的票据校验（MfaTicketService 用独立派生密钥签名）。
+                // ⚠️ 必须声明在下方 /api/account/** 规则**之前**：Spring Security 取首个匹配规则。
+                .requestMatchers(HttpMethod.POST,
+                    "/api/account/mfa/challenge",
+                    "/api/account/mfa/verify").permitAll()
                 // v2.10 账号公开端点：**必须逐条声明在 /api/account/** 之前**。
                 // Spring Security 按声明顺序取首个匹配规则，若把宽松的 /api/account/** 写在前面，
                 // 登录接口也会要求令牌 —— 未登录用户永远拿不到令牌，形成死锁。

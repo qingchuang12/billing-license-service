@@ -77,6 +77,35 @@ public class User {
     @Column(name = "last_login_at")
     private LocalDateTime lastLoginAt;
 
+    // ==================== 二次因子（plan-7.0 / M1，B8 定案） ====================
+
+    /**
+     * TOTP 密钥<b>密文</b>（AES-256-GCM，Base64(iv||ct||tag)）；{@code null} 表示从未生成。
+     *
+     * <p><b>不可明文存储</b>：与密码哈希不同，TOTP 密钥是<b>可逆秘密</b>——泄漏即等于对方能
+     * 永久生成有效动态码。加密密钥由 {@code account.mfa-key} 派生，不复用 token 签名密钥。
+     */
+    @Column(name = "mfa_secret_cipher")
+    private String mfaSecretCipher;
+
+    /**
+     * 是否已启用二次因子。<b>登录只认本列</b>（不认密钥是否存在），
+     * 故「已生成密钥但未完成激活」的中间态不会把管理员锁在门外。
+     */
+    @Column(name = "mfa_enabled", nullable = false)
+    @Builder.Default
+    private boolean mfaEnabled = false;
+
+    @Column(name = "mfa_enrolled_at")
+    private LocalDateTime mfaEnrolledAt;
+
+    /**
+     * 最近一次成功校验的 TOTP 时间步（{@code epochSecond / stepSeconds}），用于防重放
+     * （RFC 6238 §5.2）：同一时间步的 6 位码只能用一次，堵住「截获后在 30 秒窗口内重放」。
+     */
+    @Column(name = "mfa_last_used_step")
+    private Long mfaLastUsedStep;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

@@ -102,6 +102,20 @@ html:not(.js) #contentPanel { display: block; }
 }
 .copy-btn:hover { color: var(--brand-700); border-color: var(--brand-300); }
 
+/* 设备列的解绑入口（plan-7.0 决策 B6）：与复制按钮同规格，hover 用危险色以示「会断开设备」 */
+.unbind-cell { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.unbind-btn {
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--ink-3);
+  font-size: 12px;
+  cursor: pointer;
+}
+.unbind-btn:hover { color: var(--danger); border-color: var(--danger); }
+.unbind-btn[disabled] { opacity: .6; cursor: default; }
+
 .mono { font-family: var(--font-mono); font-size: 13px; }
 .muted { color: var(--ink-3); }
 
@@ -121,6 +135,49 @@ html:not(.js) #contentPanel { display: block; }
 
 .empty-note { margin: 16px 0 0; color: var(--ink-3); font-size: 14px; }
 .asset-error { margin: 12px 0 0; color: var(--danger); font-size: 13px; }
+
+/* --------------------------- 退款入口与确认弹层（plan-4.1） --------------------------- */
+/* 订单行「操作」列：按钮 + 折算后可退金额提示 */
+.refund-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.refund-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--ink-2);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.refund-btn:hover { color: var(--danger); border-color: var(--danger); }
+.refund-btn[disabled] { opacity: .6; cursor: default; }
+.refund-hint { color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.modal[hidden] { display: none; }
+.modal__backdrop { position: absolute; inset: 0; background: rgba(17, 26, 29, .45); }
+.modal__panel {
+  position: relative;
+  width: 100%;
+  max-width: 460px;
+  padding: 24px;
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  box-shadow: var(--shadow-lg);
+}
+.modal__title { margin: 0; font-size: 18px; color: var(--ink-1); }
+.modal__desc { margin: 10px 0 0; color: var(--ink-2); font-size: 14px; line-height: 1.6; }
+.modal__panel .field { margin-top: 16px; }
+.modal__textarea { width: 100%; min-height: 72px; resize: vertical; font: inherit; }
+.modal__actions { margin-top: 20px; display: flex; justify-content: flex-end; gap: 12px; }
 
 /* ------------------------------- 页脚 ------------------------------- */
 .site-footer { padding: 24px 0 40px; border-top: 1px solid var(--line); }

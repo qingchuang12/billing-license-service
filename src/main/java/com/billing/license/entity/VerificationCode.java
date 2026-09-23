@@ -67,9 +67,16 @@ public class VerificationCode {
         return consumedAt == null && expiresAt != null && expiresAt.isAfter(LocalDateTime.now());
     }
 
-    /** 用途：注册验证 / 找回密码 */
+    /**
+     * 用途：注册验证 / 找回密码 / 二次因子兜底。
+     *
+     * <p>新增 {@link #LOGIN_MFA}（plan-7.0 / M1）<b>无需 DDL</b>：表列 {@code purpose} 为
+     * {@code VARCHAR(30)} 且无 CHECK 约束（`V1__baseline_schema.sql:478`），已实测确认。
+     */
     public enum CodePurpose {
         REGISTER,
-        RESET_PASSWORD
+        RESET_PASSWORD,
+        /** 登录第二因子兜底码（TOTP 不可用时的恢复路径） */
+        LOGIN_MFA
     }
 }

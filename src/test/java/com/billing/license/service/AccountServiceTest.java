@@ -8,6 +8,7 @@ import com.billing.license.entity.VerificationCode;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.UserRepository;
 import com.billing.license.security.JwtTokenService;
+import com.billing.license.security.MfaTicketService;
 import com.billing.license.service.risk.RateLimitService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,14 +20,13 @@ import org.mockito.quality.Strictness;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 /**
  * {@link AccountService} 单元测试。
@@ -44,6 +44,7 @@ class AccountServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private JwtTokenService jwtTokenService;
+    @Mock private MfaTicketService mfaTicketService;
     @Mock private VerificationCodeService verificationCodeService;
     @Mock private RateLimitService rateLimitService;
 
@@ -54,7 +55,7 @@ class AccountServiceTest {
     void setUp() {
         properties = new AccountProperties();
         service = new AccountService(userRepository, passwordEncoder, jwtTokenService,
-            verificationCodeService, rateLimitService, properties);
+            mfaTicketService, verificationCodeService, rateLimitService, properties);
         when(userRepository.save(any(User.class))).thenAnswer(inv -> {
             User u = inv.getArgument(0);
             if (u.getId() == null) {
@@ -254,6 +255,57 @@ class AccountServiceTest {
         assertEquals("BCRYPT_HASH", user.getPasswordHash());
         assertEquals(1, user.getTokenVersion(), "重置密码须使该用户所有旧令牌失效");
         verify(verificationCodeService).verifyAndConsume(EMAIL, VerificationCode.CodePurpose.RESET_PASSWORD, "123456");
+    }
+
+    /**
+     * plan-7.0 / M3（B8）：启用二次因子的账号，登录第一步<b>只发票据不发令牌</b>。
+     * 这是「MFA 不可被绕过」的服务端守门点——若此处仍签发令牌，管理台 UI 上加多少步输入都没用。
+     */
+    @Test
+    void login_shouldReturnTicketInsteadOfToken_whenMfaEnabled() {
+        User user = activeUser();
+        user.setMfaEnabled(true);
+        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(true);
+        when(mfaTicketService.issue(any(UUID.class), anyInt())).thenReturn("mfa-ticket");
+
+        AuthResponse resp = service.login(EMAIL, PASSWORD, "1.2.3.4");
+
+        assertTrue(resp.isMfaRequired(), "启用 MFA 的账号须返回「需第二因子」");
+        assertEquals("mfa-ticket", resp.getMfaTicket());
+        assertEquals(List.of("TOTP", "EMAIL"), resp.getMfaMethods());
+        assertNull(resp.getAccessToken(), "第二因子未过前绝不得签发令牌");
+        assertNull(resp.getUser(), "第二因子未过前不得回显账号信息");
+        assertNull(user.getLastLoginAt(), "登录尚未完成，不应更新最近登录时间");
+    }
+
+    @Test
+    void login_shouldReturnPlainToken_whenMfaDisabled() {
+        User user = activeUser();
+        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(true);
+
+        AuthResponse resp = service.login(EMAIL, PASSWORD, "1.2.3.4");
+
+        assertFalse(resp.isMfaRequired(), "未启用 MFA 的账号行为必须与改造前完全一致");
+        assertEquals("jwt-token", resp.getAccessToken());
+        assertNotNull(resp.getUser());
+        assertNotNull(user.getLastLoginAt());
+    }
+
+    @Test
+    void login_shouldOmitEmailMethod_whenEmailFallbackDisabled() {
+        User user = activeUser();
+        user.setMfaEnabled(true);
+        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(true);
+        when(mfaTicketService.issue(any(UUID.class), anyInt())).thenReturn("mfa-ticket");
+        properties.getMfa().setEmailFallbackEnabled(false);
+
+        AuthResponse resp = service.login(EMAIL, PASSWORD, "1.2.3.4");
+
+        assertEquals(List.of("TOTP"), resp.getMfaMethods(),
+            "邮箱兜底关闭时不得下发 EMAIL，避免客户端引导用户走服务端不接受的路径");
     }
 
     private User activeUser() {

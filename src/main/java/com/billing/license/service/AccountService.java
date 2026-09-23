@@ -8,6 +8,7 @@ import com.billing.license.entity.VerificationCode;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.UserRepository;
 import com.billing.license.security.JwtTokenService;
+import com.billing.license.security.MfaTicketService;
 import com.billing.license.service.risk.RateLimitService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -27,7 +29,10 @@ import java.util.UUID;
  *   <li>账号级锁定落库（{@code failed_login_count} / {@code locked_until}），跨重启有效；
  *       IP 级限流走内存 {@link RateLimitService}（多实例部署需共享存储，与既有限制同源）；</li>
  *   <li>登出 / 改密 / 重置密码一律 {@code tokenVersion + 1}，使该用户所有已签发令牌立即失效；</li>
- *   <li>密码与验证码明文不进日志、不进审计。</li>
+ *   <li>密码与验证码明文不进日志、不进审计；</li>
+ *   <li><b>登录是两阶段的</b>（plan-7.0 / M3）：账号启用二次因子时，{@link #login} 校验密码后
+ *       <b>不签发令牌</b>，而是返回一次性票据；真正的令牌只由
+ *       {@link MfaService#verify} 在第二因子通过后签发。故本类是「MFA 不可被绕过」的守门点。</li>
  * </ol>
  */
 @Slf4j
@@ -38,6 +43,7 @@ public class AccountService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
+    private final MfaTicketService mfaTicketService;
     private final VerificationCodeService verificationCodeService;
     private final RateLimitService rateLimitService;
     private final AccountProperties properties;
@@ -122,6 +128,18 @@ public class AccountService {
 
         user.setFailedLoginCount(0);
         user.setLockedUntil(null);
+
+        // plan-7.0 / M3（B8）：已启用二次因子的账号，密码通过后**不发令牌**，改发一次性票据。
+        // 闸门必须在这里（签发令牌之前）——只在管理台 UI 加一步输入是假安全，
+        // 绕过页面直调本接口照样拿得到令牌，MFA 等于没做。
+        // 注意 mfa_enabled 已为真但密钥不可解的情况由 MfaService 报可读错误，不会走到这里。
+        if (user.isMfaEnabled()) {
+            userRepository.save(user);
+            log.info("登录第一步（密码）通过，等待第二因子：userId={}", user.getId());
+            return AuthResponse.pendingSecondFactor(
+                mfaTicketService.issue(user.getId(), user.getTokenVersion()), mfaMethods());
+        }
+
         user.setLastLoginAt(LocalDateTime.now());
         User saved = userRepository.save(user);
         log.info("登录成功：userId={}", saved.getId());
@@ -251,6 +269,16 @@ public class AccountService {
             .expiresIn(jwtTokenService.expiresInSeconds())
             .user(UserProfileResponse.from(user))
             .build();
+    }
+
+    /**
+     * 当前可用的第二因子方式，供待第二因子响应告知客户端（plan-7.0 / M3）。
+     * 邮箱兜底关闭时不下发 {@code EMAIL}，避免客户端引导用户走一条服务端不接受的路径。
+     */
+    private List<String> mfaMethods() {
+        return properties.getMfa().isEmailFallbackEnabled()
+            ? List.of("TOTP", "EMAIL")
+            : List.of("TOTP");
     }
 
     /** 密码策略（plan 8.3）：长度 8–72，可选要求同时含字母与数字 */

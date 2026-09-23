@@ -197,6 +197,58 @@ html:not(.js) #mainPanel { display: block; }
 }
 .pager__info { color: var(--ink-3); font-size: 13px; }
 
+/* --------------------------- 表单动作区 --------------------------- */
+/* 主按钮旁的辅助动作（含弱化链接式按钮）：视觉上从属，故与主按钮拉开间距 */
+.form-actions {
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+/* --------------------------- 二次验证（MFA） --------------------------- */
+.mfa-status { margin: 16px 0 0; font-size: 14px; color: var(--ink-1); }
+.mfa-status .badge { margin-left: 8px; }
+
+/* 密钥串：等宽 + 可整串选中，便于复制到认证器 App */
+.mfa-secret {
+  margin: 12px 0 16px;
+  padding: 12px 14px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.mfa-secret code { color: var(--ink-1); font-size: 15px; letter-spacing: 1px; user-select: all; }
+
+/* --------------------------- License 处置 --------------------------- */
+/* 处置表单：选中行后才出现，且与结果表分开——不可逆动作必须与「看一眼」的表格拉开距离 */
+.lic-action {
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-soft);
+}
+.lic-action__title { margin: 0 0 16px; font-size: 15px; color: var(--ink-1); }
+.lic-action__title code { font-family: var(--font-mono); font-size: 14px; }
+
+/* 处置结果：重发产生的新密钥需当场抄给用户，故等宽 + 可整串选中 */
+.lic-result {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--brand-400);
+  border-radius: 8px;
+  background: var(--brand-50);
+  color: var(--ink-1);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.lic-result code { font-family: var(--font-mono); user-select: all; }
+
+.btn--danger { background: transparent; color: var(--danger); border-color: var(--danger); }
+.btn--danger:hover { background: var(--danger-bg); color: var(--danger); }
+
 /* ------------------------------- 页脚 ------------------------------- */
 .site-footer { padding: 24px 0 40px; border-top: 1px solid var(--line); }
 .site-footer .form-note { margin: 0; }

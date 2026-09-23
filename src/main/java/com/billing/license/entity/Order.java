@@ -142,6 +142,19 @@ public class Order {
     }
 
     /**
+     * 部分退款成功（plan-4.1：用户端按使用时间折算退款）：
+     * 资金已部分退回、权益已同步收回。
+     *
+     * <p><b>为何不动 {@code status}</b>：{@code OrderStatus} 无「部分退款」值，而它被
+     * {@code OrderResponse.status}、前端与对账过滤多处消费，新增枚举值连锁面远大于收益；
+     * 部分退款语义由 {@code paymentStatus} 精确表达，且 {@code status} 保持 PAID
+     * 使 {@link #canFulfill()} 仍为 false，天然阻断重复发货。
+     */
+    public void markPartiallyRefunded() {
+        this.paymentStatus = PaymentStatus.PARTIALLY_REFUNDED;
+    }
+
+    /**
      * 退款发起但渠道侧失败：绝不可标记 REFUNDED（否则账实不符、资损），
      * 仅置内部失败态，保留 PAID 以便运营到渠道控制台手动退款。
      */

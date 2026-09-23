@@ -28,10 +28,14 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class MachineRegistryService {
 
-    /** 来源标记：兑换 / 购买下单 / 客户端首跑探测 */
+    /** 来源标记：兑换 / 购买下单 / 客户端首跑探测 / 持密钥在线激活 / 客户端启动自动上报（plan-7.0 方案 A / D2） */
     public static final String SRC_REDEEM = "REDEEM";
     public static final String SRC_PURCHASE = "PURCHASE";
     public static final String SRC_PROBE = "PROBE";
+    /** 持许可证密钥在账号登录态下绑定设备（{@code POST /api/licenses/activate} 的密钥分支） */
+    public static final String SRC_ACTIVATE = "ACTIVATE";
+    /** 客户端在兑换/激活后**启动时自动上报机器码**完成补绑（plan-7.0 / D2，{@code POST /api/licenses/report-binding}） */
+    public static final String SRC_REPORT = "REPORT";
 
     private final MachineFirstSeenRepository repository;
 
@@ -73,5 +77,51 @@ public class MachineRegistryService {
             return Optional.empty();
         }
         return repository.findByMachineCode(machineCode.trim()).map(MachineFirstSeen::getFirstSeenAt);
+    }
+
+    /**
+     * 置「已转正」标记（B7 = B，plan-7.0 / D3）：首次完成任一正式绑定时调用。
+     *
+     * <p>口径（川哥拍板 2026-09-23）：①任何一次正式绑定都算转正（购买直签 / 兑换码 /
+     * 密钥激活 / 启动上报——四条路径已汇入 {@code LicenseService#bindToMachine}，故
+     * 由其在 {@code touch} 之后调用本方法即可全覆盖）；②标记**永久保留**，授权作废 /
+     * 退款不回收（撤掉等于再送一次试用）；③幂等——已转正的机器不覆盖首次转正时间。
+     *
+     * <p>兜底：理论上调用前 {@code touch} 已建行；若并发竞态下行仍不存在，
+     * 直接以转正行落库（source 取绑定来源，first_seen_at = now 与 touch 的并发语义一致）。
+     *
+     * @param machineCode 机器码；空值直接忽略
+     * @param source      绑定来源（仅兜底建行时作为首次来源），见 {@link MachineRegistryService}
+     */
+    @Transactional
+    public void markConverted(String machineCode, String source) {
+        if (machineCode == null || machineCode.isBlank()) {
+            return;
+        }
+        String code = machineCode.trim();
+        LocalDateTime now = LocalDateTime.now();
+
+        Optional<MachineFirstSeen> existing = repository.findByMachineCode(code);
+        if (existing.isPresent()) {
+            MachineFirstSeen row = existing.get();
+            if (row.getConvertedAt() == null) {
+                row.setConvertedAt(now);
+                repository.save(row);
+            }
+            return;
+        }
+        try {
+            MachineFirstSeen row = MachineFirstSeen.firstTime(code, now, source);
+            row.setConvertedAt(now);
+            repository.save(row);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            // 并发下另一条请求先落库：以库里那条为准，仅补置位（幂等口径同上）
+            repository.findByMachineCode(code).ifPresent(row -> {
+                if (row.getConvertedAt() == null) {
+                    row.setConvertedAt(now);
+                    repository.save(row);
+                }
+            });
+        }
     }
 }

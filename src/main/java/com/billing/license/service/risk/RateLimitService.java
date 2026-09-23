@@ -113,6 +113,17 @@ public class RateLimitService {
         return checkAndCount("machine-reissue", machineCode, risk.getMachineReissueMax(), risk.getMachineReissueWindowMinutes());
     }
 
+    /**
+     * 客户端「自动上报绑定」频控（plan-7.0 / D2）：按**机器码**维度限流。
+     *
+     * <p>复用机器码限流**档位**（{@code machineReissueMax} / 窗口），**不新增配置项**；
+     * 但使用**独立命名空间**，避免上报量挤占「换机重发」额度（两者语义不同，不应共用一个计数桶）。
+     */
+    public int checkMachineReport(String machineCode) {
+        BillingProperties.Risk risk = billingProperties.getRisk();
+        return checkAndCount("machine-report", machineCode, risk.getMachineReissueMax(), risk.getMachineReissueWindowMinutes());
+    }
+
     public int checkRedeemIp(String ip) {
         BillingProperties.Risk risk = billingProperties.getRisk();
         return checkAndCount("redeem-ip", ip, risk.getRedeemIpMax(), risk.getRedeemIpWindowMinutes());
@@ -126,6 +137,15 @@ public class RateLimitService {
             throw new RateLimitExceededException("redeem-fail", ip, count, risk.getRedeemFailureMax());
         }
         return count;
+    }
+
+    /**
+     * 用户自助退款频控（plan-4.1）：防止单账号反复发起退款申请（含越权探测与刷接口）。
+     */
+    public int checkUserRefund(java.util.UUID userId) {
+        BillingProperties.Refund refund = billingProperties.getRefund();
+        return checkAndCount("user-refund", String.valueOf(userId),
+            refund.getUserRefundMax(), refund.getUserRefundWindowMinutes());
     }
 
     /**

@@ -59,4 +59,19 @@ public class OrderResponse {
     /** 订单创建时间 */
     @Schema(description = "订单创建时间（ISO-8601，无时区）", example = "2026-09-14T22:49:37")
     private LocalDateTime createdAt;
+
+    /**
+     * 是否可自助申请退款（plan-4.1）。
+     * 仅在用户端 {@code GET /api/account/orders} 按 {@code RefundPolicy} 计算回填；
+     * 管理端列表/详情为 null，表示「不适用」而非「不可退」。
+     */
+    @Schema(description = "是否可自助申请退款（仅 /api/account/orders 回填；null = 不适用）", example = "true")
+    private Boolean refundable;
+
+    /**
+     * 可退金额（plan-4.1）：按订单名下 License 的剩余有效期线性折算。
+     * {@code refundable} 为 false 时该字段为 null。
+     */
+    @Schema(description = "可退金额（剩余有效期线性折算；不可退时为 null）", example = "91.20")
+    private BigDecimal refundableAmount;
 }

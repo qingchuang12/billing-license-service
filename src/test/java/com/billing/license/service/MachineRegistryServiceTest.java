@@ -92,4 +92,57 @@ class MachineRegistryServiceTest {
         when(repository.findByMachineCode(MID)).thenReturn(Optional.empty());
         assertTrue(service.firstSeenAt(MID).isEmpty(), "从未见过的机器应返回空（客户端按全新试用处理）");
     }
+
+    // ---------------- B7 = B（plan-7.0 / D3）：机器「已转正」标记 ----------------
+
+    /** 已有账本行且未转正 → 置位；且 **first_seen_at 不得被移动**（试用回溯权威值） */
+    @Test
+    void markConverted_setsConvertedAt_whenRowExistsAndNotConverted() {
+        LocalDateTime firstSeen = LocalDateTime.now().minusDays(200);
+        MachineFirstSeen row = MachineFirstSeen.firstTime(MID, firstSeen, MachineRegistryService.SRC_PROBE);
+        when(repository.findByMachineCode(MID)).thenReturn(Optional.of(row));
+
+        service.markConverted(MID, MachineRegistryService.SRC_REDEEM);
+
+        ArgumentCaptor<MachineFirstSeen> captor = ArgumentCaptor.forClass(MachineFirstSeen.class);
+        verify(repository).save(captor.capture());
+        assertEquals(firstSeen, captor.getValue().getFirstSeenAt(), "转正置位不得移动 first_seen_at");
+        assertNotNull(captor.getValue().getConvertedAt(), "转正时间必须被置位");
+    }
+
+    /** 幂等：已转正的机器再次绑定（如重装、换授权）→ 不覆盖首次转正时间、不重复落库 */
+    @Test
+    void markConverted_idempotent_doesNotOverwrite_whenAlreadyConverted() {
+        LocalDateTime convertedAt = LocalDateTime.now().minusDays(30);
+        MachineFirstSeen row = MachineFirstSeen.firstTime(MID, LocalDateTime.now().minusDays(200),
+            MachineRegistryService.SRC_REDEEM);
+        row.setConvertedAt(convertedAt);
+        when(repository.findByMachineCode(MID)).thenReturn(Optional.of(row));
+
+        service.markConverted(MID, MachineRegistryService.SRC_REPORT);
+
+        verify(repository, never()).save(any(MachineFirstSeen.class));
+        assertEquals(convertedAt, row.getConvertedAt(), "首次转正时间必须保持不变");
+    }
+
+    /** 兜底：并发竞态下账本行尚不存在 → 直接以「转正行」落库（first_seen_at = now，来源取绑定来源） */
+    @Test
+    void markConverted_createsConvertedRow_whenAbsent() {
+        when(repository.findByMachineCode(MID)).thenReturn(Optional.empty());
+
+        service.markConverted(MID, MachineRegistryService.SRC_PURCHASE);
+
+        ArgumentCaptor<MachineFirstSeen> captor = ArgumentCaptor.forClass(MachineFirstSeen.class);
+        verify(repository).save(captor.capture());
+        assertEquals(MID, captor.getValue().getMachineCode());
+        assertEquals(MachineRegistryService.SRC_PURCHASE, captor.getValue().getSource());
+        assertNotNull(captor.getValue().getConvertedAt(), "兜底建行即带转正时间");
+    }
+
+    @Test
+    void markConverted_blankMachineCode_isIgnored() {
+        service.markConverted(null, MachineRegistryService.SRC_REDEEM);
+        service.markConverted("   ", MachineRegistryService.SRC_REDEEM);
+        verifyNoInteractions(repository);
+    }
 }

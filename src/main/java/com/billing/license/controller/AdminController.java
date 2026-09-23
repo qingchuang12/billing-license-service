@@ -1,11 +1,7 @@
 package com.billing.license.controller;
 
 import com.billing.license.annotation.Audit;
-import com.billing.license.dto.GenerateRedeemCodesResponse;
-import com.billing.license.dto.LicenseResponse;
-import com.billing.license.dto.OrderResponse;
-import com.billing.license.dto.PaymentChannelStatus;
-import com.billing.license.dto.RedeemCodeView;
+import com.billing.license.dto.*;
 import com.billing.license.entity.Order;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.service.AdminService;
@@ -176,27 +172,53 @@ public class AdminController {
     }
 
     // D2（2026-09-14）：吊销唯一入口——客户端自吊销端点已删除（其要求客户端持有管理密钥，语义矛盾）。
-    @Operation(summary = "作废 License（管理端）", description = "管理端强制作废指定 License（需管理员 JWT）")
+    // D6（plan-7.0，2026-09-23）：实现收敛到 LicenseService（唯一一处），作废**必写 license_events 留痕**；
+    // 原 AdminService.revokeLicense 只置状态不写事件，已删除。
+    @Operation(summary = "作废 License（管理端）", description = "管理端强制作废指定 License（需管理员 JWT）；终态不可逆，写 license_events 留痕")
     @ApiResponse(responseCode = "200", description = "作废成功")
     @Audit(action = "REVOKE_LICENSE", target = "#licenseKey", detail = "#reason")
     @PostMapping("/licenses/{licenseKey}/revoke")
     public ResponseEntity<Void> revokeLicense(
             @Parameter(description = "License 密钥", required = true) @PathVariable String licenseKey,
-            @Parameter(description = "作废原因（可选）") @RequestParam(required = false) String reason) {
-        adminService.revokeLicense(licenseKey, reason);
+            @Parameter(description = "作废原因（可选，写入事件留痕供售后追溯）") @RequestParam(required = false) String reason) {
+        licenseService.revokeLicense(licenseKey, reason);
+        return ResponseEntity.ok().build();
+    }
+
+    /**
+     * 管理端解绑（plan-7.0 / 主体三）。
+     *
+     * <p>只清设备绑定、**不吊销授权**——用户随后可在新机重新激活。与「作废」（终态不可逆）
+     * 和「换机重发」（签发新 key）语义均不同，售后须按实际情况择一，不可混用。
+     */
+    @Operation(summary = "解绑 License 设备（管理端）",
+            description = "清空机器码、保留授权（用户可在新机重新激活）；已作废件拒绝")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "已解绑；本就未绑定时幂等返回成功"),
+            @ApiResponse(responseCode = "400", description = "LICENSE_NOT_FOUND / LICENSE_REVOKED")
+    })
+    @Audit(action = "UNBIND_LICENSE", target = "#licenseKey", detail = "#reason")
+    @PostMapping("/licenses/{licenseKey}/unbind")
+    public ResponseEntity<Void> unbindLicense(
+            @Parameter(description = "License 密钥", required = true) @PathVariable String licenseKey,
+            @Parameter(description = "解绑原因（可选，写入处置留痕）") @RequestParam(required = false) String reason) {
+        licenseService.unbindByAdmin(licenseKey, reason);
         return ResponseEntity.ok().build();
     }
 
     @Operation(summary = "换机重发 License",
-            description = "绑定新的机器码并重发 License；原证置 REISSUED（与退款吊销 REVOKED 区分）")
+            description = "绑定新的机器码并重发 License；原证置 REISSUED（与退款吊销 REVOKED 区分）。"
+                    + "`newMachineId` 可留空——此时只失效重发、不绑设备，用户随后自行在新机激活")
     @ApiResponse(responseCode = "200", description = "重发成功")
     @Audit(action = "REISSUE_LICENSE", target = "#licenseKey", detail = "#newMachineId")
     @PostMapping("/licenses/{licenseKey}/reissue")
     public ResponseEntity<LicenseResponse> reissueLicense(
             @Parameter(description = "原 License 密钥", required = true) @PathVariable String licenseKey,
-            @Parameter(description = "新机器码", required = true) @RequestParam String newMachineId,
-            @Parameter(description = "重发原因（可选）") @RequestParam(required = false) String reason) {
-        return ResponseEntity.ok(licenseService.reissueLicense(licenseKey, newMachineId, reason));
+            @Parameter(description = "新机器码（可留空 = 不绑设备）") @RequestParam(required = false) String newMachineId,
+            @Parameter(description = "重发原因（可选）") @RequestParam(required = false) String reason,
+            @Parameter(description = "越过重发次数上限（客服人工处置用；默认 false）")
+            @RequestParam(defaultValue = "false") boolean force) {
+        return ResponseEntity.ok(licenseService.reissueLicense(licenseKey, newMachineId, reason, force));
     }
 
     // ==================== 兑换码（I5/I6：由 /api/redeem/** 迁入） ====================

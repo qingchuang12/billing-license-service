@@ -27,7 +27,11 @@ public class LicenseEvent {
         REVOKED,
         VERIFY_FAILED,
         /** 释放本机绑定（换绑场景）：仅清空 machineCode，不吊销授权本身 */
-        UNBOUND
+        UNBOUND,
+        /** 持许可证密钥在登录态下绑定设备（plan-7.0 方案 A 在线激活）；与 UNBOUND 互为反向操作 */
+        ACTIVATED,
+        /** 客户端兑换/激活后**启动时自动上报机器码**完成补绑（plan-7.0 / D2）；同为绑定动作，仅触发方不同 */
+        BOUND_BY_REPORT
     }
 
     @Id

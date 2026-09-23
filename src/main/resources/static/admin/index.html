@@ -49,26 +49,50 @@
         <h2 class="panel__title">管理员登录</h2>
         <p class="panel__desc">使用管理员账号（邮箱 + 密码）登录；令牌仅保存在本机浏览器，不会发送到其他服务。</p>
 
-        <form id="unlockForm" novalidate>
-          <div class="field">
-            <label class="field__label" for="loginEmail">管理员邮箱</label>
-            <input class="field__input" type="email" id="loginEmail" name="email"
-                   autocomplete="username" spellcheck="false" placeholder="管理员邮箱" required>
+        <!-- 第一步：邮箱 + 密码 -->
+        <div id="loginStep">
+          <form id="unlockForm" novalidate>
+            <div class="field">
+              <label class="field__label" for="loginEmail">管理员邮箱</label>
+              <input class="field__input" type="email" id="loginEmail" name="email"
+                     autocomplete="username" spellcheck="false" placeholder="管理员邮箱" required>
+            </div>
+            <div class="field">
+              <label class="field__label" for="loginPassword">密码</label>
+              <input class="field__input" type="password" id="loginPassword" name="password"
+                     autocomplete="current-password" placeholder="密码" required>
+            </div>
+            <div class="field field--check">
+              <label class="check-label">
+                <input type="checkbox" id="rememberKey" checked>
+                <span>记住本机（关闭浏览器后仍保留）</span>
+              </label>
+            </div>
+            <p class="form-error" id="authError" hidden></p>
+            <button class="btn btn--primary" type="submit" id="unlockBtn">登录</button>
+          </form>
+        </div>
+
+        <!-- 第二步：二次因子（仅该账号已开启 MFA 时显示） -->
+        <div id="mfaStep" hidden>
+          <p class="panel__desc" id="mfaStepDesc">
+            该账号已开启二次验证，请输入认证器 App 显示的 6 位动态码。
+          </p>
+          <form id="mfaForm" novalidate>
+            <div class="field">
+              <label class="field__label" for="mfaLoginCode">动态码</label>
+              <input class="field__input" type="text" id="mfaLoginCode" name="code"
+                     inputmode="numeric" maxlength="6" autocomplete="one-time-code"
+                     spellcheck="false" placeholder="6 位数字" required>
+            </div>
+            <p class="form-error" id="mfaLoginError" hidden></p>
+            <button class="btn btn--primary" type="submit" id="mfaVerifyBtn">验证并登录</button>
+          </form>
+          <div class="form-actions">
+            <button class="linklike" type="button" id="mfaEmailBtn">改用邮箱验证码</button>
+            <button class="linklike" type="button" id="mfaBackBtn">返回重新输入密码</button>
           </div>
-          <div class="field">
-            <label class="field__label" for="loginPassword">密码</label>
-            <input class="field__input" type="password" id="loginPassword" name="password"
-                   autocomplete="current-password" placeholder="密码" required>
-          </div>
-          <div class="field field--check">
-            <label class="check-label">
-              <input type="checkbox" id="rememberKey" checked>
-              <span>记住本机（关闭浏览器后仍保留）</span>
-            </label>
-          </div>
-          <p class="form-error" id="authError" hidden></p>
-          <button class="btn btn--primary" type="submit" id="unlockBtn">登录</button>
-        </form>
+        </div>
       </div>
 
       <!-- ======================= 主视图（解锁后显示） ======================= -->
@@ -80,8 +104,8 @@
           <button class="linklike" type="button" id="lockBtn">退出登录</button>
         </div>
 
-        <!-- 工具栏：时间范围 -->
-        <div class="panel toolbar-panel">
+        <!-- 工具栏：时间范围（安全设置分区不需要，切到该分区时隐藏） -->
+        <div class="panel toolbar-panel" id="rangePanel">
           <div class="toolbar">
             <div class="toolbar__range">
               <div class="field">
@@ -112,6 +136,8 @@
           <button class="tabs__item" type="button" data-tab="transactions" aria-selected="false">交易流水</button>
           <button class="tabs__item" type="button" data-tab="trend" aria-selected="false">趋势</button>
           <button class="tabs__item" type="button" data-tab="discrepancies" aria-selected="false">对账差异</button>
+          <button class="tabs__item" type="button" data-tab="license" aria-selected="false">License 处置</button>
+          <button class="tabs__item" type="button" data-tab="security" aria-selected="false">安全设置</button>
         </nav>
 
         <!-- 各分区面板（同一时间只显示一个） -->
@@ -207,13 +233,133 @@
           <p class="empty-note" id="discEmpty" hidden>未发现对账差异。</p>
         </section>
 
+        <section class="panel data-panel" id="panel-license" hidden>
+          <h2 class="panel__title">License 处置</h2>
+          <p class="panel__desc">
+            按密钥精确查询，或按客户邮箱列出名下全部许可证（含失效件）。选中一行后可执行
+            <b>解绑</b>（只清设备绑定、保留授权）、<b>失效重发</b>（旧证置 REISSUED 并签发新密钥）、
+            <b>作废</b>（终态，不可逆）——三者语义不同，请按实际情况择一。
+          </p>
+
+          <div class="toolbar">
+            <div class="toolbar__range">
+              <div class="field">
+                <label class="field__label" for="licSearchInput">License 密钥 / 客户邮箱</label>
+                <input class="field__input" type="text" id="licSearchInput" spellcheck="false"
+                       placeholder="LIC-XXXX-… 或 user@example.com">
+              </div>
+              <button class="btn btn--primary" type="button" id="licSearchByKey">按密钥查询</button>
+              <button class="btn btn--ghost" type="button" id="licSearchByEmail">按邮箱查询</button>
+            </div>
+          </div>
+          <p class="form-error" id="licError" hidden></p>
+
+          <div class="table-wrap" id="licTableWrap" hidden></div>
+          <p class="empty-note" id="licEmpty" hidden>尚未查询，或未查询到许可证。</p>
+
+          <!-- 处置结果提示（留在分区内，不随处置表单收起） -->
+          <p class="lic-result" id="licResult" hidden></p>
+
+          <div class="lic-action" id="licActionBox" hidden>
+            <h3 class="lic-action__title">处置 <code id="licActionKey"></code></h3>
+            <div class="field">
+              <label class="field__label" for="licActionType">处置动作</label>
+              <select class="field__input" id="licActionType">
+                <option value="unbind">解绑设备（保留授权，用户可在新机重新激活）</option>
+                <option value="reissue">失效重发（旧证置 REISSUED，签发新密钥）</option>
+                <option value="revoke">作废（不可逆，用户权益终止）</option>
+              </select>
+            </div>
+            <div class="field" id="licMachineField" hidden>
+              <label class="field__label" for="licNewMachine">新机器码（留空 = 不绑设备）</label>
+              <input class="field__input" type="text" id="licNewMachine" spellcheck="false"
+                     placeholder="留空则由用户随后自行在新机激活">
+            </div>
+            <div class="field field--check" id="licForceField" hidden>
+              <label class="check-label">
+                <input type="checkbox" id="licForce">
+                <span>越权重发次数上限（仅在已达上限时勾选；处置留痕会标注 forced）</span>
+              </label>
+            </div>
+            <div class="field">
+              <label class="field__label" for="licReason">处置原因</label>
+              <input class="field__input" type="text" id="licReason" spellcheck="false"
+                     placeholder="如：用户换机 / 违规使用 / 重复购买">
+            </div>
+            <p class="form-error" id="licActionError" hidden></p>
+            <div class="form-actions">
+              <button class="btn btn--primary" type="button" id="licActionSubmit">确认执行</button>
+              <button class="btn btn--ghost" type="button" id="licActionCancel">取消</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel data-panel" id="panel-security" hidden>
+          <h2 class="panel__title">安全设置 · 二次验证（MFA）</h2>
+          <p class="panel__desc">
+            开启后，登录除密码外还需输入认证器 App（Google Authenticator / Microsoft Authenticator /
+            1Password 等均可）的动态码；认证器不可用时可用邮箱验证码兜底。
+          </p>
+
+          <p class="data-error" id="mfaStatusError" hidden></p>
+          <p class="mfa-status" id="mfaStatusText" hidden></p>
+
+          <!-- 未开启时：生成密钥 -->
+          <div id="mfaEnrollBox" hidden>
+            <div class="field">
+              <label class="field__label" for="mfaPassword">当前密码</label>
+              <input class="field__input" type="password" id="mfaPassword"
+                     autocomplete="current-password" placeholder="当前密码" required>
+            </div>
+            <p class="form-error" id="mfaEnrollError" hidden></p>
+            <button class="btn btn--primary" type="button" id="mfaEnrollBtn">生成密钥</button>
+          </div>
+
+          <!-- 已生成密钥、待激活 -->
+          <div id="mfaSecretBox" hidden>
+            <p class="form-note">
+              请在认证器 App 中选择「手动输入密钥」，粘贴下面这串密钥（本页离开后将不再显示）：
+            </p>
+            <p class="mfa-secret"><code class="mono" id="mfaSecretText"></code></p>
+            <div class="field">
+              <label class="field__label" for="mfaActivateCode">认证器动态码</label>
+              <input class="field__input" type="text" id="mfaActivateCode" inputmode="numeric"
+                     maxlength="6" autocomplete="one-time-code" spellcheck="false"
+                     placeholder="录入密钥后 App 显示的 6 位数字">
+            </div>
+            <p class="form-error" id="mfaActivateError" hidden></p>
+            <button class="btn btn--primary" type="button" id="mfaActivateBtn">激活</button>
+          </div>
+
+          <!-- 已开启时：解绑 -->
+          <div id="mfaUnbindBox" hidden>
+            <p class="form-note">
+              解绑会关闭二次验证这道防线，故须同时提供当前密码与一个有效验证码。
+              若认证器与邮箱均不可用，请联系运维执行 <code class="mono">scripts/db/reset-admin-mfa.sql</code>。
+            </p>
+            <div class="field">
+              <label class="field__label" for="mfaUnbindPassword">当前密码</label>
+              <input class="field__input" type="password" id="mfaUnbindPassword"
+                     autocomplete="current-password" placeholder="当前密码" required>
+            </div>
+            <div class="field">
+              <label class="field__label" for="mfaUnbindCode">动态码（或邮箱验证码）</label>
+              <input class="field__input" type="text" id="mfaUnbindCode" inputmode="numeric"
+                     maxlength="6" autocomplete="one-time-code" spellcheck="false"
+                     placeholder="6 位数字">
+            </div>
+            <p class="form-error" id="mfaUnbindError" hidden></p>
+            <button class="btn btn--ghost btn--danger" type="button" id="mfaUnbindBtn">解绑二次验证</button>
+          </div>
+        </section>
+
       </div>
     </div>
   </main>
 
   <footer class="site-footer">
     <div class="container">
-      <p class="form-note">内部页面，请勿外传链接；接口鉴权：管理员 JWT（ROLE_ADMIN）。</p>
+      <p class="form-note">内部页面，请勿外传链接；接口鉴权：管理员 JWT（ROLE_ADMIN）；已开启二次验证的账号登录需另输动态码。</p>
     </div>
   </footer>
 

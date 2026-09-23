@@ -3,7 +3,6 @@ package com.billing.license.service;
 import com.billing.license.dto.RedeemCodeRequest;
 import com.billing.license.entity.*;
 import com.billing.license.exception.BusinessException;
-import com.billing.license.infrastructure.crypto.LicenseIssuer;
 import com.billing.license.repository.LicenseRepository;
 import com.billing.license.repository.OrderRepository;
 import com.billing.license.repository.ProductRepository;
@@ -29,12 +28,11 @@ public class RedeemCodeService {
     private final LicenseRepository licenseRepository;
     private final ProductRepository productRepository;
     private final OrderRepository orderRepository;
-    private final LicenseIssuer licenseIssuer;
     private final RateLimitService rateLimitService;
     // E1（客户标识邮箱化）：对外邮箱 → 内部 userId 解析；未注册自动建访客账户
     private final CustomerIdentityService customerIdentityService;
-    // C8：机器码首次出现账本——兑换签发时顺带登记，堵住「删档重装再领一次试用」
-    private final MachineRegistryService machineRegistryService;
+    // A1（方案 A）：绑定 + 签名 + 落库 + 登记机器已收敛到 LicenseService 内核，本类不再自行签发
+    private final LicenseService licenseService;
 
     // B8：使用密码学安全随机源生成兑换码，替代可预测的 Math.random()
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
@@ -178,8 +176,13 @@ public class RedeemCodeService {
     }
 
     private License doRedeem(RedeemCodeRequest request) {
+        // B4（2026-09-23）：本码与激活端点的密钥分支已统一为 CREDENTIAL_NOT_FOUND——
+        // 本方法被两个端点共用（POST /api/redeem/redeem 与 POST /api/licenses/activate），
+        // 改这里即两处一致，无需在 CredentialBindingService 加「异常码翻译层」（那本身是新漂移源）。
+        // 注意：同类的 CODE_ALREADY_USED / CODE_EXPIRED 描述的是**凭证状态**而非「凭证不认识」，
+        // 属另一语义类，本次不合并；管理端撤销（revokeCode）的同名码亦各自保留。
         RedeemCode redeemCode = redeemCodeRepository.findByCode(request.getCode())
-            .orElseThrow(() -> new BusinessException("CODE_NOT_FOUND",
+            .orElseThrow(() -> new BusinessException("CREDENTIAL_NOT_FOUND",
                 "Invalid redeem code"));
 
         // Validate status
@@ -231,23 +234,17 @@ public class RedeemCodeService {
             .status(License.LicenseStatus.ACTIVE)
             .issuedAt(issuedAt)
             .expiresAt(expiresAt)
-            .machineCode(request.getMachineId()) // 绑定兑换时传入的机器码（架构十一.4）
             .build();
-
-        // Sign the license
-        String signedToken = licenseIssuer.issueLicense(license);
-        license.setSignedToken(signedToken);
 
         // Mark code as used
         redeemCode.setStatus(RedeemCode.RedeemCodeStatus.USED);
         redeemCode.setUsedBy(customerId);
         redeemCode.setUsedAt(LocalDateTime.now());
         redeemCode.setCurrentUses(redeemCode.getCurrentUses() + 1);
-
-        licenseRepository.save(license);
         redeemCodeRepository.save(redeemCode);
-        // C8：登记这台机器的首次出现时间（幂等）
-        machineRegistryService.touch(request.getMachineId(), MachineRegistryService.SRC_REDEEM);
+
+        // A1（方案 A）：绑定机器码 + 签发签名令牌 + 落库 + 登记机器首次出现（C8），统一走内核
+        licenseService.bindToMachine(license, request.getMachineId(), MachineRegistryService.SRC_REDEEM);
 
         log.info("Code redeemed successfully, license issued: {}", licenseKey);
 

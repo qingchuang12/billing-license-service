@@ -48,6 +48,15 @@ public class MachineFirstSeen {
     @Column(name = "source", nullable = false, length = 32)
     private String source;
 
+    /**
+     * 首次完成任一正式绑定（购买直签 / 兑换码 / 密钥激活 / 启动上报）的时间（B7 = B，plan-7.0 / D3）。
+     *
+     * <p>NULL = 未转正（纯试用机器）。首次置位后不再更新；授权作废 / 退款**不回收**
+     * （撤标记等于再送一次试用，川哥拍板 2026-09-23 ③）。C8 首跑查询端点暂不回传（④）。
+     */
+    @Column(name = "converted_at")
+    private LocalDateTime convertedAt;
+
     public static MachineFirstSeen firstTime(String machineCode, LocalDateTime now, String source) {
         return MachineFirstSeen.builder()
             .machineCode(machineCode)

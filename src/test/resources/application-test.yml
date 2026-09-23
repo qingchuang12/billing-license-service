@@ -30,6 +30,11 @@ spring:
 # 故测试环境必须显式提供（≥32 字节，仅用于测试，禁止复用到生产）
 account:
   jwt-secret: test-only-jwt-secret-for-unit-tests-0123456789abcdef
+  # plan-7.0 / M3：mfa.key 同为「无默认值、缺失即启动失败」（fail-fast），
+  # 故测试环境必须补齐，否则上下文加载测试（ApplicationContextLoadAndHealthTest 等）会启动失败。
+  # 仅用于测试，禁止复用到生产。
+  mfa:
+    key: test-only-mfa-master-key-for-unit-tests-0123456789
 
 # K10（2026-09-18）：app.base-url 在 application.yml 中已改为无默认值（fail-fast，
 # 防「默认 localhost 导致渠道回调不可达」），测试 profile 必须补齐。

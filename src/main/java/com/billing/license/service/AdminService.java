@@ -2,10 +2,7 @@ package com.billing.license.service;
 
 import com.billing.license.dto.LicenseResponse;
 import com.billing.license.dto.OrderResponse;
-import com.billing.license.entity.License;
-import com.billing.license.entity.Order;
-import com.billing.license.entity.Payment;
-import com.billing.license.entity.User;
+import com.billing.license.entity.*;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.LicenseRepository;
 import com.billing.license.repository.OrderRepository;
@@ -26,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +49,9 @@ public class AdminService {
     // E1/E3（客户标识邮箱化）：对外邮箱 ↔ 内部 userId 解析，及出参 customerEmail 回填
     private final CustomerIdentityService customerIdentityService;
     private final UserRepository userRepository;
+    // D6（plan-7.0）：退款吊销同样要写 license_events 留痕，事件口径复用 LicenseService#recordLicenseEvent
+    // （与「管理端作废 / 解绑 / 重发」同一来源，避免各写一套）。LicenseService 不反向依赖本类，无循环。
+    private final LicenseService licenseService;
 
     // i6：复用 ObjectMapper 构造 metadata JSON，避免手写拼接导致的转义/注入问题
     private static final ObjectMapper METADATA_MAPPER = new ObjectMapper();
@@ -136,22 +137,50 @@ public class AdminService {
     }
 
     /**
-     * 退款订单：调用支付服务商退款接口，标记订单 REFUNDED，作废全部 License，发送通知。
+     * 全额退款（管理端既有入口）：委托 {@link #refundOrder(String, String, BigDecimal)} 并传 null 金额，
+     * 行为与 plan-4.1 引入部分退款之前完全一致。
+     */
+    public OrderResponse refundOrder(String orderNumber, String reason) {
+        return refundOrder(orderNumber, reason, null);
+    }
+
+    /**
+     * 退款订单：调用支付服务商退款接口，标记订单退款态，作废全部 License，发送通知。
      *
-     * H4 资损防护：仅当支付渠道侧退款成功（refundPayment 返回 true）才标记 REFUNDED 并作废 License；
+     * H4 资损防护：仅当支付渠道侧退款成功（refundPayment 返回 true）才标记退款并作废 License；
      * 若渠道未实现/返回失败/抛异常，绝不本地谎报退款成功——改为标记 REFUND_FAILED（保留 PAID），
      * 并抛出业务异常交由运营到渠道控制台手动退款，避免「账显示已退但钱没退」的资损与对账混乱。
+     *
+     * <p>plan-4.1 增加金额入参以支持用户端「按使用时间折算」的部分退款：金额在
+     * <b>渠道调用</b>与<b>退款流水</b>两处贯通；部分退款成功后置
+     * {@link Order#markPartiallyRefunded()}（{@code paymentStatus = PARTIALLY_REFUNDED}）。
+     *
+     * <p><b>降级</b>：退款额小于实付额而渠道未受理时，自动降级为全额退并留痕
+     * metadata {@code refundDegraded}，避免用户因单一渠道不支持部分退款而完全无法自助退款。
+     *
+     * @param refundAmount 退款金额；<b>null 表示全额</b>（管理端口径）；达到或超过实付额一律按全额处理
      */
     @Transactional
-    public OrderResponse refundOrder(String orderNumber, String reason) {
-        log.info("管理员发起退款：orderNumber={}, reason={}", orderNumber, reason);
+    public OrderResponse refundOrder(String orderNumber, String reason, BigDecimal refundAmount) {
+        log.info("发起退款：orderNumber={}, reason={}, refundAmount={}", orderNumber, reason, refundAmount);
 
         Order order = orderRepository.findByOrderNumber(orderNumber)
             .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "Order not found: " + orderNumber));
 
-        if (order.getPaymentStatus() == Order.PaymentStatus.REFUNDED) {
+        // 一单只退一次：已部分退款的订单不得再退剩余（防止反复退款侵蚀）
+        if (order.getPaymentStatus() == Order.PaymentStatus.REFUNDED
+                || order.getPaymentStatus() == Order.PaymentStatus.PARTIALLY_REFUNDED) {
             throw new BusinessException("ALREADY_REFUNDED", "Order already refunded: " + orderNumber);
         }
+
+        BigDecimal total = order.getTotalAmount();
+        BigDecimal requested = refundAmount != null ? refundAmount : total;
+        if (requested == null || requested.signum() <= 0) {
+            throw new BusinessException("INVALID_REFUND_AMOUNT", "非法退款金额: " + refundAmount);
+        }
+        // 不信任调用方金额：达到或超过实付额一律按全额处理
+        boolean fullRefund = total == null || requested.compareTo(total) >= 0;
+        BigDecimal channelAmount = fullRefund ? total : requested;
 
         // 调用支付渠道退款
         PaymentMethod method = order.getPaymentProvider();
@@ -186,13 +215,32 @@ public class AdminService {
         }
 
         boolean channelRefunded = false;
+        BigDecimal refundedAmount = channelAmount;
+        boolean degraded = false;
         if (method != null) {
             try {
                 channelRefunded = paymentServiceFactory.getStrategy(method)
-                    .refundPayment(order, channelPaymentId, order.getTotalAmount());
+                    .refundPayment(order, channelPaymentId, channelAmount);
             } catch (Exception e) {
                 log.error("调用支付渠道退款异常：provider={}, orderNumber={}", method, orderNumber, e);
                 channelRefunded = false;
+            }
+            // plan-4.1 降级（拍板）：渠道未受理部分金额时自动改发全额退，避免用户因单一渠道
+            // 不支持部分退款而完全无法自助退款。失败与降级均留痕，便于对账追溯。
+            if (!channelRefunded && !fullRefund) {
+                log.warn("渠道未受理部分退款，自动降级为全额退：provider={}, orderNumber={}, partialAmount={}",
+                    method, orderNumber, channelAmount);
+                try {
+                    channelRefunded = paymentServiceFactory.getStrategy(method)
+                        .refundPayment(order, channelPaymentId, total);
+                    if (channelRefunded) {
+                        fullRefund = true;
+                        degraded = true;
+                        refundedAmount = total;
+                    }
+                } catch (Exception e) {
+                    log.error("降级全额退款异常：provider={}, orderNumber={}", method, orderNumber, e);
+                }
             }
         } else {
             log.warn("无法解析支付渠道，无法发起渠道侧退款：provider={}, orderNumber={}",
@@ -200,6 +248,11 @@ public class AdminService {
         }
 
         if (!channelRefunded) {
+            // 部分退款尝试失败：把尝试金额写入 metadata，便于对账追溯与人工复核
+            if (!fullRefund) {
+                order.setMetadata(appendMetadata(order.getMetadata(), "refundAttemptedAmount",
+                    channelAmount.toPlainString()));
+            }
             // C8：退款失败态必须在独立事务（REQUIRES_NEW）中落库，否则随外层 @Transactional 回滚，
             // 导致 DB 永远 PAID、运营看不到待处理清单。内层提交后外层再抛异常回滚不影响已落库的失败态。
             try {
@@ -212,29 +265,49 @@ public class AdminService {
         }
 
         // 渠道退款成功：作废该订单下所有 License
+        // D6（plan-7.0，2026-09-23）：退款吊销**同样**必须写 license_events 留痕——此前只置状态 + save，
+        // 与管理端作废是同一个缺陷（流水账查不到作废历史，售后排查会误判「该件从未被作废」）。
+        // 事件口径复用 LicenseService#recordLicenseEvent，与管理端作废 / 解绑 / 重发同一来源。
         List<License> licenses = licenseRepository.findByOrder(order);
         for (License license : licenses) {
             if (license.getStatus() != License.LicenseStatus.REVOKED) {
+                String boundMachineCode = license.getMachineCode();
                 license.setStatus(License.LicenseStatus.REVOKED);
                 license.setRevokedAt(LocalDateTime.now());
                 licenseRepository.save(license);
+                licenseService.recordLicenseEvent(license, LicenseEvent.EventType.REVOKED, boundMachineCode,
+                    "Revoked by refund. order=" + orderNumber);
             }
         }
 
-        // H15：通过状态机唯一出口标记已退款，status 与 paymentStatus 一致
-        order.markRefunded();
+        // H15：通过状态机唯一出口标记退款态——全额 → REFUNDED；部分 → PARTIALLY_REFUNDED（status 保持 PAID）
+        if (fullRefund) {
+            order.markRefunded();
+        } else {
+            order.markPartiallyRefunded();
+        }
         order.setMetadata(appendMetadata(order.getMetadata(), "refundReason", reason));
+        order.setMetadata(appendMetadata(order.getMetadata(), "refundAmount", refundedAmount.toPlainString()));
+        if (degraded) {
+            order.setMetadata(appendMetadata(order.getMetadata(), "refundDegraded",
+                "渠道未受理部分退款，已按全额退（原折算额 " + channelAmount.toPlainString() + "）"));
+        }
         orderRepository.save(order);
 
         // 退款流水：渠道退款成功后写入一条 REFUNDED 支付记录，使交易流水（Payment 表）
-        // 完整反映资金变动（此前退款只改订单状态、流水缺退款行）。与 markRefunded 同事务提交，
-        // 保证「状态 REFUNDED」与「流水有退款行」原子一致；同批失败则整体回滚、订单回到 PAID 供重试。
-        writeRefundPayment(order, method, channelPaymentId);
+        // 完整反映资金变动（此前退款只改订单状态、流水缺退款行）。与状态标记同事务提交，
+        // 保证「状态已退」与「流水有退款行」原子一致；同批失败则整体回滚、订单回到 PAID 供重试。
+        // 金额口径：部分退款记折算额，降级/全额记实付额，故流水金额与实际退还资金恒等。
+        writeRefundPayment(order, method, channelPaymentId, refundedAmount);
 
         if (order.getEmail() != null && !order.getEmail().isEmpty()) {
             // M5 修正：退款通知使用退款专用文案，不再复用「支付失败」模板
+            // plan-4.1：文案带上实际退款金额（部分退款时用户需知道退了多少钱）
+            String currency = order.getCurrency() != null ? " " + order.getCurrency().code() : "";
             emailNotificationService.sendRefundProcessedEmail(
-                order.getEmail(), orderNumber, "退款已处理：" + (reason != null ? reason : ""));
+                order.getEmail(), orderNumber,
+                "退款已处理：" + refundedAmount.toPlainString() + currency
+                    + (reason != null && !reason.isBlank() ? "（" + reason + "）" : ""));
         }
 
         log.info("退款完成：orderNumber={}", orderNumber);
@@ -242,18 +315,20 @@ public class AdminService {
     }
 
     /**
-     * 写入一条 REFUNDED 支付流水（全额退款，与订单同币种）。
+     * 写入一条 REFUNDED 支付流水（与订单同币种）。
      *
      * <p>{@code payment_id} 唯一非空，不能复用原支付记录，故用 {@code REFUND-<orderId>-<时间戳>} 独立标识；
      * {@code transactionId} 关联发起退款时使用的渠道交易号（{@code channelPaymentId}）以便追溯。
      * {@code channel} 与 {@code method} 同源写入，对齐 {@code AccountingService.toView} 的展示口径。
+     *
+     * @param amount 实际退还金额（plan-4.1：部分退款记折算额，降级/全额记实付额）
      */
-    private void writeRefundPayment(Order order, PaymentMethod method, String channelPaymentId) {
+    private void writeRefundPayment(Order order, PaymentMethod method, String channelPaymentId, BigDecimal amount) {
         Payment refund = Payment.builder()
                 .orderIdStr(order.getId().toString())
                 .paymentId("REFUND-" + order.getId() + "-" + System.currentTimeMillis())
                 .transactionId(channelPaymentId)
-                .amount(order.getTotalAmount())
+                .amount(amount)
                 .currency(order.getCurrency())
                 .method(method)
                 .channel(method)
@@ -272,19 +347,6 @@ public class AdminService {
         order.markRefundFailed();
         order.setMetadata(appendMetadata(order.getMetadata(), "refundReason", reason));
         orderRepository.save(order);
-    }
-
-    /**
-     * 作废指定 License
-     */
-    @Transactional
-    public void revokeLicense(String licenseKey, String reason) {
-        log.info("管理员作废 License：licenseKey={}, reason={}", licenseKey, reason);
-        License license = licenseRepository.findByLicenseKey(licenseKey)
-            .orElseThrow(() -> new BusinessException("LICENSE_NOT_FOUND", "License not found: " + licenseKey));
-        license.setStatus(License.LicenseStatus.REVOKED);
-        license.setRevokedAt(LocalDateTime.now());
-        licenseRepository.save(license);
     }
 
     /**
