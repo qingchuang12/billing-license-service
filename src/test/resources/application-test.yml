@@ -25,10 +25,7 @@ spring:
     # 测试不真发信（EmailNotificationService 在用户名/口令为空时跳过发送）。
     password: test
 
-# 补齐生产必填项（无默认值）：管理端密钥、账号令牌签名密钥与 DB 口令
-security:
-  admin-api-keys: test-admin-key-0001
-
+# 补齐生产必填项（无默认值）：账号令牌签名密钥与 DB 口令
 # v2.10：account.jwt-secret 无默认值、缺失即启动失败（fail-fast），
 # 故测试环境必须显式提供（≥32 字节，仅用于测试，禁止复用到生产）
 account:

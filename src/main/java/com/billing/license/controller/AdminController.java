@@ -29,10 +29,9 @@ import java.util.stream.Collectors;
 /**
  * 管理后台控制器（架构十一.6、十六；接口简化主题 I）
  *
- * <p><b>I1（2026-09-14）鉴权收敛</b>：管理端不再自校验 {@code X-Admin-API-Key}
- * （它与 {@code X-API-Key} 校验的是同一份 {@code security.admin-api-keys}，纯冗余），
- * 统一由 {@code SecurityConfig} 对 {@code /api/admin/**} 要求 {@code ROLE_ADMIN}；
- * 鉴权模型由三档收敛为两档（公开 / X-API-Key）。
+ * <p><b>鉴权</b>：管理端统一由 {@code SecurityConfig} 对 {@code /api/admin/**} 要求
+ * {@code ROLE_ADMIN}；管理员账号登录后持 JWT（JwtAuthFilter 按 DB 现查角色授权）即获此权限。
+ * 原 X-API-Key 通道已于 plan-6.0 / A12 移除。
  *
  * <p><b>I2/I3（2026-09-14）查询收敛</b>：订单与 License 查询各自收敛为「一个端点 + 过滤参数」，
  * 删除 {@code /orders/status/{status}}、{@code /orders/{n}/licenses} 等重复入口。
@@ -43,7 +42,7 @@ import java.util.stream.Collectors;
  * <p>所有敏感操作经 {@link Audit} 声明式审计（{@code AuditAspect} 统一落库 + AUDIT logger）。
  */
 @Tag(name = "管理后台",
-        description = "订单查询/签发/退款、License 查询/作废/换机重发、兑换码生成/导出/撤销（需 X-API-Key 且具 ROLE_ADMIN）")
+        description = "订单查询/签发/退款、License 查询/作废/换机重发、兑换码生成/导出/撤销（需管理员 JWT 且具 ROLE_ADMIN）")
 @RestController
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor
@@ -177,7 +176,7 @@ public class AdminController {
     }
 
     // D2（2026-09-14）：吊销唯一入口——客户端自吊销端点已删除（其要求客户端持有管理密钥，语义矛盾）。
-    @Operation(summary = "作废 License（管理端）", description = "管理端强制作废指定 License（需 X-API-Key）")
+    @Operation(summary = "作废 License（管理端）", description = "管理端强制作废指定 License（需管理员 JWT）")
     @ApiResponse(responseCode = "200", description = "作废成功")
     @Audit(action = "REVOKE_LICENSE", target = "#licenseKey", detail = "#reason")
     @PostMapping("/licenses/{licenseKey}/revoke")
@@ -253,7 +252,7 @@ public class AdminController {
         return ResponseEntity.ok(views);
     }
 
-    @Operation(summary = "撤销兑换码（管理端）", description = "作废指定兑换码（需 X-API-Key）")
+    @Operation(summary = "撤销兑换码（管理端）", description = "作废指定兑换码（需管理员 JWT）")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "撤销成功"),
             @ApiResponse(responseCode = "400", description = "兑换码不存在")

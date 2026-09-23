@@ -36,7 +36,7 @@
     <div class="container admin__inner">
       <p class="admin__eyebrow">管理后台</p>
       <h1 class="admin__title">平台账务统计</h1>
-      <p class="admin__sub">收入总览、分渠道 / 分产品统计、交易流水、时间趋势与对账差异（仅查询）。数据接口需管理 API Key。</p>
+      <p class="admin__sub">收入总览、分渠道 / 分产品统计、交易流水、时间趋势与对账差异（仅查询）。数据接口需管理员登录后凭 JWT 访问。</p>
 
       <noscript>
         <p class="noscript-note">
@@ -46,14 +46,19 @@
 
       <!-- ======================= 解锁卡片（未提供 Key 时显示） ======================= -->
       <div class="panel auth-panel" id="authPanel">
-        <h2 class="panel__title">输入管理 API Key</h2>
-        <p class="panel__desc">Key 与管理接口（<code class="mono">X-API-Key</code>）同一份配置，仅在本机浏览器中保存，不会发送到其他服务。</p>
+        <h2 class="panel__title">管理员登录</h2>
+        <p class="panel__desc">使用管理员账号（邮箱 + 密码）登录；令牌仅保存在本机浏览器，不会发送到其他服务。</p>
 
         <form id="unlockForm" novalidate>
           <div class="field">
-            <label class="field__label" for="keyInput">管理 API Key</label>
-            <input class="field__input" type="password" id="keyInput" name="key"
-                   autocomplete="off" spellcheck="false" placeholder="粘贴管理 API Key" required>
+            <label class="field__label" for="loginEmail">管理员邮箱</label>
+            <input class="field__input" type="email" id="loginEmail" name="email"
+                   autocomplete="username" spellcheck="false" placeholder="管理员邮箱" required>
+          </div>
+          <div class="field">
+            <label class="field__label" for="loginPassword">密码</label>
+            <input class="field__input" type="password" id="loginPassword" name="password"
+                   autocomplete="current-password" placeholder="密码" required>
           </div>
           <div class="field field--check">
             <label class="check-label">
@@ -62,7 +67,7 @@
             </label>
           </div>
           <p class="form-error" id="authError" hidden></p>
-          <button class="btn btn--primary" type="submit" id="unlockBtn">进入</button>
+          <button class="btn btn--primary" type="submit" id="unlockBtn">登录</button>
         </form>
       </div>
 
@@ -71,8 +76,8 @@
 
         <!-- 用户栏：解锁状态与退出 -->
         <div class="userbar">
-          <p class="userbar__note">已解锁 · Key 保存在本机<span id="keyScopeNote"></span></p>
-          <button class="linklike" type="button" id="lockBtn">清除 Key 并退出</button>
+          <p class="userbar__note">已登录 · 令牌保存在本机<span id="keyScopeNote"></span></p>
+          <button class="linklike" type="button" id="lockBtn">退出登录</button>
         </div>
 
         <!-- 工具栏：时间范围 -->
@@ -208,7 +213,7 @@
 
   <footer class="site-footer">
     <div class="container">
-      <p class="form-note">内部页面，请勿外传链接；接口鉴权：X-API-Key（ROLE_ADMIN）。</p>
+      <p class="form-note">内部页面，请勿外传链接；接口鉴权：管理员 JWT（ROLE_ADMIN）。</p>
     </div>
   </footer>
 

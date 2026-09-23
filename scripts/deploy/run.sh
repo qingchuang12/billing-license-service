@@ -14,9 +14,10 @@ fi
 # 缺失关键配置时明确失败（应用侧也是 fail-fast，这里提前给出更友好的提示）
 # K10（2026-09-18）：仓库内已无默认值，故 APP_BASE_URL / MAIL_PASSWORD 亦属必填。
 : "${DB_PASSWORD:?请设置 DB_PASSWORD}"
-: "${ADMIN_API_KEYS:?请设置 ADMIN_API_KEYS}"
 : "${APP_BASE_URL:?请设置 APP_BASE_URL（如 http://localhost:8000）}"
 : "${MAIL_PASSWORD:?请设置 MAIL_PASSWORD}"
+# 管理端鉴权 = 管理员 JWT（A12 / 2026-09-23 移除 X-API-Key，无独立 ADMIN_API_KEYS 变量）；
+# 首个管理员账号按 scripts/db/promote-to-admin.sql 由运维 SQL 产生。
 
 echo "==> 启动 ${JAR}"
 exec java -jar "$JAR"

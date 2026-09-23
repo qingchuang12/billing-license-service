@@ -55,27 +55,27 @@ class OpenApiCustomizerTest {
     }
 
     @Test
-    void adminEndpoint_requiresApiKey() {
-        // I1（2026-09-14）鉴权收敛：管理端与特权端点统一用 X-API-Key（原 X-Admin-API-Key 已删除）
+    void adminEndpoint_requiresBearer() {
+        // plan-6.0 / A12（2026-09-23）：X-API-Key 通道已移除，管理端改由管理员 JWT（Bearer）访问
         OpenAPI api = withPaths("/api/admin/orders", "/api/admin/licenses/abc/revoke");
         customizer().customise(api);
-        assertEquals("X-API-Key", onlyScheme(api, "/api/admin/orders"));
-        assertEquals("X-API-Key", onlyScheme(api, "/api/admin/licenses/abc/revoke"));
+        assertEquals("Bearer", onlyScheme(api, "/api/admin/orders"));
+        assertEquals("Bearer", onlyScheme(api, "/api/admin/licenses/abc/revoke"));
     }
 
     @Test
-    void privilegedEndpoint_requiresApiKey() {
-        // D1（2026-09-14）：端点前缀已统一去掉 /api/v1
+    void privilegedEndpoint_requiresBearer() {
+        // plan-6.0 / A12（2026-09-23）：特权端点改由 Bearer JWT（ROLE_ADMIN）保护
         OpenAPI api = withPaths(
                 "/api/licenses/list",
                 "/api/orders/123",
                 "/api/redeem/generate",
                 "/api/redeem/revoke/k");
         customizer().customise(api);
-        assertEquals("X-API-Key", onlyScheme(api, "/api/licenses/list"));
-        assertEquals("X-API-Key", onlyScheme(api, "/api/orders/123"));
-        assertEquals("X-API-Key", onlyScheme(api, "/api/redeem/generate"));
-        assertEquals("X-API-Key", onlyScheme(api, "/api/redeem/revoke/k"));
+        assertEquals("Bearer", onlyScheme(api, "/api/licenses/list"));
+        assertEquals("Bearer", onlyScheme(api, "/api/orders/123"));
+        assertEquals("Bearer", onlyScheme(api, "/api/redeem/generate"));
+        assertEquals("Bearer", onlyScheme(api, "/api/redeem/revoke/k"));
     }
 
     @Test
@@ -94,7 +94,7 @@ class OpenApiCustomizerTest {
 
     @Test
     void verifyExcludedFromPrivileged() {
-        // /api/licenses/verify 必须按公开处理，不能误判为特权 X-API-Key
+        // /api/licenses/verify 必须按公开处理，不能误判为特权 Bearer
         // 用字面量子路径验证（customizer 以 startsWith 判定，与模板/字面量无关）
         OpenAPI api = withPaths("/api/licenses/verify/abc");
         customizer().customise(api);

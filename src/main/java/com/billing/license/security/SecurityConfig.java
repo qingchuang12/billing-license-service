@@ -26,10 +26,10 @@ import java.util.List;
  * 2. 客户端可公开访问的端点（收银台创建/状态轮询、License 离线校验、凭兑换码兑换）放行，
  *    其安全性依赖签名 License + 限流（RateLimitService），后续可按需收紧。
  * 3. 管理端与全部管理动作（/api/admin/**：订单签发/退款、License 作废/换机、兑换码生成/撤销）
- *    必须携带合法 X-API-Key（ROLE_ADMIN），否则 401。
- * 4. 鉴权模型共三档（v2.10）：公开 / 用户（Authorization: Bearer JWT → ROLE_USER）/ X-API-Key（ROLE_ADMIN）。
+ *    必须由管理员账号登录后持 JWT（ROLE_ADMIN）访问，否则 401。
+ * 4. 鉴权模型共两档（plan-6.0 / A12）：公开 / 用户（Authorization: Bearer JWT → ROLE_USER；管理员账号登录后额外获 ROLE_ADMIN）。X-API-Key 通道已于 2026-09-23 移除。
  *    账号公开端点（发码、注册、登录、找回密码）逐条 permitAll 并声明在 /api/account/** 之前，
- *    其余账号端点需 ROLE_USER；两个过滤器（JwtAuthFilter / ApiKeyAuthFilter）并列不互斥，权限域严格隔离。
+ *    其余账号端点需 ROLE_USER；管理端由同一 JwtAuthFilter 按 DB 现查角色授权（管理员账号额外获 ROLE_ADMIN），权限域严格隔离。
  * 5. 其余一切请求默认拒绝（denyAll），避免遗漏暴露。
  * 6. 无状态（STATELESS）+ 关闭 CSRF（纯 API、令牌鉴权，无浏览器会话，CSRF 不适用）。
  * 7. H9：CORS 按配置白名单开放（默认不开放跨域），仅在部署独立前端域名时显式配置。
@@ -40,12 +40,6 @@ public class SecurityConfig {
 
     private final JwtTokenService jwtTokenService;
     private final UserRepository userRepository;
-
-    @Value("${security.api-key-header:X-API-Key}")
-    private String apiKeyHeader;
-
-    @Value("${security.admin-api-keys:}")
-    private String adminApiKeys;
 
     /** H9：允许跨域的源头（逗号分隔），留空则不开放跨域 */
     @Value("${app.cors.allowed-origins:}")
@@ -67,7 +61,6 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-        ApiKeyAuthFilter apiKeyFilter = new ApiKeyAuthFilter(apiKeyHeader, adminApiKeys);
         JwtAuthFilter jwtAuthFilter = new JwtAuthFilter(jwtTokenService, userRepository);
 
         http
@@ -100,9 +93,9 @@ public class SecurityConfig {
                 // B8：同样仅放行 GET。
                 .requestMatchers(HttpMethod.GET, "/account/**").permitAll()
                 // 管理统计静态页（/admin/index.html + 资产，2026-09-22）：页面自身无数据，
-                // 鉴权由页面内的 /api/admin/** 调用凭 X-API-Key 完成，静态资产与 /checkout/**、
+                // 鉴权由页面内的 /api/admin/** 调用凭管理员 JWT 完成，静态资产与 /checkout/**、
                 // /account/** 同口径放行。同样不是 /api/admin（接口在下方按 ROLE_ADMIN 保护）。
-                // B8：同样仅放行 GET。页面含 noindex 头，且所有数据仍需管理 Key 才能取到。
+                // B8：同样仅放行 GET。页面含 noindex 头，且所有数据仍需管理员 JWT 才能取到。
                 .requestMatchers(HttpMethod.GET, "/admin/**").permitAll()
                 // v2.10 账号公开端点：**必须逐条声明在 /api/account/** 之前**。
                 // Spring Security 按声明顺序取首个匹配规则，若把宽松的 /api/account/** 写在前面，
@@ -113,21 +106,17 @@ public class SecurityConfig {
                     "/api/account/login",
                     "/api/account/password/reset").permitAll()
                 // 其余账号端点（登出 / me / 改密）需用户令牌。
-                // 说明：管理员 X-API-Key 不放行这些端点 —— 它们全部依赖「当前用户」上下文
-                // （principal 为 userId），管理员令牌无此上下文，放行只会引入「我是谁」的歧义。
-                // 管理员侧的账号管理诉求属独立主题，走 /api/admin/**。
+                // 说明：管理员 JWT 不放行这些端点 —— 它们全部依赖「当前用户」上下文
+                // （principal 为 userId），管理端诉求走 /api/admin/**。
                 .requestMatchers("/api/account/**").hasAuthority("ROLE_USER")
-                // I1（2026-09-14）鉴权收敛为两档：管理端与全部管理动作统一要求 X-API-Key + ROLE_ADMIN。
-                // 原 /api/admin/** 由 AdminController 用 X-Admin-API-Key 自校验，而该 header 与 X-API-Key
-                // 校验的是同一份 security.admin-api-keys（纯冗余），故收敛为单 header、统一在此鉴权。
+                // 管理端与全部管理动作统一要求 ROLE_ADMIN；管理员账号登录后持 JWT（由 JwtAuthFilter
+                // 按 DB 现查角色授权）即获此权限。X-API-Key 通道已于 plan-6.0 / A12 移除。
                 .requestMatchers("/api/admin/**").hasAuthority("ROLE_ADMIN")
                 .anyRequest().denyAll())
             // N3：401/403 也要返回可读 JSON（原 HttpStatusEntryPoint 只回空 body，页面只能显示兜底文案）
             .exceptionHandling(ex -> ex
                 .authenticationEntryPoint(new JsonAuthenticationEntryPoint())
                 .accessDeniedHandler(new JsonAccessDeniedHandler()))
-            .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class)
-            // 用户令牌过滤器与 API Key 过滤器并列：各认各的凭证，任一命中即写入对应身份
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
@@ -147,7 +136,7 @@ public class SecurityConfig {
         }
         // 仅允许已配置源头；明确约束方法、头部与是否带凭证
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-API-Key"));
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

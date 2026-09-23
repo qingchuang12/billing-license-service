@@ -117,7 +117,7 @@ public class User {
     public enum UserRole {
         /** 普通消费者：仅 ROLE_USER，可访问 /api/account/** */
         USER,
-        /** 管理员：ROLE_USER + ROLE_ADMIN，可访问 /api/admin/**（与 X-API-Key 通道并行） */
+        /** 管理员：ROLE_USER + ROLE_ADMIN，可访问 /api/admin/**（X-API-Key 通道已于 A12 移除，现仅由管理员 JWT 授权） */
         ADMIN
     }
 }

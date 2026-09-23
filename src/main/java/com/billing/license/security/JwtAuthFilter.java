@@ -20,9 +20,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * 用户令牌鉴权过滤器（plan v2.10 / A2），与 {@link ApiKeyAuthFilter} <b>并列</b>而非互斥：
- * 两过滤器各认各的凭证，任一命中即写入对应身份。用户令牌按 {@code users.role} 授予（plan-6.0）：
- * 消费者为 {@code ROLE_USER}；管理员为 {@code ROLE_USER + ROLE_ADMIN}。角色不写进 JWT，每请求现查。
+ * 用户令牌鉴权过滤器（plan v2.10 / A2），为系统中<b>唯一的</b>认证过滤器：
+ * 用户令牌按 {@code users.role} 授予（plan-6.0）：消费者为 {@code ROLE_USER}；
+ * 管理员为 {@code ROLE_USER + ROLE_ADMIN}。角色不写进 JWT，每请求现查。
  *
  * <p><b>只认 {@code Authorization: Bearer <token>}</b>，且仅此一处读取令牌。
  *

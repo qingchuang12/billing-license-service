@@ -27,13 +27,13 @@ import java.util.List;
 /**
  * 平台账务管理查看接口（仅查询，不写数据）。
  *
- * <p>挂载于 {@code /api/admin/accounting/**}，由 {@code SecurityConfig} 统一要求 X-API-Key + ROLE_ADMIN；
+ * <p>挂载于 {@code /api/admin/accounting/**}，由 {@code SecurityConfig} 统一要求 ROLE_ADMIN（管理员 JWT）；
  * 所有端点声明式 {@link Audit} 审计（只读视图，target 统一为 "-")。
  *
  * <p>金额口径与多币种分组规则见 {@link AccountingService} 类注释（全局唯一出处）。
  */
 @Tag(name = "平台账务管理",
-        description = "收入总览/分渠道/分产品/交易流水/时间趋势/对账差异（仅查询，需 X-API-Key 且具 ROLE_ADMIN）")
+        description = "收入总览/分渠道/分产品/交易流水/时间趋势/对账差异（仅查询，需管理员 JWT 且具 ROLE_ADMIN）")
 @RestController
 @RequestMapping("/api/admin/accounting")
 @RequiredArgsConstructor

@@ -1,9 +1,9 @@
 /* ==========================================================================
    晏宁科技 · 管理统计页（/admin/）页面脚本
-   依赖后端：/api/admin/accounting/**（6 个只读端点，X-API-Key + ROLE_ADMIN）。
+   依赖后端：/api/admin/accounting/**（6 个只读端点，管理员 JWT + ROLE_ADMIN）。
 
    结构（与 account.js 同风格，ES5）：
-   1. 状态与 Key 存取（localStorage / sessionStorage 按是否勾选「记住本机」）
+   1. 状态与令牌存取（localStorage / sessionStorage 按是否勾选「记住本机」）
    2. 统一请求入口（ApiResponseAdvice 统一包壳，业务字段在 $.data，在此单点剥壳）
    3. 时间范围（默认近 30 天，与后端缺省口径一致）
    4. 各分区渲染（总览 / 分渠道 / 分产品 / 交易流水 / 趋势 / 对账差异）
@@ -12,11 +12,11 @@
 (function () {
   'use strict';
 
-  var KEY_STORAGE = 'billing-admin-key';          /* 勾选「记住本机」→ localStorage */
-  var KEY_STORAGE_SESSION = 'billing-admin-key-session'; /* 未勾选 → sessionStorage */
+  var TOKEN_STORAGE = 'billing-admin-token';          /* 勾选「记住本机」→ localStorage */
+  var TOKEN_STORAGE_SESSION = 'billing-admin-token-session'; /* 未勾选 → sessionStorage */
 
   var state = {
-    key: '',
+    token: '',
     from: '',
     to: '',
     tab: 'overview',
@@ -76,25 +76,25 @@
 
   /* ======================= 1. Key 存取与解锁 ======================= */
 
-  function loadStoredKey() {
+  function loadStoredToken() {
     try {
-      return localStorage.getItem(KEY_STORAGE) || sessionStorage.getItem(KEY_STORAGE_SESSION) || '';
+      return localStorage.getItem(TOKEN_STORAGE) || sessionStorage.getItem(TOKEN_STORAGE_SESSION) || '';
     } catch (e) { return ''; }
   }
 
-  function saveKey(key, remember) {
+  function saveToken(token, remember) {
     try {
-      if (remember) localStorage.setItem(KEY_STORAGE, key);
-      else sessionStorage.setItem(KEY_STORAGE_SESSION, key);
+      if (remember) localStorage.setItem(TOKEN_STORAGE, token);
+      else sessionStorage.setItem(TOKEN_STORAGE_SESSION, token);
     } catch (e) { /* 隐私模式下忽略 */ }
   }
 
-  function clearKey() {
+  function clearToken() {
     try {
-      localStorage.removeItem(KEY_STORAGE);
-      sessionStorage.removeItem(KEY_STORAGE_SESSION);
+      localStorage.removeItem(TOKEN_STORAGE);
+      sessionStorage.removeItem(TOKEN_STORAGE_SESSION);
     } catch (e) { /* 忽略 */ }
-    state.key = '';
+    state.token = '';
   }
 
   function showError(id, message) {
@@ -117,25 +117,37 @@
       $('rememberKey').checked ? '（localStorage）' : '（sessionStorage，关闭标签页失效）';
   }
 
-  function unlock(key, remember) {
-    state.key = key;
-    saveKey(key, remember);
-    /* 未验证的 key 不预存视图：首次加载任一分区失败（401/403）会自动退回解锁卡片 */
-    showMain();
-    resetRangeToDefault();
-    loadTab(state.tab);
+  function login(email, password, remember) {
+    showError('authError', '');
+    apiPost('/api/account/login', { email: email, password: password }).then(function (data) {
+      var token = data && data.accessToken;
+      var role = data && data.user && data.user.role;
+      if (!token) { showError('authError', '登录失败，未返回令牌。'); return; }
+      if (role !== 'ADMIN') {
+        showError('authError', '该账号不是管理员，无法进入管理后台。');
+        return;
+      }
+      state.token = token;
+      saveToken(token, remember);
+      showMain();
+      resetRangeToDefault();
+      loadTab(state.tab);
+    }).catch(function (err) {
+      showError('authError', err && err.message ? err.message : '登录失败，请检查邮箱与密码。');
+    });
   }
 
   function lock() {
-    clearKey();
-    $('keyInput').value = '';
+    clearToken();
+    $('loginEmail').value = '';
+    $('loginPassword').value = '';
     showAuth();
   }
 
-  /* 401/403：Key 无效或无权限——清掉本地 key，退回解锁卡片 */
+  /* 401/403：令牌失效或无权限——清掉本地令牌，退回登录卡片 */
   function handleAuthFailure() {
     lock();
-    showError('authError', '管理 API Key 无效或无 ROLE_ADMIN 权限，请重新输入。');
+    showError('authError', '登录已失效或无管理员权限，请重新登录。');
   }
 
   /* ======================= 2. 统一请求入口 ======================= */
@@ -151,6 +163,28 @@
     };
   }
 
+  /** 登录用 POST：与 requestJson 同源的剥壳逻辑（业务字段在 $.data）。 */
+  function apiPost(url, body) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      return res.text().then(function (raw) {
+        var payload = null;
+        if (raw) { try { payload = JSON.parse(raw); } catch (e) { payload = null; } }
+        if (res.status === 401 || res.status === 403) {
+          throw { kind: 'api', status: res.status, code: 'AUTH', message: '邮箱或密码错误，或无管理员权限。' };
+        }
+        if (!res.ok) {
+          var m = payload && (payload.message || (payload.error && payload.error.message));
+          throw { kind: 'api', status: res.status, code: 'HTTP_' + res.status, message: String(m || '请求失败') };
+        }
+        return payload && payload.data ? payload.data : (payload || {});
+      });
+    });
+  }
+
   /**
    * 统一请求入口：服务端经 ApiResponseAdvice 统一包壳，业务字段在 $.data，
    * 在此单点剥壳后向上层返回业务对象（保持对无壳扁平结构的兼容）。
@@ -158,7 +192,7 @@
   function requestJson(url) {
     return fetch(url, {
       method: 'GET',
-      headers: { 'Accept': 'application/json', 'X-API-Key': state.key }
+      headers: { 'Accept': 'application/json', 'Authorization': 'Bearer ' + state.token }
     }).then(function (res) {
       return res.text().then(function (raw) {
         var payload = null;
@@ -517,10 +551,11 @@
   function bindEvents() {
     $('unlockForm').addEventListener('submit', function (e) {
       e.preventDefault();
-      var key = $('keyInput').value.trim();
-      if (!key) { showError('authError', '请输入管理 API Key。'); return; }
+      var email = $('loginEmail').value.trim();
+      var password = $('loginPassword').value;
+      if (!email || !password) { showError('authError', '请输入管理员邮箱与密码。'); return; }
       hideError('authError');
-      unlock(key, $('rememberKey').checked);
+      login(email, password, $('rememberKey').checked);
     });
 
     $('lockBtn').addEventListener('click', lock);
@@ -554,10 +589,13 @@
 
   function init() {
     bindEvents();
-    var stored = loadStoredKey();
+    var stored = loadStoredToken();
     if (stored) {
-      $('rememberKey').checked = !!localStorage.getItem(KEY_STORAGE);
-      unlock(stored, $('rememberKey').checked);
+      $('rememberKey').checked = !!localStorage.getItem(TOKEN_STORAGE);
+      state.token = stored;
+      showMain();
+      resetRangeToDefault();
+      loadTab(state.tab);
     } else {
       showAuth();
       resetRangeToDefault();

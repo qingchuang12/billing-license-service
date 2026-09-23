@@ -15,7 +15,7 @@
 - **多算法支持**：Ed25519（JWS `EdDSA`，默认）、ECDSA（`ES256`）、RSA（`RS256`）；可用集合（纯本地 `LocalKmsService` 支持）：`EdDSA` / `ES256` / `RS256`（详见 `application.yml` 的 `billing.signature-algorithm` 注释）。
 - **KMS 集成**：纯本地文件方案（`LocalKmsService`），密钥经文件挂载，无云 KMS 依赖（GCP / Azure / 阿里云 均不接入）。
 - **邮件通知**：支付成功/失败与 License 签发通知（`service/notification/EmailNotificationService`，`@Async`；未配置 SMTP 时自动跳过，不阻塞主流程）。
-- **安全与可观测**：ApiKey 鉴权（特权端点 `X-API-Key` + `ROLE_ADMIN`；管理端 `/api/admin/**` 由 `AdminController` 自校验 `X-Admin-API-Key`）、CORS 白名单、并发限流（内存淘汰 + XFF 防伪造）、操作审计日志（`@Audit` + `AuditAspect` 异步独立事务落库）、`/actuator/health` 健康检查（k8s 探针放行）。
+- **安全与可观测**：管理员 JWT 鉴权（特权端点 `Authorization: Bearer <JWT>` + `ROLE_ADMIN`；管理员账号经 `POST /api/account/login` 登录后由 `JwtAuthFilter` 注入 `ROLE_ADMIN`）、CORS 白名单、并发限流（内存淘汰 + XFF 防伪造）、操作审计日志（`@Audit` + `AuditAspect` 异步独立事务落库，actor 取自 `SecurityContext` 的 `userId`）、`/actuator/health` 健康检查（k8s 探针放行）。
 
 ## 快速开始
 
@@ -40,10 +40,7 @@ export PUBLIC_KEY_PATH=/path/to/public.key
 export DB_USERNAME=postgres
 export DB_PASSWORD='<强口令>'
 
-# 管理端 API 密钥（逗号分隔，用于 X-API-Key 鉴权，缺失则启动失败）
-export ADMIN_API_KEYS=admin-key-0001,admin-key-0002
-
-# 账号体系：令牌签名密钥（≥32B）与验证码 pepper（生产必配）
+# 账号体系：令牌签名密钥（≥32B，缺失即启动失败）与验证码 pepper（生产必配）
 export ACCOUNT_JWT_SECRET="$(openssl rand -base64 48)"
 export ACCOUNT_CODE_PEPPER="$(openssl rand -hex 16)"
 
@@ -79,7 +76,7 @@ java -jar target/billing-license-service-*.jar
 ```bash
 # 1. 准备环境变量（复制模板，填入真实值；.env 已被 .gitignore 忽略，不入库）
 cp .env.example .env
-#   编辑 .env：设置 DB_PASSWORD 与 ADMIN_API_KEYS
+#   编辑 .env：设置 DB_PASSWORD 与账号令牌签名密钥 ACCOUNT_JWT_SECRET
 
 # 2. 准备签名密钥（挂载到 ./keys，容器只读读取；KMS=local 时必须）
 mkdir -p keys
@@ -102,13 +99,13 @@ docker compose logs -f app
 
 > **路径约定（D1，2026-09-14）**：端点前缀统一为 `/api/**`，**不再使用 `/api/v1`**。
 
-> **鉴权为三档（v2.10，2026-09-15）**：
+> **鉴权为两档（v2.10 增设用户档；X-API-Key 特权档已于 A12 / 2026-09-23 移除，统一为管理员 JWT）**：
 > 1. **公开**：`/api/checkout/**`、`/api/redeem/redeem`、`/api/licenses/verify/**`、`/api/webhooks/**`、`/v3/api-docs`，以及账号的 `POST /api/account/verification-code`、`register`、`login`、`password/reset`；
 > 2. **用户（v2.10 新增）**：`Authorization: Bearer <JWT>` → `ROLE_USER`，适用于 `POST /api/account/logout`、`GET /api/account/me`、`POST /api/account/password/change`；
-> 3. **特权**：`/api/admin/**` 全部管理动作携带请求头 **`X-API-Key`**（值须在 `security.admin-api-keys` 中，等价于 `ROLE_ADMIN`）。
+> 3. **管理（A12 起替代原 X-API-Key 特权档）**：`/api/admin/**` 全部管理动作携带 `Authorization: Bearer <JWT>`，且持有账号的 `role=ADMIN`（即 `ROLE_ADMIN`）。管理员与普通用户共用同一套账号体系与登录端点 `POST /api/account/login`，登录后 `JwtAuthFilter` 按 `users.role` 动态注入角色——**无独立 API Key、无独立密钥配置**。
 >
-> 原 `X-Admin-API-Key`（`AdminController` 自校验）已删除——它与 `X-API-Key` 校验的是**同一份密钥**，属纯冗余；公开端点依赖签名 License + 限流保护。
-> **权限域严格隔离**：用户令牌不能访问 `/api/admin/**`；管理员 `X-API-Key` 也不用于账号端点（登出/me/改密依赖「当前用户」上下文，管理员令牌无此上下文）。
+> 历史注记：`X-Admin-API-Key`（`AdminController` 自校验）与 `X-API-Key`（`ApiKeyAuthFilter` 机读通道）均已删除（A12）。公开端点依赖签名 License + 限流保护。
+> **权限域严格隔离**：用户令牌（`ROLE_USER`）不能访问 `/api/admin/**`；管理动作依赖「当前管理员用户」上下文，actor 取自 `SecurityContext` 的 `userId`（审计日志可追溯操作人）。
 
 ### 端点总览（共 28 个：公开 14 + 管理端 11 + 账号需登录 3）
 
@@ -120,17 +117,17 @@ docker compose logs -f app
 | License | `GET /api/licenses/verify/{licenseKey}` | 公开（失效件返回 400，查失效件用管理端接口） |
 | 兑换码 | `POST /api/redeem/redeem` | 公开 |
 | 支付回调 | `POST /api/webhooks/{alipay \| wechat \| stripe \| paddle \| paypal}` | 公开（各渠道自行验签） |
-| 订单 | `GET /api/admin/orders?status=&orderNumber=&orderId=` | `X-API-Key` |
-| | `POST /api/admin/orders/{orderNumber}/issue` | `X-API-Key` |
-| | `POST /api/admin/orders/{orderNumber}/refund` | `X-API-Key` |
-| License | `GET /api/admin/licenses?customerEmail=&orderNumber=&status=` | `X-API-Key` |
-| | `GET /api/admin/licenses/{licenseKey}` | `X-API-Key` |
-| | `POST /api/admin/licenses/{licenseKey}/revoke` | `X-API-Key` |
-| | `POST /api/admin/licenses/{licenseKey}/reissue` | `X-API-Key` |
-| 兑换码 | `POST /api/admin/redeem-codes/generate?productSku=&count=` | `X-API-Key` |
-| | `GET /api/admin/redeem-codes?productSku=&status=` | `X-API-Key` |
-| | `POST /api/admin/redeem-codes/revoke/{code}` | `X-API-Key` |
-| 运维 | `GET /api/admin/payment-channels` | `X-API-Key` |
+| 订单 | `GET /api/admin/orders?status=&orderNumber=&orderId=` | 管理员 JWT |
+| | `POST /api/admin/orders/{orderNumber}/issue` | 管理员 JWT |
+| | `POST /api/admin/orders/{orderNumber}/refund` | 管理员 JWT |
+| License | `GET /api/admin/licenses?customerEmail=&orderNumber=&status=` | 管理员 JWT |
+| | `GET /api/admin/licenses/{licenseKey}` | 管理员 JWT |
+| | `POST /api/admin/licenses/{licenseKey}/revoke` | 管理员 JWT |
+| | `POST /api/admin/licenses/{licenseKey}/reissue` | 管理员 JWT |
+| 兑换码 | `POST /api/admin/redeem-codes/generate?productSku=&count=` | 管理员 JWT |
+| | `GET /api/admin/redeem-codes?productSku=&status=` | 管理员 JWT |
+| | `POST /api/admin/redeem-codes/revoke/{code}` | 管理员 JWT |
+| 运维 | `GET /api/admin/payment-channels` | 管理员 JWT |
 | 账号 | `POST /api/account/verification-code` | 公开 |
 | | `POST /api/account/register` | 公开 |
 | | `POST /api/account/login` | 公开 |
@@ -259,18 +256,30 @@ curl http://localhost:8000/api/checkout/{checkoutId}/status
 
 ### 订单查询
 
+> **鉴权方式（A12 起）**：所有 `/api/admin/**` 管理端点统一用**管理员 JWT**——先以 `role=ADMIN` 的账号 `POST /api/account/login` 拿 `accessToken`，再带 `Authorization: Bearer <token>`。下文示例以变量 `$ADMIN_TOKEN` 指代该令牌，不再使用 `X-API-Key`。
+
 ```bash
+# 0) 管理员登录，取令牌（下文 $ADMIN_TOKEN 即 data.accessToken）
+curl -s -X POST http://localhost:8000/api/account/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"<管理员口令>"}' \
+  | sed -E 's/.*"accessToken":"([^"]+)".*/\1/'   # 仅演示：实际请安全保存令牌
+
 # 按订单 ID（I2：原 /api/orders/{orderId} 已收敛到此）
-curl "http://localhost:8000/api/admin/orders?orderId={orderId}" -H "X-API-Key: admin-key-0001"
+curl "http://localhost:8000/api/admin/orders?orderId={orderId}" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # 按业务订单号（原 /api/orders/number/{orderNumber}）
-curl "http://localhost:8000/api/admin/orders?orderNumber=ORD-20260914-0001" -H "X-API-Key: admin-key-0001"
+curl "http://localhost:8000/api/admin/orders?orderNumber=ORD-20260914-0001" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # 按状态过滤（原 /api/admin/orders/status/{status}）
-curl "http://localhost:8000/api/admin/orders?status=PAID" -H "X-API-Key: admin-key-0001"
+curl "http://localhost:8000/api/admin/orders?status=PAID" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # 全部订单
-curl "http://localhost:8000/api/admin/orders" -H "X-API-Key: admin-key-0001"
+curl "http://localhost:8000/api/admin/orders" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 ### 许可证管理
@@ -278,27 +287,27 @@ curl "http://localhost:8000/api/admin/orders" -H "X-API-Key: admin-key-0001"
 ```bash
 # 为已支付订单签发许可证（I4：由原 /api/licenses/issue/{orderId} 归口到管理端；幂等）
 curl -X POST http://localhost:8000/api/admin/orders/{orderNumber}/issue \
-  -H "X-API-Key: admin-key-0001"
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # 验证许可证（公开，离线校验用）
 curl http://localhost:8000/api/licenses/verify/{licenseKey}
 
 # 查询 License（I3：一个端点替代「按客户查询」与「订单下 License 列表」，含失效件）
-curl "http://localhost:8000/api/admin/licenses?customerEmail=buyer@example.com" -H "X-API-Key: admin-key-0001"
-curl "http://localhost:8000/api/admin/licenses?orderNumber=ORD-20260914-0001" -H "X-API-Key: admin-key-0001"
-curl "http://localhost:8000/api/admin/licenses?status=REISSUED" -H "X-API-Key: admin-key-0001"
+curl "http://localhost:8000/api/admin/licenses?customerEmail=buyer@example.com" -H "Authorization: Bearer $ADMIN_TOKEN"
+curl "http://localhost:8000/api/admin/licenses?orderNumber=ORD-20260914-0001" -H "Authorization: Bearer $ADMIN_TOKEN"
+curl "http://localhost:8000/api/admin/licenses?status=REISSUED" -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # 查询 License 详情（含失效件；verify 对失效件返回 400，查失效件用本接口）
 curl "http://localhost:8000/api/admin/licenses/{licenseKey}" \
-  -H "X-API-Key: admin-key-0001"
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # 吊销许可证（吊销唯一入口；D2 起客户端自吊销端点已删除）
 curl -X POST "http://localhost:8000/api/admin/licenses/{licenseKey}/revoke?reason=用户申请退款" \
-  -H "X-API-Key: admin-key-0001"
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # 换机重发（管理端）：原证置 REISSUED，新证绑定新机器码
 curl -X POST "http://localhost:8000/api/admin/licenses/{licenseKey}/reissue?newMachineId=NEW-MACHINE-ID&reason=changed_pc" \
-  -H "X-API-Key: admin-key-0001"
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 ### 兑换码
@@ -310,16 +319,16 @@ curl -X POST "http://localhost:8000/api/admin/licenses/{licenseKey}/reissue?newM
 ```bash
 # 批量生成（I5：归口到管理端，且**返回码明文列表**——原实现只返回数量，生成后无法取回）
 curl -X POST "http://localhost:8000/api/admin/redeem-codes/generate?productSku=pro-buyout&count=100" \
-  -H "X-API-Key: admin-key-0001"
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 # → {"success":true,"count":100,"codes":["K7D2-9FQA-M3PZ-88BC", ...]}
 
 # 导出/对账（I6：按产品 SKU + 状态检索，均可不传）
 curl "http://localhost:8000/api/admin/redeem-codes?productSku=pro-buyout&status=UNUSED" \
-  -H "X-API-Key: admin-key-0001"
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # 撤销兑换码（归口到管理端）
 curl -X POST http://localhost:8000/api/admin/redeem-codes/revoke/K7D2-9FQA-M3PZ-88BC \
-  -H "X-API-Key: admin-key-0001"
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # 兑换码兑换 License（公开；唯一保留在 /api/redeem/** 的端点）：传入 machineId 即绑定该设备
 curl -X POST http://localhost:8000/api/redeem/redeem \
@@ -334,10 +343,10 @@ curl -X POST http://localhost:8000/api/redeem/redeem \
 ### 管理端退款
 
 ```bash
-# 对已完成支付订单发起退款（管理端，需 X-API-Key）
+# 对已完成支付订单发起退款（管理端，需管理员 JWT）
 # 退款目标交易号取自 Payment 实体记录，渠道退款失败不会谎报 REFUNDED
 curl -X POST "http://localhost:8000/api/admin/orders/{orderNumber}/refund?reason=用户申请" \
-  -H "X-API-Key: admin-key-0001"
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 ## 客户端集成
@@ -434,7 +443,7 @@ billing-license-service/
 │   ├── common/               # 通用组件（响应壳/常量等）
 │   ├── config/               # 配置类（SecurityConfig / OpenApiConfig / BillingProperties）
 │   ├── controller/           # REST 控制器（订单/许可证/兑换码/收银台/Webhook/管理端）
-│   ├── security/             # API Key 鉴权过滤器（ApiKeyAuthFilter）
+│   ├── security/             # 鉴权（JwtAuthFilter：JWT 解析 + 按 users.role 动态注入 ROLE_USER/ROLE_ADMIN）
 │   ├── service/
 │   │   ├── payment/          # 支付编排（PaymentService / PaymentServiceFactory）
 │   │   │   ├── strategy/     # PaymentStrategy 接口
@@ -452,7 +461,7 @@ billing-license-service/
 │   │   └── crypto/           # LicenseIssuer（JWS 签发）/验证
 │   └── exception/            # 全局异常处理（脱敏 + traceId）
 ├── src/main/resources/
-│   ├── application.yml       # 主配置（含 management/actuator、security、payment；KMS 为纯本地文件方案）
+│   ├── application.yml       # 主配置（含 management/actuator、payment；KMS 为纯本地文件方案；鉴权无独立配置块，角色由 users.role 决定）
 │   ├── application-docker.yml
 │   └── db/migration/         # Flyway 迁移脚本 V1–V11
 ├── src/test/                 # 单元测试 + 集成测试（含 @SpringBootTest 上下文闸门、OpenAPI 文档可用性）
@@ -479,9 +488,8 @@ payment:
     webhook-secret: ${STRIPE_WEBHOOK_SECRET}
   # 各渠道独立配置块：alipay / wechat / stripe / paddle / paypal（渠道标识见上）
 
-security:
-  api-key-header: X-API-Key
-  admin-api-keys: ${ADMIN_API_KEYS}   # 逗号分隔，缺失即启动失败（fail-fast）
+# 鉴权无需独立配置块：管理员与普通用户共用账号体系，角色由 users.role 决定
+# （X-API-Key / admin-api-keys 已于 A12 / 2026-09-23 移除）
 
 management:
   endpoints.web.exposure.include: health,info

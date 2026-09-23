@@ -62,7 +62,6 @@
 export DB_URL=jdbc:postgresql://127.0.0.1:5432/license
 export DB_USERNAME=license
 export DB_PASSWORD='<强口令>'
-export ADMIN_API_KEYS='<管理端密钥>'
 export APP_BASE_URL='http://localhost:8000'   # K10 起无默认值，缺失即拒启
 # 各支付渠道密钥见 .env.example（ALIPAY_*/WECHAT_*/STRIPE_* 等）
 ./scripts/deploy/run.sh
@@ -76,12 +75,12 @@ export APP_BASE_URL='http://localhost:8000'   # K10 起无默认值，缺失即�
 **首次启动完整流程：**
 
 ```bash
-# 1. 准备环境变量（必填：DB_PASSWORD、ADMIN_API_KEYS）
+# 1. 准备环境变量（必填：DB_PASSWORD；管理端鉴权 = 管理员 JWT，无独立 API Key 变量）
 #    从模板复制，填入真实值；.env 已被 .gitignore 忽略，不会入库
 cp .env.example .env
 #    编辑 .env 设置强口令（或直接用下方命令生成随机值）
 #    DB_PASSWORD=<随机 24 位>
-#    ADMIN_API_KEYS=<随机 32 位>
+#    首个管理员账号按 scripts/db/promote-to-admin.sql 由运维 SQL 产生（A12 / 2026-09-23 起）
 
 # 2. 准备签名密钥（KMS=local 时必须）
 #    命令见 docs/上线准备工作.md §1.2（唯一权威源，含两条自检）
@@ -107,7 +106,7 @@ docker compose logs -f app
 | postgres 报 `superuser password is not specified` | `.env` 不存在或 `DB_PASSWORD` 为空 | 创建 `.env` 并填入非空密码 |
 | postgres 重复报错、起不来看似脏数据 | 之前失败残留了初始化数据 | `docker compose down -v && docker compose up -d postgres` 清卷重来（⚠️ 会删库） |
 | app 启动失败、日志提示 `密钥文件不存在` | `keys/` 目录未生成私钥/公钥 | 按第 2 步生成密钥对 |
-| app 启动失败、日志提示无法解析占位符/口令为空 | 未注入 `DB_PASSWORD` / `ADMIN_API_KEYS`（无默认值，fail-fast） | 创建 `.env` 或在 shell 中 export 后重跑 |
+| app 启动失败、日志提示无法解析占位符/口令为空 | 未注入 `DB_PASSWORD`（无默认值，fail-fast） | 创建 `.env` 或在 shell 中 export 后重跑 |
 | app 连不上 DB、日志 `Connection refused` | app 启动快于 postgres 就绪 | `depends_on: condition: service_healthy` 已配，postgres 慢时自动等待重试 |
 
 > 预备就绪后，`scripts/deploy/` 也提供了 `build.sh` / `up.sh` 快捷脚本（执行相同流程）。
@@ -119,8 +118,8 @@ docker compose logs -f app
 | 变量 | 说明 |
 |---|---|
 | `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | 数据库连接（`DB_PASSWORD` 无默认值，缺失即启动失败，fail-fast） |
-| `ADMIN_API_KEYS` | 管理端 API 密钥（逗号分隔，无默认值，缺失即启动失败） |
-| `ACCOUNT_JWT_SECRET` / `ACCOUNT_CODE_PEPPER` | 用户令牌签名密钥（≥32B）/ 验证码哈希 pepper（生产必配） |
+| `ACCOUNT_JWT_SECRET` / `ACCOUNT_CODE_PEPPER` | 用户令牌签名密钥（≥32B）/ 验证码哈希 pepper（生产必配）；管理端鉴权复用同一账号体系（管理员 JWT） |
+| `MAIL_PASSWORD` | SMTP 口令（无默认值）；`MAIL_HOST` / `MAIL_PORT` / `MAIL_USERNAME` 有默认值 |
 | `MAIL_PASSWORD` | SMTP 口令（无默认值）；`MAIL_HOST` / `MAIL_PORT` / `MAIL_USERNAME` 有默认值 |
 | `APP_BASE_URL` | 对外基址，用于拼接各渠道回调/回跳地址（**无默认值，缺失即拒启**） |
 | `PAYMENT_ENABLED_CHANNELS` | 启用的支付渠道（逗号分隔；留空=按各渠道配置齐全度自动启用） |

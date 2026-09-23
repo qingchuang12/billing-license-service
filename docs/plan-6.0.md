@@ -62,10 +62,14 @@ users.role VARCHAR(16) NOT NULL DEFAULT 'USER'   -- USER / ADMIN
 - 副作用是管理员也能用"我的许可证/订单"等自助端点，考虑到管理员本身就是账号主体之一，可接受。
 替代方案是引入 Spring Security 的 `RoleHierarchy`（ADMIN implies USER），语义更干净但改动略大。
 
-### 2.5 首个管理员怎么来（决策 B3）
-必须在有鉴权的种子机制下产生，**绝不能靠注册接口**。候选：
-- SQL/运维脚本直接 `UPDATE users SET role='ADMIN'`（最简单，不入 API）
-- 受保护的引导端点或启动器，仅在无 ADMIN 时允许执行一次
+### 2.5 首个管理员怎么来（决策 B3，已拍板：运维 SQL 直改）
+必须在有鉴权的种子机制下产生，**绝不能靠注册接口**。
+
+- **拍板（川哥 2026-09-22）**：采用运维 SQL 直改，不引入受保护引导端点。
+- **落地脚本**：`scripts/db/promote-to-admin.sql`（非 Flyway 迁移，运维在目标环境手动执行一次）。
+- **前提**：目标账号先经普通注册流程存在（role 默认 USER），再被 `UPDATE` 为 ADMIN。
+- **脚本已含**：预检 SELECT → `UPDATE ... SET role='ADMIN', token_version=token_version+1` → 后检 SELECT →
+  注释版降级回滚语句。提升时一并 `token_version+1` 以清掉可能残留的 USER 令牌。
 
 ### 2.6 安全红线（务必逐条落实）
 1. `POST /api/account/register` **必须强制 role=USER**，请求体一律不接受角色字段，防止自助提权。
@@ -80,23 +84,23 @@ users.role VARCHAR(16) NOT NULL DEFAULT 'USER'   -- USER / ADMIN
 
 ### 需开发（服务端）
 - [ ] A6 管理员降权/停用时 `tokenVersion + 1` 立即踢下线（依赖角色变更入口，目前尚无该入口）
-- [ ] A7 首个管理员的初始化手段（脚本或受保护引导端点）
+- [x] A7 首个管理员的初始化手段（运维 SQL 直改，见 `scripts/db/promote-to-admin.sql`）
 - [ ] A8 统一 `@Audit` 的操作主体口径（区分 api-key 机器调用 vs 真人 userId）
 - [ ] A11 编译/回归验证：本机无 mvn，须经 IDEA MCP 执行 `mvn test`，确认 A1–A5 改动零编译错误
+- [x] A12 移除 X-API-Key 通道（B2 已拍板「移除」，2026-09-23 全部落地）：① 删 `ApiKeyAuthFilter.java`；② `SecurityConfig` 去注入/注册/CORS header + 更新注释；③ `application.yml`/`application-test.yml` 删 `admin-api-keys`/`api-key-header`；④ `AuditAspect` 去 X-API-Key 回退、统一 userId（解 A8）；⑤ `OpenApiConfig` scheme 改 Bearer + `requiresApiKey` 改；⑥ `OpenApiCustomizerTest` 断言改 Bearer；⑦ 前端 `/admin` 改 JWT 登录（吸收 A9/A10 最小集）；⑧ `README`/`接口调用时序图`/`上线准备工作` 的 X-API-Key 描述与 curl 示例全改 JWT；⑨ 操作类脚本同步：`docker-compose.yml`/`scripts/deploy/up.sh`/`scripts/deploy/run.sh`/`scripts/README.md` 去除 `ADMIN_API_KEYS` 依赖与 fail-fast 断言，`AccountProperties.java` 注释清理，`架构与业务流程设计.md` 补 A12 历史注记
 
 ### 需开发（前端）
-- [ ] A9 管理控制台 `/admin` 增加登录页：邮箱密码 → JWT → 本地存证，替代粘贴 API Key
-- [ ] A10 控制台请求改为携带 `Authorization: Bearer`，并处理 401 跳回登录
+- [x] A9/A10 管理控制台登录（**吸收进 A12 最小集**：邮箱密码登录拿 JWT → 存证 → 请求带 `Authorization: Bearer` → 401 跳登录；完整控制台体验完善不再单列）
 
 ### 需决策（阻塞，需川哥拍板）
 - [ ] B1 `ADMIN` 是否同时授予 `ROLE_USER`（推荐：是，否则管理员无法自助登出/改密）——
       **代码已按推荐项实现**（ADMIN 同时获 ROLE_USER + ROLE_ADMIN，见 `JwtAuthFilter`），待你确认；
       若不认可，删掉其中一个 authority 即可回退。
-- [ ] B2 X-API-Key 是否保留？建议保留作机读备份通道，但需与真人操作在审计上区分
-- [ ] B3 首个管理员的产生方式（运维 SQL vs 受保护引导端点）
+- [x] B2 X-API-Key 是否保留？**已拍板：移除**（川哥 2026-09-23）。理由：B3 已落地、管理员账号可由运维 SQL 产生，JWT(ADMIN) 已能授 ROLE_ADMIN，X-API-Key 成冗余且更弱的管理员凭证（无法单个停用/改密/降权、审计主体割裂）。落地见 A12。
+- [x] B3 首个管理员的产生方式（运维 SQL 直改，川哥 2026-09-22 拍板；脚本见 `scripts/db/promote-to-admin.sql`）
 - [ ] B4 管理员是否强制更强口令策略 / 是否要求二次因子（MFA）
 - [ ] B5 管理员能否使用消费侧能力（查看/购买、我的许可证），还是严格限定只进管理端
 
 ### 待核实
-- [ ] C1 现有集成测试与部署脚本对 X-API-Key 的依赖面，改造时需同步调整的范围
-- [ ] C2 `/admin` 控制台是否还有其他入口依赖 key 的企业内部脚本（改废弃策略前务必确认）
+- [x] C1 现有集成测试与部署脚本对 X-API-Key 的依赖面，改造时需同步调整的范围（已全量排查并清除：`docker-compose.yml`/`scripts/deploy/{up,run}.sh`/`scripts/README.md` 的 `ADMIN_API_KEYS` 依赖与 fail-fast 断言已移除；仓库内无残留操作脚本依赖该变量）
+- [ ] C2 `/admin` 控制台是否还有其他入口依赖 key 的企业内部脚本（改废弃策略前务必确认；本仓库内已无，外部脚本不在此范围）

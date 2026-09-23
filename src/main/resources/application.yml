@@ -232,14 +232,6 @@ account:
     change-password-user-max: ${ACCOUNT_CHANGE_PWD_USER_MAX:3}
     change-password-window-minutes: ${ACCOUNT_CHANGE_PWD_WINDOW_MINUTES:60}
 
-# 安全配置
-security:
-  api-key-header: X-API-Key
-  # 管理端密钥：**无默认值**，缺失即启动失败。多个密钥用英文逗号分隔。
-  # K10（2026-09-18）：原先内联的 64 位默认值已移出仓库（注释自 2026-09-16 起即声明 fail-fast，
-  # 但实际仍有默认值，属语义自相矛盾）；本地/联调值见项目根目录 .env，测试值见 application-test.yml。
-  admin-api-keys: ${ADMIN_API_KEYS}
-
 # 应用对外基址
 app:
   # 【上线必配】公网可达的对外基址，用于拼接各渠道的回调与回跳地址。

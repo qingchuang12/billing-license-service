@@ -3,8 +3,6 @@ package com.billing.license.aspect;
 import com.billing.license.annotation.Audit;
 import com.billing.license.entity.AuditLog;
 import com.billing.license.service.AuditLogService;
-import com.billing.license.util.KeyHashUtil;
-import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
@@ -17,6 +15,8 @@ import org.springframework.expression.ExpressionParser;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.springframework.stereotype.Component;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -67,23 +67,19 @@ public class AuditAspect {
         }
     }
 
+    /**
+     * 解析操作者身份（A12 / 移除 X-API-Key 后）：统一以登录主体（userId）作为审计 actor，
+     * 不再依赖 X-API-Key 头。未登录或匿名请求记为 "anonymous"。
+     */
     private String resolveActor(Audit audit) {
         if (!audit.actor().isEmpty()) {
             return audit.actor();
         }
-        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-        if (attrs == null) {
-            return "anonymous";
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.isAuthenticated() && !"anonymousUser".equals(auth.getName())) {
+            return auth.getName();
         }
-        HttpServletRequest req = attrs.getRequest();
-        String key = req.getHeader("X-Admin-API-Key");
-        if (key == null || key.isEmpty()) {
-            key = req.getHeader("X-API-Key");
-        }
-        if (key == null || key.isEmpty()) {
-            return "anonymous";
-        }
-        return KeyHashUtil.actorHash(key);
+        return "anonymous";
     }
 
     private String currentIp() {

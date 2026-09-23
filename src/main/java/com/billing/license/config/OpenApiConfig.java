@@ -23,11 +23,11 @@ import java.util.List;
  * Springdoc OpenAPI v3 配置。
  * 文档端点：/v3/api-docs（JSON）、/swagger-ui.html（UI）。
  *
- * <p>安全标识修正（v2.7）：真实鉴权分三档（见 {@code SecurityConfig}），
- * 故此处不再使用全局 {@code addSecurityItem}，而是声明两个 API Key 方案
- * （{@code X-API-Key} 用于特权端点、{@code X-Admin-API-Key} 用于管理端），
+ * <p>安全标识（plan-6.0 / A12）：真实鉴权分两档（见 {@code SecurityConfig}），
+ * 故此处不再使用全局 {@code addSecurityItem}，而是声明一个 Bearer JWT 方案，
  * 由 {@link #billingSecurityCustomizer()} 按路径前缀逐接口映射，与 {@code SecurityConfig}
  * 的 {@code authorizeHttpRequests} 保持同源，避免文档与实际鉴权漂移。
+ * X-API-Key 通道已于 2026-09-23 移除，管理端改由管理员 JWT 访问。
  */
 @Configuration
 public class OpenApiConfig {
@@ -41,16 +41,16 @@ public class OpenApiConfig {
                         .description("统一计费与许可证管理服务的 OpenAPI 文档（三档收费：Pro 买断 / Pro Plus / 订阅制；5 家支付渠道）")
                         .contact(new Contact().name("Billing Team").email("service@ywhome.top")))
                 .components(new Components()
-                        .addSecuritySchemes("X-API-Key",
+                        .addSecuritySchemes("Bearer",
                                 new SecurityScheme()
-                                        .type(SecurityScheme.Type.APIKEY)
-                                        .in(SecurityScheme.In.HEADER)
-                                        .name("X-API-Key")));
+                                        .type(SecurityScheme.Type.HTTP)
+                                        .scheme("bearer")
+                                        .bearerFormat("JWT")));
     }
 
     /**
      * 按实际安全模型逐路径设置安全项（与 {@code SecurityConfig} 同源）。
-     * 公开端点清空安全约束；特权端点要求 X-API-Key；管理端要求 X-Admin-API-Key。
+     * 公开端点清空安全约束；管理端 / 特权端点要求 Bearer JWT（ROLE_ADMIN）。
      */
     @Bean
     public OpenApiCustomizer billingSecurityCustomizer() {
@@ -69,9 +69,9 @@ public class OpenApiConfig {
                 }
                 if (isPublic(path)) {
                     operations.forEach(op -> op.setSecurity(Collections.emptyList()));
-                } else if (requiresApiKey(path)) {
+                } else if (requiresAdminOrPrivileged(path)) {
                     operations.forEach(op -> op.setSecurity(
-                            List.of(new SecurityRequirement().addList("X-API-Key"))));
+                            List.of(new SecurityRequirement().addList("Bearer"))));
                 } else {
                     // 其余路径（SecurityConfig 默认 denyAll，不会被暴露）保持无安全项
                     operations.forEach(op -> op.setSecurity(Collections.emptyList()));
@@ -88,8 +88,8 @@ public class OpenApiConfig {
                 || path.equals("/api/redeem/redeem");
     }
 
-    /** 需 X-API-Key（ROLE_ADMIN）的端点：管理端全部 + 其余特权端点。注意 licenses/verify 已按公开处理。 */
-    private static boolean requiresApiKey(String path) {
+    /** 需 Bearer JWT（ROLE_ADMIN）的端点：管理端全部 + 其余特权端点。注意 licenses/verify 已按公开处理。 */
+    private static boolean requiresAdminOrPrivileged(String path) {
         return path.startsWith("/api/admin/")
                 || path.startsWith("/api/licenses/")
                 || path.startsWith("/api/orders/")

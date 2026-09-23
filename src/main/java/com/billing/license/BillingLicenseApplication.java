@@ -39,7 +39,7 @@ public class BillingLicenseApplication {
      * 地址与实际监听端口不符）；生产 profile 已关闭 springdoc，文档地址不再打印以免误导运维。
      *
      * <p>2026-09-22：打印管理统计页（{@code /admin/}，Web 查看页）地址而非接口地址——页面自身
-     * 无数据（静态资产 GET 放行），数据接口仍需 X-API-Key + ROLE_ADMIN。该地址不依赖 springdoc，
+     * 无数据（静态资产 GET 放行），数据接口仍需管理员 JWT + ROLE_ADMIN。该地址不依赖 springdoc，
      * 生产 profile 下同样打印。
      *
      * @param env Spring 环境变量，用于读取文档开关与端口

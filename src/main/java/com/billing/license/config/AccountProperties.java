@@ -11,7 +11,7 @@ import org.springframework.context.annotation.Configuration;
  * {@link Risk} 内部类中，与 plan 第五节限流矩阵逐条对应。
  *
  * <p><b>fail-fast</b>：{@code jwt-secret} 不设默认值，缺失即启动失败
- * （与 {@code DB_PASSWORD} / {@code ADMIN_API_KEYS} 的安全风格一致）。
+ * （与 {@code DB_PASSWORD} 的安全风格一致）。管理端鉴权复用同一账号体系（管理员 JWT，A12 / 2026-09-23 移除 {@code ADMIN_API_KEYS}）。
  */
 @Data
 @Configuration
