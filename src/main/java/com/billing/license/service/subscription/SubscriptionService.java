@@ -31,6 +31,10 @@ import java.util.UUID;
  * - 续费（invoice.paid / transaction.billed）：延长已绑定 License 的过期时间。
  * - 取消（subscription.canceled / customer.subscription.deleted）：作废已绑定 License。
  * - 双保险：fulfillOrder 的订单级幂等 + 「按订单号找已有 License」保证事件乱序也不重复签发。
+ * - A10 续费幂等（2026-09-24 根治）：续期以渠道返回的权威周期结束时间 currentPeriodEnd 为基准，
+ *   取 max(现有过期时间, currentPeriodEnd)，与投递顺序、是否重复投递（含两个不同 eventId）无关，
+ *   彻底杜绝重复延长。事件级去重由 WebhookController(B18) 的 payment_events DB 唯一约束统一负责，
+ *   本服务不再另设内存去重层。
  */
 @Slf4j
 @Service
@@ -137,13 +141,27 @@ public class SubscriptionService {
             return;
         }
 
-        // 续费：延长已绑定 License 的有效期（从较晚的「当前过期时间 / 现在」起算，不丢失剩余时长）
+        // 续费：延长已绑定 License 的有效期（A10 幂等根治）。
+        // 以渠道返回的权威周期结束时间 currentPeriodEnd 为基准，取 max(现有过期时间, currentPeriodEnd)：
+        // 同一周期无论被投递一次还是多次（含 subscription.updated + transaction.billed 两个不同 eventId）
+        // 都收敛到同一目标值，绝不累加延长。
+        // Paddle 现对 subscription.* 与 transaction.billed/completed 都解析 current_billing_period
+        // 写入 currentPeriodEnd（见 PaddleStrategy.parseWebhookPayload），生产路径周期信息始终可用。
         Product product = license.getProduct();
         int days = (product != null && product.getLicenseDurationDays() != null)
             ? product.getLicenseDurationDays() : 31;
-        LocalDateTime base = (license.getExpiresAt() != null && license.getExpiresAt().isAfter(LocalDateTime.now()))
-            ? license.getExpiresAt() : LocalDateTime.now();
-        license.setExpiresAt(base.plusDays(days));
+        LocalDateTime end;
+        if (sub.getCurrentPeriodEnd() != null) {
+            LocalDateTime existingExpiry = (license.getExpiresAt() != null)
+                ? license.getExpiresAt() : LocalDateTime.now();
+            end = sub.getCurrentPeriodEnd().isAfter(existingExpiry)
+                ? sub.getCurrentPeriodEnd() : existingExpiry;
+        } else {
+            // 兜底：渠道未返回周期（极罕见，生产路径已消除）。以现有过期时间为锚累加，避免从现在起算丢失剩余时长。
+            end = ((license.getExpiresAt() != null && license.getExpiresAt().isAfter(LocalDateTime.now()))
+                ? license.getExpiresAt() : LocalDateTime.now()).plusDays(days);
+        }
+        license.setExpiresAt(end);
         license.setStatus(License.LicenseStatus.ACTIVE);
         licenseRepository.save(license);
         log.info("订阅续期 License：subId={}, licenseId={}, 新过期时间={}",

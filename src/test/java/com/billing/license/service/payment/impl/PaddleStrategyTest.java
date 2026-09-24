@@ -11,6 +11,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -147,5 +148,28 @@ class PaddleStrategyTest {
         assertEquals("USD", result.getCurrency());
         assertEquals(0, result.getAmount().compareTo(new BigDecimal("14.99")));
         assertEquals(PaymentStatus.SUCCESS.name(), result.getStatus());
+    }
+
+    @Test
+    void parseWebhookPayload_transactionBilled_withBillingPeriod_shouldSetCurrentPeriodEnd() {
+        // A10（2026-09-24）：transaction.billed/completed 现也解析 current_billing_period，
+        // 写入 currentPeriodEnd，使续期幂等基准对交易续费事件同样可用。
+        String payload = "{"
+            + "\"event_type\":\"transaction.billed\","
+            + "\"data\":{"
+            + "\"id\":\"txn_123\","
+            + "\"subscription_id\":\"sub_abc\","
+            + "\"custom_data\":{\"order_id\":\"ORD-PADDLE-1\"},"
+            + "\"current_billing_period\":{"
+            + "\"starts_at\":\"2023-01-01T00:00:00Z\","
+            + "\"ends_at\":\"2023-02-01T00:00:00Z\""
+            + "}"
+            + "}}";
+
+        WebhookPayload result = strategy.parseWebhookPayload(payload);
+        assertEquals(PaymentStatus.SUCCESS.name(), result.getStatus());
+        assertEquals("sub_abc", result.getSubscriptionId());
+        assertEquals(LocalDateTime.of(2023, 1, 1, 0, 0), result.getCurrentPeriodStart());
+        assertEquals(LocalDateTime.of(2023, 2, 1, 0, 0), result.getCurrentPeriodEnd());
     }
 }

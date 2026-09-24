@@ -141,6 +141,35 @@ class SubscriptionServiceTest {
     }
 
     @Test
+    void renewal_duplicateSuccessEvents_shouldBeIdempotent() {
+        LocalDateTime periodEnd = LocalDateTime.now().plusDays(30);
+        Subscription existing = Subscription.builder().id(UUID.randomUUID()).orderId(orderId)
+            .customerId(customerId).provider(PaymentMethod.PADDLE)
+            .providerSubscriptionId(subId).status(Subscription.SubscriptionStatus.ACTIVE)
+            .licenseId(licenseId).currentPeriodEnd(periodEnd).build();
+        when(subscriptionRepository.findByProviderAndProviderSubscriptionId(PaymentMethod.PADDLE, subId))
+            .thenReturn(Optional.of(existing));
+        License license = buildLicense(10); // 当前剩余 10 天
+        when(licenseRepository.findByOrderId(orderId)).thenReturn(List.of(license));
+
+        WebhookPayload p = buildPayload(PaymentStatus.SUCCESS.name(), "transaction.billed");
+        p.setCurrentPeriodEnd(periodEnd);
+
+        // 同一订阅周期收到两次 SUCCESS 事件（Paddle 可能重复投递）
+        service.processSubscriptionEvent(p, PaymentMethod.PADDLE);
+        service.processSubscriptionEvent(p, PaymentMethod.PADDLE);
+
+        ArgumentCaptor<License> licCaptor = ArgumentCaptor.forClass(License.class);
+        verify(licenseRepository, times(2)).save(licCaptor.capture());
+        // 两次落库的 License 过期时间均等于 Paddle 权威周期结束时间（幂等，不累加两次）
+        for (License saved : licCaptor.getAllValues()) {
+            assertEquals(periodEnd, saved.getExpiresAt(),
+                "重复 SUCCESS 事件不应累加延长，过期时间应等于 Paddle 周期结束时间（而非 2×31 天）");
+            assertEquals(License.LicenseStatus.ACTIVE, saved.getStatus());
+        }
+    }
+
+    @Test
     void cancellation_shouldExpireLicense() {
         Subscription existing = Subscription.builder().id(UUID.randomUUID()).orderId(orderId)
             .customerId(customerId).provider(PaymentMethod.PADDLE)
@@ -161,6 +190,40 @@ class SubscriptionServiceTest {
         ArgumentCaptor<Subscription> subCaptor = ArgumentCaptor.forClass(Subscription.class);
         verify(subscriptionRepository).save(subCaptor.capture());
         assertEquals(Subscription.SubscriptionStatus.CANCELED, subCaptor.getValue().getStatus());
+    }
+
+    @Test
+    void renewal_subscriptionUpdatedThenTransactionBilled_shouldBeIdempotent() {
+        // A10 根治（2026-09-24）：真实链路——subscription.updated 携周期落库后，
+        // transaction.billed（无周期字段）到达，续期应依赖已持久化的 currentPeriodEnd 取 max，
+        // 而非回退累加。两个不同 eventId 投递同一周期也只收敛到同一目标值，杜绝重复延长。
+        LocalDateTime periodEnd = LocalDateTime.now().plusDays(30);
+        Subscription existing = Subscription.builder().id(UUID.randomUUID()).orderId(orderId)
+            .customerId(customerId).provider(PaymentMethod.PADDLE)
+            .providerSubscriptionId(subId).status(Subscription.SubscriptionStatus.ACTIVE)
+            .licenseId(licenseId).build();
+        when(subscriptionRepository.findByProviderAndProviderSubscriptionId(PaymentMethod.PADDLE, subId))
+            .thenReturn(Optional.of(existing));
+        when(subscriptionRepository.save(any(Subscription.class))).thenAnswer(i -> i.getArgument(0));
+        License license = buildLicense(10); // 当前剩余 10 天
+        when(licenseRepository.findByOrderId(orderId)).thenReturn(List.of(license));
+
+        // 1) subscription.updated 携周期
+        WebhookPayload updated = buildPayload(PaymentStatus.SUCCESS.name(), "subscription.updated");
+        updated.setCurrentPeriodEnd(periodEnd);
+        service.processSubscriptionEvent(updated, PaymentMethod.PADDLE);
+
+        // 2) transaction.billed 不带周期（currentPeriodEnd 由已持久化的 sub 提供）
+        WebhookPayload billed = buildPayload(PaymentStatus.SUCCESS.name(), "transaction.billed");
+        service.processSubscriptionEvent(billed, PaymentMethod.PADDLE);
+
+        ArgumentCaptor<License> licCaptor = ArgumentCaptor.forClass(License.class);
+        verify(licenseRepository, times(2)).save(licCaptor.capture());
+        for (License saved : licCaptor.getAllValues()) {
+            assertEquals(periodEnd, saved.getExpiresAt(),
+                "续期应等于 Paddle 权威周期结束时间，而非累加延长（避免双 eventId 重复投递重复延长）");
+            assertEquals(License.LicenseStatus.ACTIVE, saved.getStatus());
+        }
     }
 
     @Test

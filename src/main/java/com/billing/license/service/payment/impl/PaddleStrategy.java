@@ -290,15 +290,7 @@ public class PaddleStrategy implements PaymentStrategy {
                     if (data.has("custom_data") && data.get("custom_data").has("order_id")) {
                         webhookPayload.setOrderId(data.get("custom_data").get("order_id").asText());
                     }
-                    if (data.has("current_billing_period")) {
-                        JsonNode period = data.get("current_billing_period");
-                        if (period.has("starts_at")) {
-                            webhookPayload.setCurrentPeriodStart(parsePaddleDateTime(period.get("starts_at").asText()));
-                        }
-                        if (period.has("ends_at")) {
-                            webhookPayload.setCurrentPeriodEnd(parsePaddleDateTime(period.get("ends_at").asText()));
-                        }
-                    }
+                    parseBillingPeriod(data, webhookPayload);
                 }
             }
 
@@ -317,6 +309,9 @@ public class PaddleStrategy implements PaymentStrategy {
                 }
             } else if ("transaction.completed".equals(eventType) || "transaction.billed".equals(eventType)) {
                 webhookPayload.setStatus(PaymentStatus.SUCCESS.name());
+                // A10 根治（2026-09-24）：交易续费事件也解析 current_billing_period 写入 currentPeriodEnd，
+                // 使续期幂等基准对 transaction.billed/completed 同样可用，杜绝双 eventId 投递导致的累加延长。
+                parseBillingPeriod(data, webhookPayload);
             } else if ("transaction.canceled".equals(eventType)) {
                 webhookPayload.setStatus(PaymentStatus.CANCELLED.name());
             } else {
@@ -343,6 +338,24 @@ public class PaddleStrategy implements PaymentStrategy {
         } catch (Exception e) {
             logger.warn("Paddle 时间解析失败：{}", value);
             return null;
+        }
+    }
+
+    /**
+     * A10（2026-09-24）：从 data 节点解析 Paddle 订阅/交易周期（current_billing_period），
+     * 写入 WebhookPayload 的 currentPeriodStart / currentPeriodEnd。周期缺失时静默跳过。
+     * subscription.* 与 transaction.billed/completed 共用本方法，保证续期幂等基准对两类事件都可用。
+     */
+    private void parseBillingPeriod(JsonNode data, WebhookPayload payload) {
+        if (data == null || !data.has("current_billing_period")) {
+            return;
+        }
+        JsonNode period = data.get("current_billing_period");
+        if (period.has("starts_at")) {
+            payload.setCurrentPeriodStart(parsePaddleDateTime(period.get("starts_at").asText()));
+        }
+        if (period.has("ends_at")) {
+            payload.setCurrentPeriodEnd(parsePaddleDateTime(period.get("ends_at").asText()));
         }
     }
 
