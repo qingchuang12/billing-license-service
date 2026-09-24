@@ -75,7 +75,9 @@ export APP_BASE_URL='http://localhost:8000'   # K10 起无默认值，缺失即�
 cp .env.example .env
 #    编辑 .env 设置强口令（或直接用下方命令生成随机值）
 #    DB_PASSWORD=<随机 24 位>
-#    首个管理员账号按 scripts/db/promote-to-admin.sql 由运维 SQL 产生（A12 / 2026-09-23 起）
+#    首个管理员：首次启动前成对配置 ACCOUNT_BOOTSTRAP_ADMIN_EMAIL / ACCOUNT_BOOTSTRAP_ADMIN_PASSWORD
+#    由服务自动建出（仅库中无任何 ADMIN 时生效，详见 docs/上线准备工作.md §3.3）；
+#    不想用该配置则先注册普通账号、再执行 scripts/db/promote-to-admin.sql 手工提权。
 
 # 2. 准备签名密钥（KMS=local 时必须）
 #    命令见 docs/上线准备工作.md §1.2（唯一权威源，含两条自检）
