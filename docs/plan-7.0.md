@@ -44,8 +44,7 @@
 ## TODOS（仅未完成项）
 
 ### 需开发
-- [ ] **客户端定期联网复核（退款吊销 / 到期即时生效）** — 现状：`ai-tools` 的 `main/license` 唯一网络调用是 redeem，故订阅到期与退款吊销只能等 `exp` 或重装生效。川哥已定案要改为定期联网复核本机授权状态，被吊销/欠费即停用；**必须配套离线宽限策略**（离线可续用若干天），否则断网误伤正常用户。服务端已有 `POST /api/licenses/verify`（公开端点），契约见 `README.md` / `接口调用时序图.md`，复用前先核实其可否作为复核入口（是否写 `last_verified_at`、有无限流）。
-- [ ] **A9** 客户端两条自动路径（跨仓库 `ai-tools`）：① 同机购买后轮询 `/api/checkout/{checkoutId}/status` 自动存证（**上限 1 小时**，超时停止轮询——定案 B5）；② 登录后自动领取并激活
+- [ ] **A9** 客户端两条自动路径（跨仓库 `ai-tools`）：① **废弃**（客户端全仓 0 checkoutId，订单号在外部浏览器，无从轮询）——改为**登录后自动到账**：登录 → `GET /api/account/licenses`(Bearer) → 优先 `status==ACTIVE && machineCode==null`、其次 `machineCode==本机`、都没有则不动不弹窗 → `POST /api/licenses/activate`(`credential=licenseKey`) 走 `applyWithSwitch`；不新增服务端端点。
 - [ ] **A10**（源 plan-4.1 / 结转自 plan-3.1）Paddle 续费幂等加固：`SubscriptionService.bindOrRenewLicense`（`:120-146`）对每个 paymentSuccess 事件都续期，`PaddleStrategy`（`:306-319`）把 `subscription.*` + `transaction.completed/billed` 全映射 `SUCCESS` → 可能重复延长 License。**先确认 Paddle 真实事件流**，再用 `payload.getCurrentPeriodEnd()` 与 `license.getExpiresAt()` 比对做幂等
 
 ## 登记表（外部阻塞 / 需你本人动手，不占 TODOS）
