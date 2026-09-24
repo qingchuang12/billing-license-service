@@ -257,6 +257,18 @@ account:
     email-fallback-enabled: ${ACCOUNT_MFA_EMAIL_FALLBACK_ENABLED:true}
     # 认证器 App 中显示的签发者名
     issuer: ${ACCOUNT_MFA_ISSUER:BillingLicenseService}
+  # 初始管理员（bootstrap）：空库首次部署时用它自动建第一个管理员，免手动改库。
+  # 生效条件**严格**：仅当库中不存在任何 ADMIN 角色账号时生效（countByRole(ADMIN) == 0）。
+  # 一旦已存在管理员（无论是否由本配置创建），本配置即完全失效——
+  # 防止运维把这段配置留在环境变量里，却在某次"管理员被误删"后被重新拿来创建后门。
+  # 行为细则：邮箱已注册为普通账号时只提权为新角色，不重置其密码；均未配置则跳过并 WARN。
+  # K10：口令无默认值（不留仓库默认口令），缺失即视为"未启用 bootstrap"。
+  bootstrap-admin:
+    # 初始管理员邮箱
+    email: ${ACCOUNT_BOOTSTRAP_ADMIN_EMAIL:}
+    # 初始管理员密码（明文，仅 bootstrap 这一次使用；入库前经 BCrypt 散列）
+    # 口令强度受上面 password-min-length / password-require-alnum 约束，不符即拒绝启动。
+    password: ${ACCOUNT_BOOTSTRAP_ADMIN_PASSWORD:}
 
 # 应用对外基址
 app:

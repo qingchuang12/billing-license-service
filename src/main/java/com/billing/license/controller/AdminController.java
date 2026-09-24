@@ -3,8 +3,11 @@ package com.billing.license.controller;
 import com.billing.license.annotation.Audit;
 import com.billing.license.dto.*;
 import com.billing.license.entity.Order;
+import com.billing.license.entity.User;
 import com.billing.license.exception.BusinessException;
+import com.billing.license.security.CurrentUserResolver;
 import com.billing.license.service.AdminService;
+import com.billing.license.service.AdminUserService;
 import com.billing.license.service.LicenseService;
 import com.billing.license.service.RedeemCodeService;
 import com.billing.license.service.payment.impl.PaymentServiceFactory;
@@ -20,6 +23,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -48,6 +52,7 @@ public class AdminController {
     private final LicenseService licenseService;
     private final RedeemCodeService redeemCodeService;
     private final PaymentServiceFactory paymentServiceFactory;
+    private final AdminUserService adminUserService;
 
     /** i3：批量生成兑换码数量上限（默认 1000，可通过 billing.redeem-code.max-generate 调整） */
     @Value("${billing.redeem-code.max-generate:1000}")
@@ -285,5 +290,38 @@ public class AdminController {
             @Parameter(description = "要撤销的兑换码", required = true) @PathVariable String code) {
         redeemCodeService.revokeCode(code);
         return ResponseEntity.ok().build();
+    }
+
+    // ==================== 用户管理（plan-7.0 / D4，B9 = B） ====================
+
+    @Operation(summary = "变更用户角色（管理端）",
+            description = "将用户角色在 USER / ADMIN 间变更；内部 tokenVersion+1 令其已签发令牌立即失效，"
+                    + "配合 JwtAuthFilter 每请求现查，使降权即时生效。"
+                    + "护栏：禁止操作自身、禁止降级最后一个管理员")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "变更成功"),
+            @ApiResponse(responseCode = "400", description = "用户不存在 / 不能操作自身 / 不能降级最后一个管理员")
+    })
+    @Audit(action = "CHANGE_USER_ROLE", target = "#userId", detail = "#role")
+    @PatchMapping("/users/{userId}/role")
+    public ResponseEntity<AdminUserView> changeUserRole(
+            @Parameter(description = "目标用户 ID", required = true) @PathVariable UUID userId,
+            @Parameter(description = "新角色：USER / ADMIN", required = true) @RequestParam User.UserRole role) {
+        return ResponseEntity.ok(adminUserService.changeRole(CurrentUserResolver.currentUserId(), userId, role));
+    }
+
+    @Operation(summary = "变更用户状态（管理端）",
+            description = "启用 / 停用用户（ACTIVE / DISABLED）；停用内部 tokenVersion+1 令其已签发令牌立即失效。"
+                    + "护栏：禁止操作自身、禁止停用最后一个管理员")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "变更成功"),
+            @ApiResponse(responseCode = "400", description = "用户不存在 / 不能操作自身 / 不能停用最后一个管理员")
+    })
+    @Audit(action = "CHANGE_USER_STATUS", target = "#userId", detail = "#status")
+    @PatchMapping("/users/{userId}/status")
+    public ResponseEntity<AdminUserView> changeUserStatus(
+            @Parameter(description = "目标用户 ID", required = true) @PathVariable UUID userId,
+            @Parameter(description = "新状态：ACTIVE / DISABLED", required = true) @RequestParam User.UserStatus status) {
+        return ResponseEntity.ok(adminUserService.changeStatus(CurrentUserResolver.currentUserId(), userId, status));
     }
 }

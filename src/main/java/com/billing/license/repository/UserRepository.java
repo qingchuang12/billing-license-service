@@ -19,4 +19,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByEmail(String email);
 
     boolean existsByEmail(String email);
+
+    /** plan-7.0 / D4：统计指定角色的用户数（用于「最后一个管理员」护栏）。 */
+    long countByRole(User.UserRole role);
 }

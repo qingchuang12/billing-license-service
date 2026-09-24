@@ -9,6 +9,7 @@ import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.UserRepository;
 import com.billing.license.security.JwtTokenService;
 import com.billing.license.security.MfaTicketService;
+import com.billing.license.security.PasswordPolicy;
 import com.billing.license.service.risk.RateLimitService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -283,14 +284,9 @@ public class AccountService {
 
     /** 密码策略（plan 8.3）：长度 8–72，可选要求同时含字母与数字 */
     private void validatePasswordPolicy(String password) {
-        if (password == null || password.length() < properties.getPasswordMinLength() || password.length() > 72) {
-            throw new BusinessException("PASSWORD_POLICY_VIOLATION",
-                "密码长度须为 " + properties.getPasswordMinLength() + "–72 位");
-        }
-        if (properties.isPasswordRequireAlnum()
-            && !(password.chars().anyMatch(Character::isLetter) && password.chars().anyMatch(Character::isDigit))) {
-            throw new BusinessException("PASSWORD_POLICY_VIOLATION", "密码须同时包含字母与数字");
-        }
+        // 委托给 PasswordPolicy 唯一实现：bootstrap 初始管理员与之共用同一份策略，
+        // 避免日后改策略时只改一处、另一处悄悄漂移
+        PasswordPolicy.validate(password, properties);
     }
 
     private static String normalize(String email) {

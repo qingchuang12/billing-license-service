@@ -56,6 +56,9 @@ public class AccountProperties {
     /** 二次因子（MFA）配置（plan-7.0 / M1，B8 定案） */
     private Mfa mfa = new Mfa();
 
+    /** 初始管理员 bootstrap 配置（空库首建管理员，详见 {@link BootstrapAdmin}） */
+    private BootstrapAdmin bootstrapAdmin = new BootstrapAdmin();
+
     /**
      * 二次因子（MFA）配置。
      *
@@ -99,6 +102,33 @@ public class AccountProperties {
 
         /** otpauth URI 的 issuer 展示名（认证器 App 中显示） */
         private String issuer = "BillingLicenseService";
+    }
+
+    /**
+     * 初始管理员 bootstrap 配置。默认空串＝未启用（不设 {@code null}，避免到处判空）。
+     *
+     * <p><b>为什么需要它</b>：全新部署的库里一个账号都没有，而管理端 {@code /api/admin/**}
+     * 一律要求 {@code ROLE_ADMIN}，于是<b>没有任何账号能登录</b>。此前只能由运维直连数据库
+     * 手工 UPDATE 造出第一个管理员；配置化之后免改库，一次部署即可用。
+     *
+     * <p><b>生效条件严格限定为「库中不存在任何管理员」</b>：一旦已存在 ADMIN 角色账号——
+     * 无论它是否由本配置创建——本配置立即<b>完全失效</b>。这样即使运维长期把它留在环境变量里，
+     * 也不会在某次「管理员账号被误删」之后被人重新拿来造一个后门。
+     *
+     * <p><b>邮箱已存在时只提权、不改密码</b>：该邮箱若早已注册为普通账号，只把角色改为 ADMIN，
+     * 绝不覆盖其原密码——否则配置里的明文口令会顶掉用户正在使用的密码。
+     */
+    @Data
+    public static class BootstrapAdmin {
+
+        /** 初始管理员邮箱；留空表示不启用 bootstrap */
+        private String email = "";
+
+        /**
+         * 初始管理员明文密码，仅 bootstrap 这一次使用（入库前经 BCrypt 散列）。
+         * 强度受 {@code password-min-length} / {@code password-require-alnum} 约束，不符即拒绝启动。
+         */
+        private String password = "";
     }
 
     /**

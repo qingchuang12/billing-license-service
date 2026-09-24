@@ -529,6 +529,22 @@ curl -X POST http://localhost:8000/api/redeem/redeem \
   }'
 ```
 
+### 管理端用户管理（plan-7.0 / D4，B9 = B）
+
+> 管理端用户管理 API：变更角色（USER ↔ ADMIN）与启用 / 停用（ACTIVE ↔ DISABLED）。
+> 两个端点内部均 `tokenVersion + 1`，令目标用户旧令牌立即失效（配合 `JwtAuthFilter` 每请求现查，使降权 / 停用**即时生效**，不再依赖令牌 7 天自然过期）；操作经 `@Audit` 留痕。
+> **护栏**：禁止管理员对自身执行管理操作（防误操作自锁）；禁止降级 / 停用最后一个管理员（否则管理台被锁死）。
+
+```bash
+# 变更用户角色（USER ↔ ADMIN）
+curl -X PATCH "http://localhost:8000/api/admin/users/{userId}/role?role=ADMIN" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# 启用 / 停用用户（ACTIVE ↔ DISABLED）
+curl -X PATCH "http://localhost:8000/api/admin/users/{userId}/status?status=DISABLED" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
 ### 管理端退款
 
 ```bash
