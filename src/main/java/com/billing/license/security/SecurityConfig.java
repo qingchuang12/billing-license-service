@@ -5,9 +5,13 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
@@ -35,6 +39,8 @@ import java.util.List;
  * 5. 其余一切请求默认拒绝（denyAll），避免遗漏暴露。
  * 6. 无状态（STATELESS）+ 关闭 CSRF（纯 API、令牌鉴权，无浏览器会话，CSRF 不适用）。
  * 7. H9：CORS 按配置白名单开放（默认不开放跨域），仅在部署独立前端域名时显式配置。
+ * 8. Q3（plan-7.0，2026-09-25）：{@link MustChangePasswordFilter} 挂在 {@link JwtAuthFilter} 之后，
+ *    对「已登录但 must_change_password=true」的会话只放行读自己 / 改密 / 登出与管理员代重置端点。
  */
 @Configuration
 @EnableWebSecurity
@@ -59,6 +65,25 @@ public class SecurityConfig {
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder(12);
+    }
+
+    /**
+     * 认证管理器（账户体系融合 Spring Security，2026-09-24）：登录改由此驱动。
+     *
+     * <p>{@link DaoAuthenticationProvider} 负责标准认证链的「加载用户 → 锁定/停用预检 → 密码比对」，
+     * 复用 {@link DbUserDetailsService}（按邮箱查库）与上面的 {@link PasswordEncoder}（BCrypt cost=12）。
+     * IP 限流、失败计数与锁定落库、两阶段 MFA、tokenVersion 即时吊销仍在 {@code AccountService} 外层，
+     * 不进 provider——这些是「认证前后」的业务策略，框架不建模。
+     *
+     * <p>{@code hideUserNotFoundExceptions} 沿用默认 {@code true}：查无账号与密码错误同抛
+     * {@code BadCredentialsException}，由上层收敛为统一文案 {@code INVALID_CREDENTIALS}，防账号枚举。
+     */
+    @Bean
+    public AuthenticationManager authenticationManager(UserDetailsService userDetailsService,
+                                                       PasswordEncoder passwordEncoder) {
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider(userDetailsService);
+        provider.setPasswordEncoder(passwordEncoder);
+        return new ProviderManager(provider);
     }
 
     @Bean
@@ -135,7 +160,11 @@ public class SecurityConfig {
             .exceptionHandling(ex -> ex
                 .authenticationEntryPoint(new JsonAuthenticationEntryPoint())
                 .accessDeniedHandler(new JsonAccessDeniedHandler()))
-            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+            // plan-7.0 / Q3 = 是：强制改密必须在 JwtAuthFilter 之后——只有那时 SecurityContext
+            // 才已按 DB 现查写入角色与身份，过滤器才知道「当前用户是否必须先改密」。
+            // 未登录请求一律放行（401 由上面的授权规则产出），只拦「已登录但待改密」的会话。
+            .addFilterAfter(new MustChangePasswordFilter(userRepository), JwtAuthFilter.class);
 
         return http.build();
     }

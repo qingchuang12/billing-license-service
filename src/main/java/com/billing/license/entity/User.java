@@ -106,6 +106,21 @@ public class User {
     @Column(name = "mfa_last_used_step")
     private Long mfaLastUsedStep;
 
+    /**
+     * 是否必须在下次登录完成自助改密（plan-7.0 / Q3 = 是）。
+     *
+     * <p><b>由管理员代重置置位</b>：{@code AdminUserService#resetPassword} 在同一事务内把它置
+     * {@code true} 并递增 {@code tokenVersion}；此后 {@code MustChangePasswordFilter} 只放行
+     * 「读自己 / 改密 / 登出」，其余受保护 API 一律返回 {@code PASSWORD_CHANGE_REQUIRED}——
+     * 强制改密必须是服务端约束，前端弹窗可以被绕过。
+     *
+     * <p>清除只发生在用户自己改完密码之后：已登录改密与邮箱验证码自助重置
+     * （{@code AccountService}）各自清除，与写新哈希同事务。
+     */
+    @Column(name = "must_change_password", nullable = false)
+    @Builder.Default
+    private boolean mustChangePassword = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

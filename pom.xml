@@ -33,6 +33,9 @@
         <!-- 备注：spring-security.version / jackson-core.version 属性保留仅供其他可能引用处，
              实际依赖版本已交由 Boot 4.0.6 parent BOM 管理（w1/w2） -->
         <bouncycastle.version>1.85.2</bouncycastle.version>
+        <!-- 仅用 core（本地仓已有 jar+pom+sha1，离线 -o 可解析）；
+             javase 本地仓没有，且 PNG 走 JDK 自带 ImageIO，不需要其 MatrixToImageWriter -->
+        <zxing.version>3.5.2</zxing.version>
         <okhttp.version>5.3.2</okhttp.version>
         <!-- Lombok 需与 JDK 25 兼容，1.18.46 已实测可用 -->
         <lombok.version>1.18.46</lombok.version>
@@ -124,6 +127,12 @@
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcprov-jdk18on</artifactId>
             <version>${bouncycastle.version}</version>
+        </dependency>
+        <!-- ZXing core：MFA 绑定二维码本地渲染（plan-7.0）。见 TotpQrCodeService -->
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>core</artifactId>
+            <version>${zxing.version}</version>
         </dependency>
 
         <!-- Payment Providers -->

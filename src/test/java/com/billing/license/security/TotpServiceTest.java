@@ -156,7 +156,10 @@ class TotpServiceTest {
         assertNull(totpService.verify(secret, "12345", null), "位数不足");
         assertNull(totpService.verify(secret, "1234567", null), "位数过多");
         assertNull(totpService.verify(secret, "12345a", null), "含非数字");
-        assertNull(totpService.verify(secret, valid.substring(0, 5) + "9", null), "正确长度但错误的码");
+        // 用「远离容错窗口的另一时间步」生成的码作为错误码：格式合法但必然无效。
+        // 不可用 valid.substring(0,5)+"9" —— 当有效码末位恰为 9 时会拼出有效码本身，导致偶发失败。
+        String wrongStepCode = totpService.code(secret, totpService.currentStep() + 100);
+        assertNull(totpService.verify(secret, wrongStepCode, null), "正确长度但错误的码");
         assertNull(totpService.verify(null, valid, null), "密钥缺失");
     }
 

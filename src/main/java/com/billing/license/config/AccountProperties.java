@@ -83,6 +83,12 @@ public class AccountProperties {
         /** 一次性登录票据有效期（秒）。短时效——票据只是「密码已通过」的临时凭证 */
         private int ticketTtlSeconds = 300;
 
+        /**
+         * 管理端敏感动作二次确认（step-up）令牌有效期（秒）。
+         * 必须远短于登录票据：它是「即将执行某个具体敏感动作」的临门一脚，不是会话凭证。
+         */
+        private int stepUpTtlSeconds = 120;
+
         /** TOTP 时间步长（秒），RFC 6238 标准值为 30 */
         private int totpStepSeconds = 30;
 

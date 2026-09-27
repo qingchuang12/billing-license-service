@@ -47,6 +47,10 @@ public class UserProfileResponse {
     @Schema(description = "最近登录时间；从未登录过为 null", example = "2026-09-15T09:12:44")
     private LocalDateTime lastLoginAt;
 
+    @Schema(description = "是否必须改密：管理员代重置后为 true，此时除「读自己 / 改密 / 登出」外的接口均被拒绝",
+            example = "false")
+    private boolean mustChangePassword;
+
     public static UserProfileResponse from(User user) {
         return UserProfileResponse.builder()
             .id(user.getId())
@@ -56,6 +60,7 @@ public class UserProfileResponse {
             .role(user.getRole() != null ? user.getRole().name() : null)
             .createdAt(user.getCreatedAt())
             .lastLoginAt(user.getLastLoginAt())
+            .mustChangePassword(user.isMustChangePassword())
             .build();
     }
 }

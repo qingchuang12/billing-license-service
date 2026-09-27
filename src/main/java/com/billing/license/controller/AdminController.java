@@ -16,11 +16,17 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -57,6 +63,9 @@ public class AdminController {
     /** i3：批量生成兑换码数量上限（默认 1000，可通过 billing.redeem-code.max-generate 调整） */
     @Value("${billing.redeem-code.max-generate:1000}")
     private int maxGenerateCount;
+
+    /** Q6 默认口径：用户列表分页每页上限（防一次拉全表） */
+    private static final int MAX_PAGE_SIZE = 200;
 
     // ==================== 订单 ====================
 
@@ -294,6 +303,76 @@ public class AdminController {
 
     // ==================== 用户管理（plan-7.0 / D4，B9 = B） ====================
 
+    @Operation(summary = "用户列表（管理端）",
+            description = "按邮箱（trim + lowercase 包含匹配）/ 角色 / 状态过滤，按注册时间倒序分页；"
+                    + "默认 20 条/页、上限 200。返回脱敏视图 AdminUserView（不含密码哈希、令牌版本、MFA 密钥）。")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "查询成功"),
+            @ApiResponse(responseCode = "400", description = "非法角色 / 非法状态值")
+    })
+    @Audit(action = "LIST_USERS", target = "-")
+    @GetMapping("/users")
+    public ResponseEntity<Page<AdminUserView>> listUsers(
+            @Parameter(description = "邮箱（包含匹配，忽略大小写与首尾空白）")
+            @RequestParam(required = false) String email,
+            @Parameter(description = "角色：USER / ADMIN")
+            @RequestParam(required = false) String role,
+            @Parameter(description = "状态：ACTIVE / DISABLED")
+            @RequestParam(required = false) String status,
+            @Parameter(description = "页码（从 0 开始）")
+            @RequestParam(required = false, defaultValue = "0") int page,
+            @Parameter(description = "每页大小（1~200，默认 20）")
+            @RequestParam(required = false, defaultValue = "20") int size) {
+        int safeSize = Math.max(1, Math.min(size, MAX_PAGE_SIZE));
+        PageRequest pageable = PageRequest.of(Math.max(0, page), safeSize);
+        return ResponseEntity.ok(adminUserService.listUsers(email, parseRole(role), parseStatus(status), pageable));
+    }
+
+    /**
+     * 管理员代用户重置密码（Q1 = 管理员自设密码）。
+     *
+     * <p>请求体只含 {@code newPassword}；<b>响应不回显任何密码</b>（{@code data} 为 {@code null}）。
+     * 服务端在同一事务内写新哈希 + {@code tokenVersion + 1}（旧会话立即失效）+ 置强制改密标记。
+     *
+     * <p>审计<b>不配 detail</b>：密码不得进审计留痕；actor / action / target 由切面自动补齐。
+     */
+    @Operation(summary = "重置用户密码（管理端）",
+            description = "管理员为指定用户设定新密码；响应不回显密码，旧会话立即失效，该用户下次登录须先改密。"
+                    + "护栏：禁止对自身重置、用户不存在报 USER_NOT_FOUND")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "重置成功"),
+            @ApiResponse(responseCode = "400", description = "用户不存在 / 不能操作自身 / 新密码不符合策略")
+    })
+    @Audit(action = "ADMIN_RESET_USER_PASSWORD", target = "#userId")
+    @PostMapping("/users/{userId}/password/reset")
+    public ResponseEntity<Void> resetUserPassword(
+            @Parameter(description = "目标用户 ID", required = true) @PathVariable UUID userId,
+            @Valid @RequestBody AdminPasswordResetRequest request,
+            @RequestHeader(value = "X-Step-Up-Token", required = false) String stepUpToken) {
+        adminUserService.resetPassword(CurrentUserResolver.currentUserId(), userId,
+            request.getNewPassword(), stepUpToken);
+        return ResponseEntity.ok().build();
+    }
+
+    /**
+     * 用户详情（P1）：脱敏资料 + 名下许可证 / 订单计数。
+     *
+     * <p>许可证明细由前端点「查看许可证」复用 {@code GET /api/admin/licenses?customerEmail=}，
+     * 沿用 {@code LicenseResponse.adminView}（完整 licenseKey、不返回 signedToken），不另造第二套 DTO。
+     */
+    @Operation(summary = "用户详情（管理端）",
+            description = "返回脱敏用户资料与名下许可证/订单数量；许可证明细复用既有许可证查询端点")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "查询成功"),
+            @ApiResponse(responseCode = "400", description = "用户不存在")
+    })
+    @Audit(action = "GET_USER_DETAIL", target = "#userId")
+    @GetMapping("/users/{userId}")
+    public ResponseEntity<AdminUserDetailView> getUserDetail(
+            @Parameter(description = "目标用户 ID", required = true) @PathVariable UUID userId) {
+        return ResponseEntity.ok(adminUserService.getUserDetail(userId));
+    }
+
     @Operation(summary = "变更用户角色（管理端）",
             description = "将用户角色在 USER / ADMIN 间变更；内部 tokenVersion+1 令其已签发令牌立即失效，"
                     + "配合 JwtAuthFilter 每请求现查，使降权即时生效。"
@@ -306,8 +385,9 @@ public class AdminController {
     @PatchMapping("/users/{userId}/role")
     public ResponseEntity<AdminUserView> changeUserRole(
             @Parameter(description = "目标用户 ID", required = true) @PathVariable UUID userId,
-            @Parameter(description = "新角色：USER / ADMIN", required = true) @RequestParam User.UserRole role) {
-        return ResponseEntity.ok(adminUserService.changeRole(CurrentUserResolver.currentUserId(), userId, role));
+            @Parameter(description = "新角色：USER / ADMIN", required = true) @RequestParam User.UserRole role,
+            @RequestHeader(value = "X-Step-Up-Token", required = false) String stepUpToken) {
+        return ResponseEntity.ok(adminUserService.changeRole(CurrentUserResolver.currentUserId(), userId, role, stepUpToken));
     }
 
     @Operation(summary = "变更用户状态（管理端）",
@@ -321,7 +401,64 @@ public class AdminController {
     @PatchMapping("/users/{userId}/status")
     public ResponseEntity<AdminUserView> changeUserStatus(
             @Parameter(description = "目标用户 ID", required = true) @PathVariable UUID userId,
-            @Parameter(description = "新状态：ACTIVE / DISABLED", required = true) @RequestParam User.UserStatus status) {
-        return ResponseEntity.ok(adminUserService.changeStatus(CurrentUserResolver.currentUserId(), userId, status));
+            @Parameter(description = "新状态：ACTIVE / DISABLED", required = true) @RequestParam User.UserStatus status,
+            @RequestHeader(value = "X-Step-Up-Token", required = false) String stepUpToken) {
+        return ResponseEntity.ok(adminUserService.changeStatus(CurrentUserResolver.currentUserId(), userId, status, stepUpToken));
+    }
+
+    // ==================== 用户管理参数解析 ====================
+
+    /**
+     * 按当前过滤条件导出用户 CSV（P2）。
+     *
+     * <p>过滤条件与列表查询完全同源（email trim+lowercase 包含匹配 / 角色等值 / 状态等值）；
+     * 防公式注入由服务层统一处理。审计只记动作，不记过滤条件（避免 email 明文进审计留痕）。
+     */
+    @Operation(summary = "导出用户 CSV（管理端）",
+            description = "按邮箱 / 角色 / 状态过滤导出（与列表查询同条件），UTF-8 带 BOM；"
+                    + "单元格已做防公式注入处理；上限 10000 行")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "导出成功"),
+            @ApiResponse(responseCode = "400", description = "非法角色 / 非法状态值")
+    })
+    @Audit(action = "EXPORT_USERS", target = "-")
+    @GetMapping("/users/export")
+    public ResponseEntity<byte[]> exportUsers(
+            @Parameter(description = "邮箱（包含匹配，忽略大小写与首尾空白）")
+            @RequestParam(required = false) String email,
+            @Parameter(description = "角色：USER / ADMIN")
+            @RequestParam(required = false) String role,
+            @Parameter(description = "状态：ACTIVE / DISABLED")
+            @RequestParam(required = false) String status) {
+        String csv = adminUserService.exportUsersCsv(email, parseRole(role), parseStatus(status));
+        String filename = "users-" + java.time.LocalDate.now() + ".csv";
+        return ResponseEntity.ok()
+            .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+            .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
+            .body(csv.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** 角色解析：空值归一为 null（不过滤）；非法值报 INVALID_USER_ROLE，与既有非法状态值同口径。 */
+    private User.UserRole parseRole(String role) {
+        if (role == null || role.isBlank()) {
+            return null;
+        }
+        try {
+            return User.UserRole.valueOf(role.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("INVALID_USER_ROLE", "非法的用户角色值: " + role);
+        }
+    }
+
+    /** 状态解析：空值归一为 null（不过滤）；非法值报 INVALID_USER_STATUS。 */
+    private User.UserStatus parseStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return null;
+        }
+        try {
+            return User.UserStatus.valueOf(status.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("INVALID_USER_STATUS", "非法的用户状态值: " + status);
+        }
     }
 }

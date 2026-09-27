@@ -13,7 +13,7 @@
   <script>document.documentElement.classList.add('js');</script>
   <!-- 设计体系与收银台同源复用（design tokens + 通用组件）；页面专属样式见 account.css -->
   <link rel="stylesheet" href="../checkout/checkout.css">
-  <link rel="stylesheet" href="account.css">
+  <link rel="stylesheet" href="account.css?v=20260925-1">
 </head>
 <body>
   <a class="skip-link" href="#main" data-i18n="a11y.skip">跳到主要内容</a>
@@ -78,6 +78,28 @@
           <button type="button" class="linklike" id="showResetBtn" data-i18n="auth.toReset">忘记密码？用邮箱验证码重新设置</button>
         </p>
 
+        <!-- 二次验证第二步（仅开启 MFA 的账号；密码已过，凭一次性票据换令牌） -->
+        <form id="mfaLoginForm" hidden novalidate>
+          <p class="form-note" id="mfaStepDesc">
+            密码已通过。请输入认证器 App 显示的 6 位动态码。
+          </p>
+          <div class="field">
+            <label class="field__label" for="mfaCode" data-i18n="mfa.codeLabel">动态码（或邮箱验证码）</label>
+            <div class="code-row">
+              <input class="field__input" id="mfaCode" name="code" type="text" inputmode="numeric"
+                     maxlength="6" autocomplete="one-time-code" required>
+              <button class="btn btn--ghost" id="mfaSendBtn" type="button" data-i18n="mfa.sendEmail">发送邮箱验证码</button>
+            </div>
+          </div>
+          <p class="form-error" id="mfaError" role="alert" hidden></p>
+          <div class="panel__actions">
+            <button class="btn btn--primary" id="mfaVerifyBtn" type="submit" data-i18n="mfa.verify">验证并登录</button>
+          </div>
+          <p class="form-note">
+            <button type="button" class="linklike" id="mfaBackBtn" data-i18n="mfa.back">返回重新输入密码</button>
+          </p>
+        </form>
+
         <!-- 找回 / 设置密码表单（默认隐藏） -->
         <form id="resetForm" hidden novalidate>
           <div class="field">
@@ -117,7 +139,7 @@
         </div>
 
         <!-- 我的许可证 -->
-        <section class="panel asset-panel" aria-labelledby="licenseTitle">
+        <section class="panel asset-panel" id="licensePanel" aria-labelledby="licenseTitle">
           <h2 class="panel__title" id="licenseTitle" data-i18n="license.title">我的许可证（License）</h2>
           <p class="panel__desc" data-i18n="license.desc">激活软件所用的许可证；点击「复制」后粘贴到客户端激活框。</p>
           <p class="asset-error" id="licenseError" role="alert" hidden></p>
@@ -140,7 +162,7 @@
         </section>
 
         <!-- 我的订阅 -->
-        <section class="panel asset-panel" aria-labelledby="subTitle">
+        <section class="panel asset-panel" id="subPanel" aria-labelledby="subTitle">
           <h2 class="panel__title" id="subTitle" data-i18n="sub.title">我的订阅</h2>
           <p class="panel__desc" data-i18n="sub.desc">订阅由支付渠道托管续费；取消后本周期结束即失效。</p>
           <p class="asset-error" id="subError" role="alert" hidden></p>
@@ -161,7 +183,7 @@
         </section>
 
         <!-- 我的订单 -->
-        <section class="panel asset-panel" aria-labelledby="orderTitle">
+        <section class="panel asset-panel" id="orderPanel" aria-labelledby="orderTitle">
           <h2 class="panel__title" id="orderTitle" data-i18n="order.title">我的订单</h2>
           <p class="panel__desc" data-i18n="order.desc">购买与兑换产生的订单记录。</p>
           <p class="asset-error" id="orderError" role="alert" hidden></p>
@@ -181,6 +203,36 @@
             </table>
           </div>
           <p class="empty-note" id="orderEmpty" hidden data-i18n="common.empty">暂无记录</p>
+        </section>
+
+        <!-- 修改密码（plan-7.0 / P1）：复用既有改密端点；管理员代重置后须先在此改密 -->
+        <section class="panel asset-panel" id="changePwdPanel" aria-labelledby="changePwdTitle">
+          <h2 class="panel__title" id="changePwdTitle" data-i18n="chpwd.title">修改密码</h2>
+          <p class="panel__desc" data-i18n="chpwd.desc">修改成功后所有已登录会话将失效，需用新密码重新登录。</p>
+          <p class="asset-error force-note" id="chpwdForceNote" hidden
+             data-i18n="chpwd.forceNote">管理员已重置你的密码：请先设置新密码，才能继续使用其他功能。</p>
+          <form id="changePwdForm" novalidate>
+            <div class="field">
+              <label class="field__label" for="chpwdOld" data-i18n="chpwd.oldLabel">当前密码</label>
+              <input class="field__input" id="chpwdOld" name="oldPassword" type="password"
+                     autocomplete="current-password" required>
+            </div>
+            <div class="field">
+              <label class="field__label" for="chpwdNew" data-i18n="chpwd.newLabel">新密码</label>
+              <input class="field__input" id="chpwdNew" name="newPassword" type="password"
+                     autocomplete="new-password" required>
+              <p class="field__hint" data-i18n="chpwd.policyHint">8–72 位，须同时包含字母与数字，且不得与旧密码相同。</p>
+            </div>
+            <div class="field">
+              <label class="field__label" for="chpwdConfirm" data-i18n="chpwd.confirmLabel">确认新密码</label>
+              <input class="field__input" id="chpwdConfirm" name="confirmPassword" type="password"
+                     autocomplete="new-password" required>
+            </div>
+            <p class="form-error" id="chpwdError" role="alert" hidden></p>
+            <div class="panel__actions">
+              <button class="btn btn--primary" id="chpwdBtn" type="submit" data-i18n="chpwd.submit">确认修改</button>
+            </div>
+          </form>
         </section>
       </div>
 
@@ -229,6 +281,6 @@
     </div>
   </footer>
 
-  <script src="account.js"></script>
+  <script src="account.js?v=20260925-1"></script>
 </body>
 </html>

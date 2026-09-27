@@ -14,29 +14,34 @@
   <script>document.documentElement.classList.add('js');</script>
   <!-- 设计体系与收银台同源复用（design tokens + 通用组件）；页面专属样式见 admin.css -->
   <link rel="stylesheet" href="../checkout/checkout.css">
-  <link rel="stylesheet" href="admin.css">
+  <link rel="stylesheet" href="admin.css?v=20260925-1">
 </head>
 <body>
-  <a class="skip-link" href="#main">跳到主要内容</a>
+  <a class="skip-link" href="#main" data-i18n="a11y.skip">跳到主要内容</a>
 
   <!-- ======================= 顶部导航（精简版，与收银台同构） ======================= -->
   <header class="site-header">
     <div class="container site-header__inner">
       <a class="brand" href="https://www.ywhome.top">
-        <span class="brand__name">晏宁科技</span>
+        <span class="brand__name" data-i18n="brand.name">晏宁科技</span>
       </a>
 
       <div class="site-header__actions">
-        <a class="btn btn--ghost btn--sm" href="https://www.ywhome.top">返回首页</a>
+        <button class="lang-switch" id="langSwitch" type="button" aria-label="切换语言 / Switch language">
+          <span class="lang-switch__current" id="langCurrent">中文</span>
+          <span class="lang-switch__sep" aria-hidden="true">/</span>
+          <span class="lang-switch__other" id="langOther">EN</span>
+        </button>
+        <a class="btn btn--ghost btn--sm" href="https://www.ywhome.top" data-i18n="nav.home">返回首页</a>
       </div>
     </div>
   </header>
 
   <main class="admin" id="main">
     <div class="container admin__inner">
-      <p class="admin__eyebrow">管理后台</p>
-      <h1 class="admin__title">平台账务统计</h1>
-      <p class="admin__sub">收入总览、分渠道 / 分产品统计、交易流水、时间趋势与对账差异（仅查询）。数据接口需管理员登录后凭 JWT 访问。</p>
+      <p class="admin__eyebrow" data-i18n="admin.eyebrow">管理后台</p>
+      <h1 class="admin__title" data-i18n="admin.title">平台账务统计</h1>
+      <p class="admin__sub" data-i18n="admin.sub">收入总览、分渠道 / 分产品统计、交易流水、时间趋势与对账差异（仅查询）。数据接口需管理员登录后凭 JWT 访问。</p>
 
       <noscript>
         <p class="noscript-note">
@@ -46,31 +51,39 @@
 
       <!-- ======================= 解锁卡片（未提供 Key 时显示） ======================= -->
       <div class="panel auth-panel" id="authPanel">
-        <h2 class="panel__title">管理员登录</h2>
-        <p class="panel__desc">使用管理员账号（邮箱 + 密码）登录；令牌仅保存在本机浏览器，不会发送到其他服务。</p>
+        <h2 class="panel__title" data-i18n="auth.title">管理员登录</h2>
+        <p class="panel__desc" data-i18n="auth.desc">使用管理员账号（邮箱 + 密码）登录；令牌仅保存在本机浏览器，不会发送到其他服务。</p>
 
         <!-- 第一步：邮箱 + 密码 -->
         <div id="loginStep">
           <form id="unlockForm" novalidate>
             <div class="field">
-              <label class="field__label" for="loginEmail">管理员邮箱</label>
+              <label class="field__label" for="loginEmail" data-i18n="auth.emailLabel">管理员邮箱</label>
               <input class="field__input" type="email" id="loginEmail" name="email"
-                     autocomplete="username" spellcheck="false" placeholder="管理员邮箱" required>
+                     autocomplete="username" spellcheck="false"
+                     data-i18n-placeholder="auth.emailPlaceholder" placeholder="admin@example.com" required>
             </div>
             <div class="field">
-              <label class="field__label" for="loginPassword">密码</label>
+              <label class="field__label" for="loginPassword" data-i18n="auth.passwordLabel">密码</label>
               <input class="field__input" type="password" id="loginPassword" name="password"
-                     autocomplete="current-password" placeholder="密码" required>
+                     autocomplete="current-password"
+                     data-i18n-placeholder="auth.passwordPlaceholder" placeholder="密码" required>
             </div>
             <div class="field field--check">
               <label class="check-label">
                 <input type="checkbox" id="rememberKey" checked>
-                <span>记住本机（关闭浏览器后仍保留）</span>
+                <span data-i18n="auth.remember">记住本机（关闭浏览器后仍保留）</span>
               </label>
             </div>
             <p class="form-error" id="authError" hidden></p>
-            <button class="btn btn--primary" type="submit" id="unlockBtn">登录</button>
+            <button class="btn btn--primary" type="submit" id="unlockBtn" data-i18n="auth.login">登录</button>
           </form>
+          <!-- 找回入口（plan-7.0 / P1）：不新增后端 API，复用账号页的邮箱验证码找回流程 -->
+          <p class="form-note">
+            <span data-i18n="auth.forgotPrefix">忘记密码？去</span>
+            <button type="button" class="linklike" id="gotoAccountReset" data-i18n="auth.forgotLink">账号页用邮箱验证码找回</button>
+            <span data-i18n="auth.forgotSuffix">（管理台账号与账号页同源）。</span>
+          </p>
         </div>
 
         <!-- 第二步：二次因子（仅该账号已开启 MFA 时显示） -->
@@ -80,17 +93,17 @@
           </p>
           <form id="mfaForm" novalidate>
             <div class="field">
-              <label class="field__label" for="mfaLoginCode">动态码</label>
+              <label class="field__label" for="mfaLoginCode" data-i18n="mfaLogin.codeLabel">动态码</label>
               <input class="field__input" type="text" id="mfaLoginCode" name="code"
                      inputmode="numeric" maxlength="6" autocomplete="one-time-code"
                      spellcheck="false" placeholder="6 位数字" required>
             </div>
             <p class="form-error" id="mfaLoginError" hidden></p>
-            <button class="btn btn--primary" type="submit" id="mfaVerifyBtn">验证并登录</button>
+            <button class="btn btn--primary" type="submit" id="mfaVerifyBtn" data-i18n="mfaLogin.verify">验证并登录</button>
           </form>
           <div class="form-actions">
-            <button class="linklike" type="button" id="mfaEmailBtn">改用邮箱验证码</button>
-            <button class="linklike" type="button" id="mfaBackBtn">返回重新输入密码</button>
+            <button class="linklike" type="button" id="mfaEmailBtn" data-i18n="mfaLogin.useEmail">改用邮箱验证码</button>
+            <button class="linklike" type="button" id="mfaBackBtn" data-i18n="mfaLogin.back">返回重新输入密码</button>
           </div>
         </div>
       </div>
@@ -100,8 +113,8 @@
 
         <!-- 用户栏：解锁状态与退出 -->
         <div class="userbar">
-          <p class="userbar__note">已登录 · 令牌保存在本机<span id="keyScopeNote"></span></p>
-          <button class="linklike" type="button" id="lockBtn">退出登录</button>
+          <p class="userbar__note"><span data-i18n="userbar.note">已登录 · 令牌保存在本机</span><span id="keyScopeNote"></span></p>
+          <button class="linklike" type="button" id="lockBtn" data-i18n="userbar.logout">退出登录</button>
         </div>
 
         <!-- 工具栏：时间范围（安全设置分区不需要，切到该分区时隐藏） -->
@@ -109,194 +122,330 @@
           <div class="toolbar">
             <div class="toolbar__range">
               <div class="field">
-                <label class="field__label" for="fromInput">起始时间</label>
+                <label class="field__label" for="fromInput" data-i18n="range.from">起始时间</label>
                 <input class="field__input" type="datetime-local" id="fromInput">
               </div>
               <div class="field">
-                <label class="field__label" for="toInput">结束时间</label>
+                <label class="field__label" for="toInput" data-i18n="range.to">结束时间</label>
                 <input class="field__input" type="datetime-local" id="toInput">
               </div>
-              <button class="btn btn--primary" type="button" id="applyRange">查询</button>
+              <button class="btn btn--primary" type="button" id="applyRange" data-i18n="range.apply">查询</button>
             </div>
-            <div class="toolbar__presets" role="group" aria-label="快捷时间范围">
-              <button class="chip" type="button" data-preset="today">今天</button>
-              <button class="chip" type="button" data-preset="7d">近 7 天</button>
-              <button class="chip" type="button" data-preset="30d">近 30 天</button>
-              <button class="chip" type="button" data-preset="month">本月</button>
+            <div class="toolbar__presets" role="group" aria-label="快捷时间范围" data-i18n-aria="range.presetsAria">
+              <button class="chip" type="button" data-preset="today" data-i18n="range.today">今天</button>
+              <button class="chip" type="button" data-preset="7d" data-i18n="range.d7">近 7 天</button>
+              <button class="chip" type="button" data-preset="30d" data-i18n="range.d30">近 30 天</button>
+              <button class="chip" type="button" data-preset="month" data-i18n="range.month">本月</button>
             </div>
           </div>
           <p class="form-error" id="rangeError" hidden></p>
         </div>
 
         <!-- 分区导航 -->
-        <nav class="tabs" id="tabs" aria-label="统计分区">
-          <button class="tabs__item is-active" type="button" data-tab="overview" aria-selected="true">收入总览</button>
-          <button class="tabs__item" type="button" data-tab="channel" aria-selected="false">分渠道</button>
-          <button class="tabs__item" type="button" data-tab="product" aria-selected="false">分产品</button>
-          <button class="tabs__item" type="button" data-tab="transactions" aria-selected="false">交易流水</button>
-          <button class="tabs__item" type="button" data-tab="trend" aria-selected="false">趋势</button>
-          <button class="tabs__item" type="button" data-tab="discrepancies" aria-selected="false">对账差异</button>
-          <button class="tabs__item" type="button" data-tab="license" aria-selected="false">License 处置</button>
-          <button class="tabs__item" type="button" data-tab="security" aria-selected="false">安全设置</button>
+        <nav class="tabs" id="tabs" aria-label="统计分区" data-i18n-aria="tabs.aria">
+          <button class="tabs__item is-active" type="button" data-tab="overview" aria-selected="true" data-i18n="tabs.overview">收入总览</button>
+          <button class="tabs__item" type="button" data-tab="channel" aria-selected="false" data-i18n="tabs.channel">分渠道</button>
+          <button class="tabs__item" type="button" data-tab="product" aria-selected="false" data-i18n="tabs.product">分产品</button>
+          <button class="tabs__item" type="button" data-tab="transactions" aria-selected="false" data-i18n="tabs.transactions">交易流水</button>
+          <button class="tabs__item" type="button" data-tab="trend" aria-selected="false" data-i18n="tabs.trend">趋势</button>
+          <button class="tabs__item" type="button" data-tab="discrepancies" aria-selected="false" data-i18n="tabs.discrepancies">对账差异</button>
+          <button class="tabs__item" type="button" data-tab="license" aria-selected="false" data-i18n="tabs.license">License 处置</button>
+          <button class="tabs__item" type="button" data-tab="users" aria-selected="false" data-i18n="tabs.users">用户管理</button>
+          <button class="tabs__item" type="button" data-tab="security" aria-selected="false" data-i18n="tabs.security">安全设置</button>
         </nav>
 
         <!-- 各分区面板（同一时间只显示一个） -->
         <section class="panel data-panel" id="panel-overview" hidden>
-          <h2 class="panel__title">收入总览</h2>
+          <h2 class="panel__title" data-i18n="panel.overview">收入总览</h2>
           <p class="panel__desc" id="overviewRangeNote"></p>
           <p class="data-error" id="overviewError" hidden></p>
           <div class="table-wrap" id="overviewTableWrap" hidden></div>
-          <p class="empty-note" id="overviewEmpty" hidden>该区间暂无订单数据。</p>
+          <p class="empty-note" id="overviewEmpty" hidden data-i18n="empty.overview">该区间暂无订单数据。</p>
         </section>
 
         <section class="panel data-panel" id="panel-channel" hidden>
-          <h2 class="panel__title">分渠道统计</h2>
-          <p class="panel__desc">按支付渠道 × 币种汇总；历史订单无渠道时归入「未知渠道」。</p>
+          <h2 class="panel__title" data-i18n="panel.channel">分渠道统计</h2>
+          <p class="panel__desc" data-i18n="desc.channel">按支付渠道 × 币种汇总；历史订单无渠道时归入「未知渠道」。</p>
           <p class="data-error" id="channelError" hidden></p>
           <div class="table-wrap" id="channelTableWrap" hidden></div>
-          <p class="empty-note" id="channelEmpty" hidden>该区间暂无渠道数据。</p>
+          <p class="empty-note" id="channelEmpty" hidden data-i18n="empty.channel">该区间暂无渠道数据。</p>
         </section>
 
         <section class="panel data-panel" id="panel-product" hidden>
-          <h2 class="panel__title">分产品统计</h2>
-          <p class="panel__desc">按产品 × 币种汇总，金额取自订单明细，按订单级支付状态归类。</p>
+          <h2 class="panel__title" data-i18n="panel.product">分产品统计</h2>
+          <p class="panel__desc" data-i18n="desc.product">按产品 × 币种汇总，金额取自订单明细，按订单级支付状态归类。</p>
           <p class="data-error" id="productError" hidden></p>
           <div class="table-wrap" id="productTableWrap" hidden></div>
-          <p class="empty-note" id="productEmpty" hidden>该区间暂无产品数据。</p>
+          <p class="empty-note" id="productEmpty" hidden data-i18n="empty.product">该区间暂无产品数据。</p>
         </section>
 
         <section class="panel data-panel" id="panel-transactions" hidden>
-          <h2 class="panel__title">交易流水</h2>
-          <p class="panel__desc">每条支付记录一行（一次资金变动）；管理端退款成功也会写入 REFUNDED 流水。</p>
+          <h2 class="panel__title" data-i18n="panel.transactions">交易流水</h2>
+          <p class="panel__desc" data-i18n="desc.transactions">每条支付记录一行（一次资金变动）；管理端退款成功也会写入 REFUNDED 流水。</p>
           <div class="tx-filters">
             <div class="field">
-              <label class="field__label" for="txChannel">渠道</label>
+              <label class="field__label" for="txChannel" data-i18n="filter.channel">渠道</label>
               <select class="field__input" id="txChannel">
-                <option value="">全部</option>
-                <option value="ALIPAY">支付宝</option>
-                <option value="WECHAT_PAY">微信支付</option>
+                <option value="" data-i18n="opt.all">全部</option>
+                <option value="ALIPAY" data-i18n="opt.alipay">支付宝</option>
+                <option value="WECHAT_PAY" data-i18n="opt.wechat">微信支付</option>
                 <option value="STRIPE">Stripe</option>
                 <option value="PADDLE">Paddle</option>
                 <option value="PAYPAL">PayPal</option>
               </select>
             </div>
             <div class="field">
-              <label class="field__label" for="txStatus">状态</label>
+              <label class="field__label" for="txStatus" data-i18n="filter.status">状态</label>
               <select class="field__input" id="txStatus">
-                <option value="">全部</option>
-                <option value="SUCCESS">成功</option>
-                <option value="REFUNDED">已退款</option>
-                <option value="FAILED">失败</option>
-                <option value="PENDING">待处理</option>
-                <option value="CANCELLED">已取消</option>
-                <option value="UNKNOWN">未知</option>
+                <option value="" data-i18n="opt.all">全部</option>
+                <option value="SUCCESS" data-i18n="opt.success">成功</option>
+                <option value="REFUNDED" data-i18n="opt.refunded">已退款</option>
+                <option value="FAILED" data-i18n="opt.failed">失败</option>
+                <option value="PENDING" data-i18n="opt.pending">待处理</option>
+                <option value="CANCELLED" data-i18n="opt.cancelled">已取消</option>
+                <option value="UNKNOWN" data-i18n="opt.unknown">未知</option>
               </select>
             </div>
             <div class="field">
-              <label class="field__label" for="txCurrency">币种</label>
+              <label class="field__label" for="txCurrency" data-i18n="filter.currency">币种</label>
               <input class="field__input" type="text" id="txCurrency" placeholder="USD / CNY" autocomplete="off" spellcheck="false">
             </div>
-            <button class="btn btn--ghost" type="button" id="txApply">筛选</button>
+            <button class="btn btn--ghost" type="button" id="txApply" data-i18n="filter.apply">筛选</button>
           </div>
           <p class="data-error" id="txError" hidden></p>
           <div class="table-wrap" id="txTableWrap" hidden></div>
-          <p class="empty-note" id="txEmpty" hidden>该条件下暂无流水记录。</p>
+          <p class="empty-note" id="txEmpty" hidden data-i18n="empty.transactions">该条件下暂无流水记录。</p>
           <div class="pager" id="txPager" hidden>
-            <button class="btn btn--ghost btn--sm" type="button" id="txPrev">上一页</button>
+            <button class="btn btn--ghost btn--sm" type="button" id="txPrev" data-i18n="pager.prev">上一页</button>
             <span class="pager__info" id="txPageInfo"></span>
-            <button class="btn btn--ghost btn--sm" type="button" id="txNext">下一页</button>
+            <button class="btn btn--ghost btn--sm" type="button" id="txNext" data-i18n="pager.next">下一页</button>
           </div>
         </section>
 
         <section class="panel data-panel" id="panel-trend" hidden>
-          <h2 class="panel__title">收入趋势</h2>
+          <h2 class="panel__title" data-i18n="panel.trend">收入趋势</h2>
           <div class="tx-filters">
             <div class="field">
-              <label class="field__label" for="trendGranularity">分桶粒度</label>
+              <label class="field__label" for="trendGranularity" data-i18n="trend.granularity">分桶粒度</label>
               <select class="field__input" id="trendGranularity">
-                <option value="MONTH">按月</option>
-                <option value="DAY">按日</option>
+                <option value="MONTH" data-i18n="opt.byMonth">按月</option>
+                <option value="DAY" data-i18n="opt.byDay">按日</option>
               </select>
             </div>
-            <button class="btn btn--ghost" type="button" id="trendApply">刷新</button>
+            <button class="btn btn--ghost" type="button" id="trendApply" data-i18n="trend.refresh">刷新</button>
           </div>
           <p class="data-error" id="trendError" hidden></p>
           <div class="table-wrap" id="trendTableWrap" hidden></div>
-          <p class="empty-note" id="trendEmpty" hidden>该区间暂无趋势数据。</p>
+          <p class="empty-note" id="trendEmpty" hidden data-i18n="empty.trend">该区间暂无趋势数据。</p>
         </section>
 
         <section class="panel data-panel" id="panel-discrepancies" hidden>
-          <h2 class="panel__title">对账差异</h2>
-          <p class="panel__desc">订单与支付记录状态 / 金额不一致的疑点，按发现时间倒序；无输出即账实相符。</p>
+          <h2 class="panel__title" data-i18n="panel.discrepancies">对账差异</h2>
+          <p class="panel__desc" data-i18n="desc.discrepancies">订单与支付记录状态 / 金额不一致的疑点，按发现时间倒序；无输出即账实相符。</p>
           <p class="data-error" id="discError" hidden></p>
           <div class="table-wrap" id="discTableWrap" hidden></div>
-          <p class="empty-note" id="discEmpty" hidden>未发现对账差异。</p>
+          <p class="empty-note" id="discEmpty" hidden data-i18n="empty.discrepancies">未发现对账差异。</p>
         </section>
 
         <section class="panel data-panel" id="panel-license" hidden>
-          <h2 class="panel__title">License 处置</h2>
+          <h2 class="panel__title" data-i18n="panel.license">License 处置</h2>
           <p class="panel__desc">
-            按密钥精确查询，或按客户邮箱列出名下全部许可证（含失效件）。选中一行后可执行
-            <b>解绑</b>（只清设备绑定、保留授权）、<b>失效重发</b>（旧证置 REISSUED 并签发新密钥）、
-            <b>作废</b>（终态，不可逆）——三者语义不同，请按实际情况择一。
+            <span data-i18n="lic.desc1">按密钥精确查询，或按客户邮箱列出名下全部许可证（含失效件）。选中一行后可执行</span>
+            <b data-i18n="lic.descUnbind">解绑</b><span data-i18n="lic.desc2">（只清设备绑定、保留授权）、</span><b data-i18n="lic.descReissue">失效重发</b><span data-i18n="lic.desc3">（旧证置 REISSUED 并签发新密钥）、</span><b data-i18n="lic.descRevoke">作废</b><span data-i18n="lic.desc4">（终态，不可逆）——三者语义不同，请按实际情况择一。</span>
           </p>
 
           <div class="toolbar">
             <div class="toolbar__range">
               <div class="field">
-                <label class="field__label" for="licSearchInput">License 密钥 / 客户邮箱</label>
+                <label class="field__label" for="licSearchInput" data-i18n="lic.searchLabel">License 密钥 / 客户邮箱</label>
                 <input class="field__input" type="text" id="licSearchInput" spellcheck="false"
                        placeholder="LIC-XXXX-… 或 user@example.com">
               </div>
-              <button class="btn btn--primary" type="button" id="licSearchByKey">按密钥查询</button>
-              <button class="btn btn--ghost" type="button" id="licSearchByEmail">按邮箱查询</button>
+              <button class="btn btn--primary" type="button" id="licSearchByKey" data-i18n="lic.byKey">按密钥查询</button>
+              <button class="btn btn--ghost" type="button" id="licSearchByEmail" data-i18n="lic.byEmail">按邮箱查询</button>
             </div>
           </div>
           <p class="form-error" id="licError" hidden></p>
 
           <div class="table-wrap" id="licTableWrap" hidden></div>
-          <p class="empty-note" id="licEmpty" hidden>尚未查询，或未查询到许可证。</p>
+          <p class="empty-note" id="licEmpty" hidden data-i18n="empty.license">尚未查询，或未查询到许可证。</p>
 
           <!-- 处置结果提示（留在分区内，不随处置表单收起） -->
           <p class="lic-result" id="licResult" hidden></p>
 
           <div class="lic-action" id="licActionBox" hidden>
-            <h3 class="lic-action__title">处置 <code id="licActionKey"></code></h3>
+            <h3 class="lic-action__title"><span data-i18n="lic.actionTitle">处置</span> <code id="licActionKey"></code></h3>
             <div class="field">
-              <label class="field__label" for="licActionType">处置动作</label>
+              <label class="field__label" for="licActionType" data-i18n="lic.actionType">处置动作</label>
               <select class="field__input" id="licActionType">
-                <option value="unbind">解绑设备（保留授权，用户可在新机重新激活）</option>
-                <option value="reissue">失效重发（旧证置 REISSUED，签发新密钥）</option>
-                <option value="revoke">作废（不可逆，用户权益终止）</option>
+                <option value="unbind" data-i18n="lic.optUnbind">解绑设备（保留授权，用户可在新机重新激活）</option>
+                <option value="reissue" data-i18n="lic.optReissue">失效重发（旧证置 REISSUED，签发新密钥）</option>
+                <option value="revoke" data-i18n="lic.optRevoke">作废（不可逆，用户权益终止）</option>
               </select>
             </div>
             <div class="field" id="licMachineField" hidden>
-              <label class="field__label" for="licNewMachine">新机器码（留空 = 不绑设备）</label>
+              <label class="field__label" for="licNewMachine" data-i18n="lic.newMachine">新机器码（留空 = 不绑设备）</label>
               <input class="field__input" type="text" id="licNewMachine" spellcheck="false"
-                     placeholder="留空则由用户随后自行在新机激活">
+                     data-i18n-placeholder="lic.newMachinePlaceholder" placeholder="留空则由用户随后自行在新机激活">
             </div>
             <div class="field field--check" id="licForceField" hidden>
               <label class="check-label">
                 <input type="checkbox" id="licForce">
-                <span>越权重发次数上限（仅在已达上限时勾选；处置留痕会标注 forced）</span>
+                <span data-i18n="lic.forceOverride">越权重发次数上限（仅在已达上限时勾选；处置留痕会标注 forced）</span>
               </label>
             </div>
             <div class="field">
-              <label class="field__label" for="licReason">处置原因</label>
+              <label class="field__label" for="licReason" data-i18n="lic.reason">处置原因</label>
               <input class="field__input" type="text" id="licReason" spellcheck="false"
-                     placeholder="如：用户换机 / 违规使用 / 重复购买">
+                     data-i18n-placeholder="lic.reasonPlaceholder" placeholder="如：用户换机 / 违规使用 / 重复购买">
             </div>
             <p class="form-error" id="licActionError" hidden></p>
             <div class="form-actions">
-              <button class="btn btn--primary" type="button" id="licActionSubmit">确认执行</button>
-              <button class="btn btn--ghost" type="button" id="licActionCancel">取消</button>
+              <button class="btn btn--primary" type="button" id="licActionSubmit" data-i18n="lic.submit">确认执行</button>
+              <button class="btn btn--ghost" type="button" id="licActionCancel" data-i18n="common.cancel">取消</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel data-panel" id="panel-users" hidden>
+          <h2 class="panel__title" data-i18n="panel.users">用户管理</h2>
+          <p class="panel__desc">
+            <span data-i18n="users.desc1">按邮箱 / 角色 / 状态查询账号，可就地改角色、停用 / 启用、代重置密码。</span>
+            <b data-i18n="users.descBold">不能对自己执行这些动作</b><span data-i18n="users.desc2">（列表里自身的行会禁用）；服务端也会二次校验，前端禁用只是体验层。</span>
+            <span data-i18n="users.desc3">代重置后用户必须下次登录自助改密，旧会话立即失效。</span>
+          </p>
+
+          <div class="toolbar">
+            <div class="toolbar__range">
+              <div class="field">
+                <label class="field__label" for="userEmail" data-i18n="users.emailLabel">邮箱（包含匹配）</label>
+                <input class="field__input" type="text" id="userEmail" spellcheck="false"
+                       autocomplete="off" placeholder="user@example.com">
+              </div>
+              <div class="field">
+                <label class="field__label" for="userRole" data-i18n="users.role">角色</label>
+                <select class="field__input" id="userRole">
+                  <option value="" data-i18n="opt.all">全部</option>
+                  <option value="USER" data-i18n="role.user">普通用户</option>
+                  <option value="ADMIN" data-i18n="role.admin">管理员</option>
+                </select>
+              </div>
+              <div class="field">
+                <label class="field__label" for="userStatus" data-i18n="users.status">状态</label>
+                <select class="field__input" id="userStatus">
+                  <option value="" data-i18n="opt.all">全部</option>
+                  <option value="ACTIVE" data-i18n="status.active">正常</option>
+                  <option value="DISABLED" data-i18n="status.disabled">已停用</option>
+                </select>
+              </div>
+              <button class="btn btn--primary" type="button" id="userSearch" data-i18n="users.search">查询</button>
+              <button class="btn btn--ghost" type="button" id="userExportBtn" data-i18n="users.export">导出 CSV</button>
+            </div>
+          </div>
+
+          <p class="data-error" id="userError" hidden></p>
+          <div class="table-wrap" id="userTableWrap" hidden></div>
+          <p class="empty-note" id="userEmpty" hidden data-i18n="empty.users">没有符合条件的用户。</p>
+
+          <div class="pager" id="userPager" hidden>
+            <button class="btn btn--ghost btn--sm" type="button" id="userPrev" data-i18n="pager.prev">上一页</button>
+            <span class="pager__info" id="userPageInfo"></span>
+            <button class="btn btn--ghost btn--sm" type="button" id="userNext" data-i18n="pager.next">下一页</button>
+          </div>
+
+          <!-- 操作成功提示（不含任何密码） -->
+          <p class="lic-result" id="userResult" hidden></p>
+
+          <!-- 代重置密码：管理员自设新密码，提交成功只提示成功、不回显密码 -->
+          <div class="user-modal" id="resetPwdModal" hidden>
+            <div class="user-modal__box" role="dialog" aria-modal="true" aria-labelledby="resetPwdTitle">
+              <h3 class="user-modal__title" id="resetPwdTitle"><span data-i18n="resetPwd.title">重置密码：</span><span id="resetPwdEmail"></span></h3>
+              <p class="form-note" data-i18n="resetPwd.note">
+                为该账号设置新密码并告知用户本人；重置后旧会话立即失效，且该用户下次登录必须先修改密码。
+                新密码须 8–72 位且同时包含字母与数字。
+              </p>
+              <div class="field">
+                <label class="field__label" for="resetPwdNew" data-i18n="users.newPwd">新密码</label>
+                <input class="field__input" type="password" id="resetPwdNew"
+                       autocomplete="new-password" spellcheck="false"
+                       data-i18n-placeholder="pwd.hint" placeholder="8–72 位，含字母与数字">
+              </div>
+              <div class="field">
+                <label class="field__label" for="resetPwdConfirm" data-i18n="users.confirmPwd">确认新密码</label>
+                <input class="field__input" type="password" id="resetPwdConfirm"
+                       autocomplete="new-password" spellcheck="false"
+                       data-i18n-placeholder="pwd.confirmPlaceholder" placeholder="再次输入新密码">
+              </div>
+              <p class="form-error" id="resetPwdError" hidden></p>
+              <div class="form-actions">
+                <button class="btn btn--primary" type="button" id="resetPwdSubmit" data-i18n="resetPwd.submit">确认重置</button>
+                <button class="btn btn--ghost" type="button" id="resetPwdCancel" data-i18n="common.cancel">取消</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 敏感动作二次确认弹层（P2 step-up）：确认令牌只随单次请求发出，不落任何存储 -->
+          <div class="user-modal" id="stepUpModal" hidden>
+            <div class="user-modal__box" role="dialog" aria-modal="true" aria-labelledby="stepUpTitle">
+              <h3 class="user-modal__title" id="stepUpTitle" data-i18n="stepUp.title">敏感操作二次确认</h3>
+              <p class="mfa-status" id="stepUpAction"></p>
+              <p class="form-note" data-i18n="stepUp.note">
+                该操作影响账号安全，请输入认证器动态码完成二次确认（6 位数字）。
+                认证器不可用时可用邮箱验证码兜底。确认令牌 120 秒内有效且仅可使用一次。
+              </p>
+              <div class="field">
+                <label class="field__label" for="stepUpCode" data-i18n="stepUp.codeLabel">动态码</label>
+                <input class="field__input" type="text" id="stepUpCode" inputmode="numeric"
+                       maxlength="6" autocomplete="one-time-code" spellcheck="false"
+                       data-i18n-placeholder="pwd.sixDigits" placeholder="6 位数字">
+              </div>
+              <p class="form-note" id="stepUpNote" hidden></p>
+              <p class="form-error" id="stepUpError" hidden></p>
+              <div class="form-actions">
+                <button class="linklike" type="button" id="stepUpSendBtn" data-i18n="mfaLogin.useEmail">改用邮箱验证码</button>
+                <button class="btn btn--primary" type="button" id="stepUpSubmit" data-i18n="common.confirm">确认</button>
+                <button class="btn btn--ghost" type="button" id="stepUpCancel" data-i18n="common.cancel">取消</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 用户详情弹层（P1）：资料 + 许可证/订单计数；明细复用既有许可证查询 -->
+          <div class="user-modal" id="userDetailModal" hidden>
+            <div class="user-modal__box" role="dialog" aria-modal="true" aria-labelledby="userDetailTitle">
+              <h3 class="user-modal__title" id="userDetailTitle" data-i18n="detail.title">用户详情</h3>
+              <p class="form-error" id="userDetailError" hidden></p>
+              <div id="userDetailBody" hidden>
+                <table class="data-table user-detail-table">
+                  <tbody>
+                    <tr><th data-i18n="detail.email">邮箱</th><td id="userDetailEmail"></td></tr>
+                    <tr><th data-i18n="detail.role">角色</th><td id="userDetailRole"></td></tr>
+                    <tr><th data-i18n="detail.status">状态</th><td id="userDetailStatus"></td></tr>
+                    <tr><th data-i18n="detail.mfa">二次验证</th><td id="userDetailMfa"></td></tr>
+                    <tr><th data-i18n="detail.createdAt">注册时间</th><td id="userDetailCreatedAt"></td></tr>
+                    <tr><th data-i18n="detail.lastLogin">最近登录</th><td id="userDetailLastLoginAt"></td></tr>
+                    <tr><th data-i18n="detail.licenses">名下许可证</th><td><span id="userDetailLicenseCount"></span> <span data-i18n="unit.licenses">张</span></td></tr>
+                    <tr><th data-i18n="detail.orders">名下订单</th><td><span id="userDetailOrderCount"></span> <span data-i18n="unit.orders">笔</span></td></tr>
+                  </tbody>
+                </table>
+                <div class="form-actions">
+                  <button class="btn btn--ghost" type="button" id="userDetailLicensesBtn" data-i18n="detail.viewLicenses">查看许可证</button>
+                </div>
+                <div id="userDetailLicensesBox" hidden>
+                  <p class="form-note" data-i18n="detail.licensesNote">以下为该用户邮箱名下的许可证（完整密钥，仅供售后处置；不含签名令牌）：</p>
+                  <div class="table-wrap" id="userDetailLicensesWrap"></div>
+                  <p class="empty-note" id="userDetailLicensesEmpty" hidden data-i18n="empty.licenses">该用户名下暂无许可证。</p>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button class="btn btn--ghost" type="button" id="userDetailClose" data-i18n="common.close">关闭</button>
+              </div>
             </div>
           </div>
         </section>
 
         <section class="panel data-panel" id="panel-security" hidden>
-          <h2 class="panel__title">安全设置 · 二次验证（MFA）</h2>
-          <p class="panel__desc">
+          <h2 class="panel__title" data-i18n="panel.security">安全设置 · 二次验证（MFA）</h2>
+          <p class="panel__desc" data-i18n="desc.security">
             开启后，登录除密码外还需输入认证器 App（Google Authenticator / Microsoft Authenticator /
             1Password 等均可）的动态码；认证器不可用时可用邮箱验证码兜底。
           </p>
@@ -304,52 +453,91 @@
           <p class="data-error" id="mfaStatusError" hidden></p>
           <p class="mfa-status" id="mfaStatusText" hidden></p>
 
+          <!-- 本人改密（plan-7.0 / P1）：与 C 端共用既有改密端点；成功后令牌失效须重新登录 -->
+          <div class="security-block" id="selfPwdBox">
+            <h3 class="security-block__title" data-i18n="selfPwd.title">修改本账号密码</h3>
+            <p class="form-note" data-i18n="selfPwd.note">
+              改密成功后当前登录会话立即失效，需用新密码重新登录；系统会向你的邮箱发送不含密码的安全提醒。
+              新密码须 8–72 位且同时包含字母与数字，不得与旧密码相同。
+            </p>
+            <div class="field">
+              <label class="field__label" for="selfPwdOld" data-i18n="pwd.currentLabel">当前密码</label>
+              <input class="field__input" type="password" id="selfPwdOld"
+                     autocomplete="current-password"
+                     data-i18n-placeholder="pwd.currentPlaceholder" placeholder="当前密码" required>
+            </div>
+            <div class="field">
+              <label class="field__label" for="selfPwdNew" data-i18n="users.newPwd">新密码</label>
+              <input class="field__input" type="password" id="selfPwdNew"
+                     autocomplete="new-password"
+                     data-i18n-placeholder="pwd.hint" placeholder="8–72 位，含字母与数字" required>
+            </div>
+            <div class="field">
+              <label class="field__label" for="selfPwdConfirm" data-i18n="users.confirmPwd">确认新密码</label>
+              <input class="field__input" type="password" id="selfPwdConfirm"
+                     autocomplete="new-password"
+                     data-i18n-placeholder="pwd.confirmPlaceholder" placeholder="再次输入新密码" required>
+            </div>
+            <p class="form-error" id="selfPwdError" hidden></p>
+            <button class="btn btn--primary" type="button" id="selfPwdSubmit" data-i18n="selfPwd.submit">确认修改</button>
+          </div>
+
+          <div class="security-block" id="mfaBox">
+            <h3 class="security-block__title" data-i18n="mfa.blockTitle">二次验证（MFA）</h3>
+          </div>
+
           <!-- 未开启时：生成密钥 -->
           <div id="mfaEnrollBox" hidden>
             <div class="field">
-              <label class="field__label" for="mfaPassword">当前密码</label>
+              <label class="field__label" for="mfaPassword" data-i18n="pwd.currentLabel">当前密码</label>
               <input class="field__input" type="password" id="mfaPassword"
-                     autocomplete="current-password" placeholder="当前密码" required>
+                     autocomplete="current-password"
+                     data-i18n-placeholder="pwd.currentPlaceholder" placeholder="当前密码" required>
             </div>
             <p class="form-error" id="mfaEnrollError" hidden></p>
-            <button class="btn btn--primary" type="button" id="mfaEnrollBtn">生成密钥</button>
+            <button class="btn btn--primary" type="button" id="mfaEnrollBtn" data-i18n="mfa.enroll">生成密钥</button>
           </div>
 
           <!-- 已生成密钥、待激活 -->
           <div id="mfaSecretBox" hidden>
-            <p class="form-note">
-              请在认证器 App 中选择「手动输入密钥」，粘贴下面这串密钥（本页离开后将不再显示）：
+            <p class="form-note" data-i18n="mfa.secretNote">
+              用认证器 App（Google / Microsoft Authenticator、1Password 等）扫描下方二维码；
+              或在 App 中选择「手动输入密钥」，粘贴下面这串密钥（本页离开后将不再显示）：
             </p>
+            <div class="mfa-qr" id="mfaQrBox" hidden>
+              <img id="mfaQrImg" alt="二次验证绑定二维码" data-i18n-alt="mfa.qrAlt">
+            </div>
             <p class="mfa-secret"><code class="mono" id="mfaSecretText"></code></p>
             <div class="field">
-              <label class="field__label" for="mfaActivateCode">认证器动态码</label>
+              <label class="field__label" for="mfaActivateCode" data-i18n="mfa.activateLabel">认证器动态码</label>
               <input class="field__input" type="text" id="mfaActivateCode" inputmode="numeric"
                      maxlength="6" autocomplete="one-time-code" spellcheck="false"
-                     placeholder="录入密钥后 App 显示的 6 位数字">
+                     data-i18n-placeholder="mfa.activatePlaceholder" placeholder="录入密钥后 App 显示的 6 位数字">
             </div>
             <p class="form-error" id="mfaActivateError" hidden></p>
-            <button class="btn btn--primary" type="button" id="mfaActivateBtn">激活</button>
+            <button class="btn btn--primary" type="button" id="mfaActivateBtn" data-i18n="mfa.activate">激活</button>
           </div>
 
           <!-- 已开启时：解绑 -->
           <div id="mfaUnbindBox" hidden>
             <p class="form-note">
-              解绑会关闭二次验证这道防线，故须同时提供当前密码与一个有效验证码。
-              若认证器与邮箱均不可用，请联系运维执行 <code class="mono">scripts/db/reset-admin-mfa.sql</code>。
+              <span data-i18n="mfa.unbindNote">解绑会关闭二次验证这道防线，故须同时提供当前密码与一个有效验证码。
+              若认证器与邮箱均不可用，请联系运维执行</span> <code class="mono">scripts/db/reset-admin-mfa.sql</code><span data-i18n="mfa.unbindNoteTail">。</span>
             </p>
             <div class="field">
-              <label class="field__label" for="mfaUnbindPassword">当前密码</label>
+              <label class="field__label" for="mfaUnbindPassword" data-i18n="pwd.currentLabel">当前密码</label>
               <input class="field__input" type="password" id="mfaUnbindPassword"
-                     autocomplete="current-password" placeholder="当前密码" required>
+                     autocomplete="current-password"
+                     data-i18n-placeholder="pwd.currentPlaceholder" placeholder="当前密码" required>
             </div>
             <div class="field">
-              <label class="field__label" for="mfaUnbindCode">动态码（或邮箱验证码）</label>
+              <label class="field__label" for="mfaUnbindCode" data-i18n="mfaLogin.codeLabel">动态码（或邮箱验证码）</label>
               <input class="field__input" type="text" id="mfaUnbindCode" inputmode="numeric"
                      maxlength="6" autocomplete="one-time-code" spellcheck="false"
-                     placeholder="6 位数字">
+                     data-i18n-placeholder="pwd.sixDigits" placeholder="6 位数字">
             </div>
             <p class="form-error" id="mfaUnbindError" hidden></p>
-            <button class="btn btn--ghost btn--danger" type="button" id="mfaUnbindBtn">解绑二次验证</button>
+            <button class="btn btn--ghost btn--danger" type="button" id="mfaUnbindBtn" data-i18n="mfa.unbind">解绑二次验证</button>
           </div>
         </section>
 
@@ -359,10 +547,10 @@
 
   <footer class="site-footer">
     <div class="container">
-      <p class="form-note">内部页面，请勿外传链接；接口鉴权：管理员 JWT（ROLE_ADMIN）；已开启二次验证的账号登录需另输动态码。</p>
+      <p class="form-note" data-i18n="footer.note">内部页面，请勿外传链接。已开启二次验证的账号登录时需输入动态码。</p>
     </div>
   </footer>
 
-  <script src="admin.js"></script>
+  <script src="admin.js?v=20260925-2"></script>
 </body>
 </html>

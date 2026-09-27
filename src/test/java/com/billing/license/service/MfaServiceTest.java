@@ -54,6 +54,7 @@ class MfaServiceTest {
     private MfaSecretCipher secretCipher;
     private MfaTicketService ticketService;
     private JwtTokenService jwtTokenService;
+    private AdminStepUpService stepUpService;
     private MfaService service;
     private User admin;
 
@@ -68,8 +69,10 @@ class MfaServiceTest {
         secretCipher = new MfaSecretCipher(keyDeriver);
         ticketService = new MfaTicketService(properties, keyDeriver);
         jwtTokenService = new JwtTokenService(properties);
+        stepUpService = new AdminStepUpService(properties, keyDeriver);
         service = new MfaService(userRepository, passwordEncoder, jwtTokenService, ticketService,
-            totpService, secretCipher, verificationCodeService, rateLimitService, properties);
+            totpService, new TotpQrCodeService(), secretCipher, verificationCodeService,
+            rateLimitService, stepUpService, properties);
 
         admin = User.builder()
             .id(UUID.randomUUID())
@@ -114,6 +117,19 @@ class MfaServiceTest {
         assertFalse(admin.getMfaSecretCipher().contains(response.getSecret()),
             "TOTP 密钥明文落库——读库者即可永久生成有效动态码");
         assertEquals(response.getSecret(), secretCipher.decrypt(admin.getMfaSecretCipher()));
+    }
+
+    @Test
+    @DisplayName("生成密钥：须一并返回可扫码的 PNG data URI（否则只能手敲 32 位密钥）")
+    void enroll_shouldReturnQrCodeDataUri() {
+        MfaEnrollResponse response = service.enroll(admin.getId(), PASSWORD);
+
+        assertNotNull(response.getQrCodeDataUri(), "绑定二维码缺失，管理员只能手动录入密钥");
+        assertTrue(response.getQrCodeDataUri().startsWith("data:image/png;base64,"),
+            "二维码必须是前端可直接赋给 <img src> 的 data URI");
+        // 二维码内容就是 otpauth URI：体积应远小于 SVG 方案（实测约 1.1KB base64）
+        assertTrue(response.getQrCodeDataUri().length() < 4096,
+            "二维码体积异常偏大：" + response.getQrCodeDataUri().length());
     }
 
     @Test
@@ -401,6 +417,48 @@ class MfaServiceTest {
             () -> service.unbind(admin.getId(), PASSWORD, "123456"));
 
         assertEquals("MFA_NOT_ENABLED", ex.getErrorCode());
+    }
+
+    // ==================== 敏感动作二次确认（step-up，P2） ====================
+
+    @Test
+    @DisplayName("step-up：校验通过签发与动作绑定的确认令牌，且可被消费")
+    void stepUpVerify_shouldIssueConsumableToken() {
+        enableMfa();
+        String token = service.stepUpVerify(admin.getId(),
+            AdminStepUpService.ACTION_CHANGE_USER_STATUS, currentCode()).getStepUpToken();
+
+        assertDoesNotThrow(() -> stepUpService.consume(admin.getId(), admin.getTokenVersion(),
+            AdminStepUpService.ACTION_CHANGE_USER_STATUS, token));
+    }
+
+    @Test
+    @DisplayName("step-up：TOTP 一码一次——同一个码不能为第二个敏感动作再次签发确认")
+    void stepUpVerify_shouldRejectReplayedCode() {
+        enableMfa();
+        String code = currentCode();
+        service.stepUpVerify(admin.getId(), AdminStepUpService.ACTION_CHANGE_USER_ROLE, code);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+            () -> service.stepUpVerify(admin.getId(), AdminStepUpService.ACTION_CHANGE_USER_ROLE, code));
+        assertEquals("MFA_CODE_INVALID", ex.getErrorCode());
+    }
+
+    @Test
+    @DisplayName("step-up：未启用 MFA 直接拒绝（无第二因子可验证）")
+    void stepUpVerify_shouldRejectWhenMfaNotEnabled() {
+        BusinessException ex = assertThrows(BusinessException.class,
+            () -> service.stepUpVerify(admin.getId(), AdminStepUpService.ACTION_CHANGE_USER_ROLE, "123456"));
+        assertEquals("MFA_NOT_ENABLED", ex.getErrorCode());
+    }
+
+    @Test
+    @DisplayName("step-up：动作不在受保护清单即拒绝（防止拼错动作名签出伪确认）")
+    void stepUpVerify_shouldRejectUnknownAction() {
+        enableMfa();
+        BusinessException ex = assertThrows(BusinessException.class,
+            () -> service.stepUpVerify(admin.getId(), "NOT_A_REAL_ACTION", currentCode()));
+        assertEquals("INVALID_STEP_UP_ACTION", ex.getErrorCode());
     }
 
     // ==================== 辅助方法 ====================

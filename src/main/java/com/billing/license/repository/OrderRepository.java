@@ -16,4 +16,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     /** 账务：按订单创建时间范围取订单（收入/趋势/对账聚合使用） */
     java.util.List<Order> findByCreatedAtBetween(java.time.LocalDateTime from, java.time.LocalDateTime to);
+
+    // plan-7.0 账户基础功能 / P1：管理端用户详情的名下订单计数
+    long countByCustomerId(UUID customerId);
 }

@@ -136,6 +136,21 @@ html:not(.js) #contentPanel { display: block; }
 .empty-note { margin: 16px 0 0; color: var(--ink-3); font-size: 14px; }
 .asset-error { margin: 12px 0 0; color: var(--danger); font-size: 13px; }
 
+/* 强制改密提示（plan-7.0 / Q3）：管理员代重置后唯一的醒目入口指引 */
+.force-note {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--warning, #B8860B);
+  border-radius: var(--radius-sm, 8px);
+  background: #F9F1E2;
+  color: var(--ink-1);
+  font-size: 14px;
+}
+
+/* 修改密码区块：表单宽度收敛，与登录卡片观感一致 */
+#changePwdForm .field { max-width: 360px; }
+#changePwdForm .panel__actions { margin-top: 16px; }
+
 /* --------------------------- 退款入口与确认弹层（plan-4.1） --------------------------- */
 /* 订单行「操作」列：按钮 + 折算后可退金额提示 */
 .refund-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }

@@ -529,21 +529,58 @@ curl -X POST http://localhost:8000/api/redeem/redeem \
   }'
 ```
 
-### 管理端用户管理（plan-7.0 / D4，B9 = B）
+### 管理端用户管理（plan-7.0 / D4，B9 = B；账户基础功能扩展）
 
-> 管理端用户管理 API：变更角色（USER ↔ ADMIN）与启用 / 停用（ACTIVE ↔ DISABLED）。
-> 两个端点内部均 `tokenVersion + 1`，令目标用户旧令牌立即失效（配合 `JwtAuthFilter` 每请求现查，使降权 / 停用**即时生效**，不再依赖令牌 7 天自然过期）；操作经 `@Audit` 留痕。
-> **护栏**：禁止管理员对自身执行管理操作（防误操作自锁）；禁止降级 / 停用最后一个管理员（否则管理台被锁死）。
+> 管理端用户管理 API：变更角色（USER ↔ ADMIN）、启用 / 停用（ACTIVE ↔ DISABLED）、用户列表、
+> 用户详情与**管理员代重置密码**。变更类端点内部均 `tokenVersion + 1`，令目标用户旧令牌立即失效
+> （配合 `JwtAuthFilter` 每请求现查，使降权 / 停用**即时生效**，不再依赖令牌 7 天自然过期）；操作经 `@Audit` 留痕。
+> **护栏**：禁止管理员对自身执行管理操作（防误操作自锁）；禁止降级 / 停用最后一个**可登录**（ACTIVE + ADMIN）
+> 管理员——已停用的管理员不算存活，且事务内以悲观锁串行化并发操作，否则管理台被锁死。
 
 ```bash
 # 变更用户角色（USER ↔ ADMIN）
-curl -X PATCH "http://localhost:8000/api/admin/users/{userId}/role?role=ADMIN" \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
+curl -X PATCH "http://localhost:8000/api/admin/users/{userId}/role?role=ADMIN"   -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # 启用 / 停用用户（ACTIVE ↔ DISABLED）
-curl -X PATCH "http://localhost:8000/api/admin/users/{userId}/status?status=DISABLED" \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
+curl -X PATCH "http://localhost:8000/api/admin/users/{userId}/status?status=DISABLED"   -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# 用户列表（按邮箱包含匹配 / 角色 / 状态过滤，page 从 0 开始，size 默认 20、上限 200）
+curl "http://localhost:8000/api/admin/users?email=example.com&role=USER&status=ACTIVE&page=0&size=20"   -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# 用户详情（P1）：脱敏资料 + 名下许可证/订单计数；许可证明细复用 GET /api/admin/licenses?customerEmail=
+curl "http://localhost:8000/api/admin/users/{userId}"   -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# 管理员代重置密码（请求体只含 newPassword；响应无 body，绝不回显密码）
+# 成功后：新哈希 + tokenVersion+1（旧会话立即失效）+ must_change_password=true（该用户下次登录须先改密）
+curl -X POST "http://localhost:8000/api/admin/users/{userId}/password/reset"   -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json"   -d '{"newPassword":"NewPassw0rd"}'
+
+# 按当前过滤条件导出用户 CSV（P2；UTF-8 带 BOM，单元格已做防公式注入处理，上限 10000 行）
+curl "http://localhost:8000/api/admin/users/export?role=USER"   -H "Authorization: Bearer $ADMIN_TOKEN" -o users.csv
 ```
+
+> **强制改密（Q3）**：`users.must_change_password` 为 true 的账号，除
+> `GET /api/account/me`、`POST /api/account/password/change`、`POST /api/account/logout`
+> 与管理员代重置端点外，其余受保护 API 一律返回 `PASSWORD_CHANGE_REQUIRED`（HTTP 403）。
+> 已登录改密与邮箱验证码自助重置会清除该标记；管理员代重置会置位它。
+> 管理员自己被代重置时同样受限——前端会把人引导到账号页（`/account/`）先改密。
+
+> **敏感动作二次确认（P2 step-up）**：操作者**已开启 MFA** 时，代重置 / 改角色 / 启停三类请求
+> 必须携带 `X-Step-Up-Token` 头——先调 `/api/admin/mfa/step-up/verify`（动态码或邮箱兜底码，
+> 邮箱兜底可先调 `/api/admin/mfa/step-up/challenge` 发码）换取**短时效（默认 120s）、单次使用、
+> 与动作绑定**的确认令牌。缺令牌报 `MFA_STEP_UP_REQUIRED`，无效 / 已用 / 动作不符报
+> `MFA_STEP_UP_INVALID`。未开启 MFA 的操作者不受影响（MFA 默认关，B8）。
+> **绝不能用普通访问 JWT 充当该确认**（7 天有效、可重放，等于没确认）。
+>
+> ```bash
+> # ① 换取确认令牌
+> curl -X POST "http://localhost:8000/api/admin/mfa/step-up/verify" >   -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" >   -d '{"action":"ADMIN_RESET_USER_PASSWORD","code":"123456"}'
+> # ② 携带确认令牌执行敏感动作
+> curl -X POST "http://localhost:8000/api/admin/users/{userId}/password/reset" >   -H "Authorization: Bearer $ADMIN_TOKEN" -H "X-Step-Up-Token: <stepUpToken>" >   -H "Content-Type: application/json" -d '{"newPassword":"NewPassw0rd"}'
+> ```
+
+> **账号安全通知（P1）**：已登录改密（SELF_CHANGE）、邮箱验证码自助重置（SELF_RESET）、
+> 管理员代重置（ADMIN_RESET）成功后，向账号邮箱发送**不含任何密码**的安全提醒（`@Async` 旁路，
+> SMTP 未配置时静默跳过、失败不回滚变更）。
 
 ### 管理端退款
 

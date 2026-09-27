@@ -14,6 +14,7 @@ import com.billing.license.entity.Order;
 import com.billing.license.service.payment.strategy.*;
 import com.billing.license.service.payment.util.FormParamParser;
 import jakarta.annotation.PostConstruct;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,12 +27,10 @@ import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
+import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * 支付宝支付策略实现
@@ -41,6 +40,12 @@ import java.util.Map;
 public class AlipayStrategy implements PaymentStrategy {
     
     private static final Logger logger = LoggerFactory.getLogger(AlipayStrategy.class);
+
+    /**
+     * 证书解析用的 provider。构造一次即可（它会注册上千个算法，别每次调用都 new）。
+     * 见 {@link #inspectCertificates} 中关于国密 SM2 的说明。
+     */
+    private static final BouncyCastleProvider BC_PROVIDER = new BouncyCastleProvider();
     
     @Value("${payment.alipay.app-id:}")
     private String appId;
@@ -116,16 +121,55 @@ public class AlipayStrategy implements PaymentStrategy {
                 logger.error("支付宝证书模式自检：{} 文件不存在，path={}", name, path);
                 continue;
             }
-            try (InputStream in = new FileInputStream(file)) {
-                X509Certificate cert = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(in);
-                if (cert.getNotAfter().before(new java.util.Date())) {
-                    logger.error("支付宝证书模式自检：{} 已过期（有效期至 {}），请到开放平台重新下载，"
-                            + "否则下单会被网关拒绝", name, cert.getNotAfter());
-                }
-            } catch (Exception e) {
-                logger.warn("支付宝证书模式自检：{} 解析失败，path={}", name, path, e);
+            for (String problem : inspectCertificates(file)) {
+                logger.error("支付宝证书模式自检：{} {}", name, problem);
             }
         }
+    }
+
+    /**
+     * 逐张检查证书文件内的<b>全部</b>证书，返回问题清单（空列表 = 无问题）。
+     * package-private 以便单测直接断言。
+     *
+     * <p><b>为什么必须走 BouncyCastle</b>：支付宝根证书文件（{@code alipayRootCert.crt}）的
+     * <b>第一张就是国密 SM2 根证书</b>（公钥 OID {@code 1.2.156.10197.1.301}），JDK 内置
+     * provider 的命名曲线表不认它，用 {@code CertificateFactory.getInstance("X.509")}
+     * 必然抛 {@code CertificateParsingException: Unknown named curve}。
+     * 支付宝 SDK 自身也是走 BC 解析的（{@code AntCertificationUtil} 静态块注册 provider），
+     * 故这里只是与它保持一致——<b>不是换算法，是补上缺失的 provider</b>。
+     *
+     * <p><b>为什么不把 provider 注册进 {@code Security}</b>：注册是全局副作用，且
+     * {@code getInstance(type, provider)} 直接传实例即可工作，无需依赖 SDK 静态块的执行顺序。
+     *
+     * <p><b>为什么遍历全部而不是只取第一张</b>：根证书文件里有 4 张、支付宝公钥证书里有 2 张，
+     * 只取首张会漏掉其余证书过期——自检就形同虚设。
+     */
+    List<String> inspectCertificates(File file) {
+        List<String> problems = new ArrayList<>();
+        try (InputStream in = new FileInputStream(file)) {
+            Collection<? extends Certificate> certs =
+                CertificateFactory.getInstance("X.509", BC_PROVIDER).generateCertificates(in);
+            if (certs.isEmpty()) {
+                problems.add("未解析出任何证书（文件可能不是 PEM 格式）");
+                return problems;
+            }
+            int index = 0;
+            for (Certificate item : certs) {
+                index++;
+                if (!(item instanceof X509Certificate cert)) {
+                    problems.add("第 " + index + " 张不是 X.509 证书");
+                    continue;
+                }
+                if (cert.getNotAfter().before(new Date())) {
+                    problems.add("第 " + index + " 张已过期（" + cert.getSubjectX500Principal()
+                        + "，有效期至 " + cert.getNotAfter() + "），请到开放平台重新下载，"
+                        + "否则下单会被网关拒绝");
+                }
+            }
+        } catch (Exception e) {
+            problems.add("解析失败：" + e);
+        }
+        return problems;
     }
 
     private AlipayClient getAlipayClient() throws AlipayApiException {

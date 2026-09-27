@@ -7,8 +7,10 @@ import com.billing.license.entity.User;
 import com.billing.license.entity.VerificationCode;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.UserRepository;
+import com.billing.license.security.DbUserDetailsService;
 import com.billing.license.security.JwtTokenService;
 import com.billing.license.security.MfaTicketService;
+import com.billing.license.service.notification.EmailNotificationService;
 import com.billing.license.service.risk.RateLimitService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,6 +19,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.LocalDateTime;
@@ -47,6 +53,7 @@ class AccountServiceTest {
     @Mock private MfaTicketService mfaTicketService;
     @Mock private VerificationCodeService verificationCodeService;
     @Mock private RateLimitService rateLimitService;
+    @Mock private EmailNotificationService emailNotificationService;
 
     private AccountProperties properties;
     private AccountService service;
@@ -54,8 +61,6 @@ class AccountServiceTest {
     @BeforeEach
     void setUp() {
         properties = new AccountProperties();
-        service = new AccountService(userRepository, passwordEncoder, jwtTokenService,
-            mfaTicketService, verificationCodeService, rateLimitService, properties);
         when(userRepository.save(any(User.class))).thenAnswer(inv -> {
             User u = inv.getArgument(0);
             if (u.getId() == null) {
@@ -66,6 +71,18 @@ class AccountServiceTest {
         when(passwordEncoder.encode(anyString())).thenReturn("BCRYPT_HASH");
         when(jwtTokenService.issue(any(UUID.class), anyInt())).thenReturn("jwt-token");
         when(jwtTokenService.expiresInSeconds()).thenReturn(604800L);
+
+        // 登录已融合 Spring Security：用真实认证链（DaoAuthenticationProvider + ProviderManager），
+        // 仅 mock 数据源（userRepository）与密码器（passwordEncoder）。密码比对、锁定/停用预检
+        // 由真实 provider 执行，故下方各登录用例的断言与改造前完全一致。
+        UserDetailsService userDetailsService = new DbUserDetailsService(userRepository);
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider(userDetailsService);
+        provider.setPasswordEncoder(passwordEncoder);
+        AuthenticationManager authenticationManager = new ProviderManager(provider);
+
+        service = new AccountService(userRepository, passwordEncoder, jwtTokenService,
+            mfaTicketService, verificationCodeService, rateLimitService, authenticationManager,
+            emailNotificationService, properties);
     }
 
     @Test
@@ -212,6 +229,75 @@ class AccountServiceTest {
 
         assertEquals("BCRYPT_HASH", user.getPasswordHash());
         assertEquals(1, user.getTokenVersion(), "改密后须强制重新登录");
+    }
+
+    /**
+     * plan-7.0 / Q3：已登录改密须<b>清除</b>「强制改密」标记——否则用户改完密码仍会被
+     * {@code MustChangePasswordFilter} 挡在其他功能之外（半完成态）。
+     */
+    @Test
+    void changePassword_clearsMustChangePasswordFlag() {
+        User user = activeUser();
+        user.setMustChangePassword(true);
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(true);
+        when(passwordEncoder.matches("NewPassw0rd2026", "BCRYPT_HASH")).thenReturn(false);
+
+        service.changePassword(user.getId(), PASSWORD, "NewPassw0rd2026");
+
+        assertFalse(user.isMustChangePassword(), "改密后须清除强制改密标记");
+    }
+
+    /** Q3 的另一条清除路径：邮箱验证码自助找回（用户自己走完流程即视为已重新掌握密码）。 */
+    @Test
+    void resetPassword_clearsMustChangePasswordFlag() {
+        User user = activeUser();
+        user.setMustChangePassword(true);
+        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(false);
+
+        service.resetPassword(EMAIL, "123456", PASSWORD, "1.2.3.4");
+
+        assertFalse(user.isMustChangePassword(), "自助找回后须清除强制改密标记");
+    }
+
+    /**
+     * plan-7.0 / P1：改密成功后发送安全提醒。<b>只告知发生过变更</b>——
+     * 断言调用参数里只有邮箱与场景，方法签名本身就不含密码（编译期保证）。
+     */
+    @Test
+    void changePassword_sendsPasswordChangedNotification() {
+        User user = activeUser();
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(true);
+        when(passwordEncoder.matches("NewPassw0rd2026", "BCRYPT_HASH")).thenReturn(false);
+
+        service.changePassword(user.getId(), PASSWORD, "NewPassw0rd2026");
+
+        verify(emailNotificationService).sendPasswordChangedEmail(EMAIL, "SELF_CHANGE");
+    }
+
+    @Test
+    void resetPassword_sendsPasswordChangedNotification() {
+        User user = activeUser();
+        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(false);
+
+        service.resetPassword(EMAIL, "123456", PASSWORD, "1.2.3.4");
+
+        verify(emailNotificationService).sendPasswordChangedEmail(EMAIL, "SELF_RESET");
+    }
+
+    /** 防枚举的静默路径不得发通知：那等于告诉攻击者「这个邮箱存在」。 */
+    @Test
+    void resetPassword_emailWithoutAccount_sendsNoNotification() {
+        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.empty());
+
+        assertDoesNotThrow(() -> service.resetPassword(EMAIL, "123456", PASSWORD, "1.2.3.4"));
+
+        verify(emailNotificationService, never()).sendPasswordChangedEmail(anyString(), anyString());
     }
 
     @Test

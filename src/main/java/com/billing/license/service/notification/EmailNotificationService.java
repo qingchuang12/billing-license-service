@@ -227,6 +227,42 @@ public class EmailNotificationService {
         }
     }
 
+    /**
+     * 发送密码变更安全提醒（plan-7.0 账户基础功能 / P1）。
+     *
+     * <p><b>只告知「发生过变更」这一事实，绝不包含任何密码</b>——新旧密码都不进正文与主题。
+     * 场景 {@code scenario}：SELF_CHANGE=本人已登录改密、SELF_RESET=邮箱验证码自助找回、
+     * ADMIN_RESET=管理员代重置；仅用于文案措辞，不影响安全语义。
+     *
+     * <p><b>旁路而非事务前提</b>：与其余通知一致，未配置 SMTP 时静默跳过、发送异常仅记日志，
+     * 绝不因通知失败回滚已完成的密码变更。未识别的 scenario 按通用文案处理（防御式，正常不会走到）。
+     */
+    @Async
+    public void sendPasswordChangedEmail(String to, String scenario) {
+        logger.info("发送密码变更提醒：to={}, scenario={}", to, scenario);
+
+        if (!isEmailConfigured()) {
+            logger.warn("邮件服务未配置，跳过发送密码变更提醒");
+            return;
+        }
+
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+            helper.setFrom(fromAddress != null ? fromAddress : "noreply@billing.com");
+            helper.setTo(to);
+            helper.setSubject("您的账号密码已变更 - 安全提醒");
+
+            helper.setText(buildPasswordChangedTemplate(scenario), true);
+
+            mailSender.send(message);
+            logger.info("密码变更提醒发送成功：to={}", to);
+        } catch (Exception e) {
+            logger.error("发送密码变更提醒失败：to={}", to, e);
+        }
+    }
+
     /** 用途枚举名 → 中文说明（仅用于邮件文案） */
     private static String purposeLabel(String purpose) {
         return "RESET_PASSWORD".equalsIgnoreCase(purpose) ? "找回密码" : "注册验证";
@@ -405,6 +441,41 @@ public class EmailNotificationService {
         html.append("<p>验证码 <strong>").append(ttlMinutes).append(" 分钟</strong>内有效，且仅可使用一次。</p>");
         html.append("<p>如果这不是您本人的操作，请忽略本邮件，您的账号仍然是安全的。</p>");
         html.append("<p>如有任何问题，请联系我们的客服：").append(esc(supportEmail)).append("</p>");
+        html.append("</div><div class='footer'><p>此邮件由系统自动发送，请勿回复。</p></div>");
+        html.append("</div></body></html>");
+        return html.toString();
+    }
+
+    /** 密码变更提醒模板：按变更来源给出对应措辞；正文只有事实，没有任何密码。 */
+    private String buildPasswordChangedTemplate(String scenario) {
+        String action;
+        if ("SELF_RESET".equals(scenario)) {
+            action = "您（或持有该账号邮箱的人）刚通过邮箱验证码完成了密码重置。";
+        } else if ("ADMIN_RESET".equals(scenario)) {
+            action = "平台管理员已为您的账号重置了密码；新密码由管理员通过其他渠道告知您，"
+                + "登录后请尽快自行修改。";
+        } else {
+            action = "您的账号密码刚已完成修改。";
+        }
+        StringBuilder html = new StringBuilder();
+        html.append("<!DOCTYPE html><html><head>");
+        html.append("<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;}");
+        html.append(".container{max-width:600px;margin:0 auto;padding:20px;}");
+        html.append(".header{background:#f44336;color:white;padding:20px;text-align:center;}");
+        html.append(".content{padding:20px;background:#f9f9f9;}");
+        html.append(".order-info{background:white;padding:15px;margin:15px 0;border-radius:5px;}");
+        html.append(".footer{text-align:center;padding:20px;color:#666;font-size:12px;}</style>");
+        html.append("</head><body><div class='container'>");
+        html.append("<div class='header'><h1>密码变更提醒</h1></div>");
+        html.append("<div class='content'><p>尊敬的客户，您好！</p>");
+        html.append("<p>").append(esc(action)).append("</p>");
+        html.append("<div class='order-info'>");
+        html.append("<p><strong>变更时间：</strong>").append(java.time.LocalDateTime.now()
+            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("</p>");
+        html.append("</div>");
+        html.append("<p>所有已登录的会话已同时失效，需使用新密码重新登录。</p>");
+        html.append("<p><strong>如果这不是您本人的操作</strong>，请立即通过邮箱验证码重新找回密码，"
+            + "并联系我们的客服：").append(esc(supportEmail)).append("</p>");
         html.append("</div><div class='footer'><p>此邮件由系统自动发送，请勿回复。</p></div>");
         html.append("</div></body></html>");
         return html.toString();

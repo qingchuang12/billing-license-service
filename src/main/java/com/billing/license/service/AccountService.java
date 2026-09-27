@@ -7,12 +7,20 @@ import com.billing.license.entity.User;
 import com.billing.license.entity.VerificationCode;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.UserRepository;
+import com.billing.license.security.AuthUserPrincipal;
 import com.billing.license.security.JwtTokenService;
 import com.billing.license.security.MfaTicketService;
 import com.billing.license.security.PasswordPolicy;
 import com.billing.license.service.risk.RateLimitService;
+import com.billing.license.service.notification.EmailNotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.authentication.LockedException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,8 +37,11 @@ import java.util.UUID;
  *   <li>登录失败统一返回 {@code INVALID_CREDENTIALS}（不区分邮箱不存在与密码错误，防账号枚举）；</li>
  *   <li>账号级锁定落库（{@code failed_login_count} / {@code locked_until}），跨重启有效；
  *       IP 级限流走内存 {@link RateLimitService}（多实例部署需共享存储，与既有限制同源）；</li>
- *   <li>登出 / 改密 / 重置密码一律 {@code tokenVersion + 1}，使该用户所有已签发令牌立即失效；</li>
+ *   <li>登出 / 改密 / 重置密码一律 {@code tokenVersion + 1}，使该用户所有已签发令牌立即失效；
+ *       Q3（plan-7.0）：改密与自助重置<b>同时清除</b> {@code must_change_password} 标记，
+ *       管理员代重置<b>置位</b>该标记（见 {@code AdminUserService#resetPassword}）；</li>
  *   <li>密码与验证码明文不进日志、不进审计；</li>
+ *   <li>改密 / 自助重置成功后发送<b>不含密码</b>的安全提醒（P1，旁路：发送失败不回滚变更）；</li>
  *   <li><b>登录是两阶段的</b>（plan-7.0 / M3）：账号启用二次因子时，{@link #login} 校验密码后
  *       <b>不签发令牌</b>，而是返回一次性票据；真正的令牌只由
  *       {@link MfaService#verify} 在第二因子通过后签发。故本类是「MFA 不可被绕过」的守门点。</li>
@@ -47,6 +58,8 @@ public class AccountService {
     private final MfaTicketService mfaTicketService;
     private final VerificationCodeService verificationCodeService;
     private final RateLimitService rateLimitService;
+    private final AuthenticationManager authenticationManager;
+    private final EmailNotificationService emailNotificationService;
     private final AccountProperties properties;
 
     // ==================== A2 注册 ====================
@@ -109,24 +122,31 @@ public class AccountService {
             throw new BusinessException("LOGIN_IP_LIMIT", "登录尝试过于频繁，请稍后再试");
         }
 
-        User user = userRepository.findByEmail(email).orElse(null);
-        if (user == null) {
-            recordLoginFailure(clientIp, risk, null);
-            log.info("登录失败：邮箱不存在 email={}", email);
-            throw new BusinessException("INVALID_CREDENTIALS", "邮箱或密码错误");
-        }
-        if (user.isLocked()) {
+        // 认证链（融合 Spring Security，2026-09-24）：加载用户 + 锁定/停用预检 + 密码比对交给
+        // DaoAuthenticationProvider；IP 限流、失败计数与锁定落库、两阶段 MFA、tokenVersion 仍在
+        // 本类外层，行为与改造前逐条一致。
+        Authentication authentication;
+        try {
+            authentication = authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(email, password));
+        } catch (LockedException e) {
             throw new BusinessException("ACCOUNT_LOCKED", "账号已被临时锁定，请稍后再试");
-        }
-        if (user.getStatus() != User.UserStatus.ACTIVE) {
+        } catch (DisabledException e) {
             throw new BusinessException("ACCOUNT_DISABLED", "账号已被停用，请联系客服");
-        }
-        if (!passwordEncoder.matches(password, user.getPasswordHash())) {
-            recordLoginFailure(clientIp, risk, user);
-            log.info("登录失败：密码错误 userId={}", user.getId());
+        } catch (BadCredentialsException e) {
+            // 防账号枚举：邮箱不存在（UsernameNotFound 已被 hideUserNotFoundExceptions 收敛为
+            // BadCredentials）与密码错误统一同一文案，并同样记录失败（user 为 null 时只计 IP）。
+            User failed = userRepository.findByEmail(email).orElse(null);
+            recordLoginFailure(clientIp, risk, failed);
+            if (failed == null) {
+                log.info("登录失败：邮箱不存在 email={}", email);
+            } else {
+                log.info("登录失败：密码错误 userId={}", failed.getId());
+            }
             throw new BusinessException("INVALID_CREDENTIALS", "邮箱或密码错误");
         }
 
+        User user = ((AuthUserPrincipal) authentication.getPrincipal()).getUser();
         user.setFailedLoginCount(0);
         user.setLockedUntil(null);
 
@@ -185,8 +205,13 @@ public class AccountService {
         validatePasswordPolicy(newPassword);
 
         user.setPasswordHash(passwordEncoder.encode(newPassword));
+        // Q3：改密是清除「强制改密」标记的两条路径之一（另一条是邮箱验证码自助重置），
+        // 与写新哈希同事务——避免出现「密码已改但标记仍在、用户仍被过滤器挡着」的半完成态。
+        user.setMustChangePassword(false);
         userRepository.save(user);
         invalidateTokens(userId, "改密");
+        // P1 安全提醒（旁路，@Async）：只告知发生过变更，不含任何密码；失败不回滚上面的变更
+        emailNotificationService.sendPasswordChangedEmail(user.getEmail(), "SELF_CHANGE");
     }
 
     // ==================== A7 找回密码 ====================
@@ -227,9 +252,13 @@ public class AccountService {
         validatePasswordPolicy(newPassword);
 
         user.setPasswordHash(passwordEncoder.encode(newPassword));
+        // Q3：用户自己走完找回流程即视为已重新掌握密码，清除强制改密标记（与写新哈希同事务）
+        user.setMustChangePassword(false);
         userRepository.save(user);
         log.info("密码重置成功：userId={}", user.getId());
         invalidateTokens(user.getId(), "重置密码");
+        // P1 安全提醒（旁路，@Async）：不含密码；失败不回滚上面的重置
+        emailNotificationService.sendPasswordChangedEmail(user.getEmail(), "SELF_RESET");
     }
 
     // ==================== 内部方法 ====================

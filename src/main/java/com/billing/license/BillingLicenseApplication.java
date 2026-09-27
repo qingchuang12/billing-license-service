@@ -57,6 +57,7 @@ public class BillingLicenseApplication {
                 log.info("  Swagger UI:      {}/swagger-ui.html", baseUrl);
                 log.info("  OpenAPI JSON:    {}/v3/api-docs", baseUrl);
             }
+            log.info("  Account portal:  {}/account/", baseUrl);
             log.info("  Admin console:   {}/admin/", baseUrl);
             log.info("========================================");
         };

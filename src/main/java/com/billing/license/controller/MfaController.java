@@ -1,6 +1,7 @@
 package com.billing.license.controller;
 
 import com.billing.license.annotation.Audit;
+import com.billing.license.common.web.ClientIpResolver;
 import com.billing.license.dto.*;
 import com.billing.license.security.CurrentUserResolver;
 import com.billing.license.service.MfaService;
@@ -8,6 +9,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -34,6 +36,7 @@ import java.util.UUID;
 public class MfaController {
 
     private final MfaService mfaService;
+    private final ClientIpResolver clientIpResolver;
 
     /** 查询绑定状态（不回显任何密钥材料）。 */
     @Operation(summary = "查询二次因子状态",
@@ -107,5 +110,46 @@ public class MfaController {
     /** 取当前登录管理员 ID（principal 由 {@code JwtAuthFilter} 写入）。 */
     private UUID currentUserId() {
         return CurrentUserResolver.currentUserId();
+    }
+
+    // ==================== 敏感动作二次确认（step-up，plan-7.0 / P2） ====================
+
+    /**
+     * 为即将执行的敏感动作发送邮箱兜底码。
+     *
+     * <p>仅邮箱兜底场景需要：TOTP 用户的动态码本就在认证器上，直接调 verify。
+     */
+    @Operation(summary = "敏感动作二次确认：发送邮箱兜底码",
+            description = "为受保护的敏感动作（代重置 / 改角色 / 启停）发送邮箱验证码；"
+                    + "仅在邮箱兜底开放时可用，TOTP 用户直接调 /step-up/verify")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "已发送（data 为 null）"),
+            @ApiResponse(responseCode = "400", description = "MFA_NOT_ENABLED / MFA_EMAIL_FALLBACK_DISABLED / INVALID_STEP_UP_ACTION"),
+            @ApiResponse(responseCode = "401", description = "缺少或非法令牌"),
+            @ApiResponse(responseCode = "403", description = "非管理员")
+    })
+    @Audit(action = "MFA_STEP_UP_CHALLENGE", target = "#request.action")
+    @PostMapping("/step-up/challenge")
+    public ResponseEntity<Void> stepUpChallenge(@Valid @RequestBody MfaStepUpChallengeRequest request,
+                                                HttpServletRequest httpRequest) {
+        mfaService.stepUpChallenge(currentUserId(), request.getAction(),
+            clientIpResolver.resolve(httpRequest));
+        return ResponseEntity.ok().build();
+    }
+
+    /** 校验动态码，换取与动作绑定的短时效一次性确认令牌。 */
+    @Operation(summary = "敏感动作二次确认：校验动态码",
+            description = "通过后返回一次性确认令牌（默认 120 秒、单次使用、与动作绑定）；"
+                    + "随后的敏感动作请求须以 X-Step-Up-Token 头携带")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "校验通过，返回确认令牌"),
+            @ApiResponse(responseCode = "400", description = "MFA_NOT_ENABLED / MFA_CODE_INVALID / MFA_VERIFY_LIMIT / INVALID_STEP_UP_ACTION"),
+            @ApiResponse(responseCode = "401", description = "缺少或非法令牌"),
+            @ApiResponse(responseCode = "403", description = "非管理员")
+    })
+    @Audit(action = "MFA_STEP_UP_VERIFY", target = "#request.action")
+    @PostMapping("/step-up/verify")
+    public ResponseEntity<MfaStepUpResponse> stepUpVerify(@Valid @RequestBody MfaStepUpVerifyRequest request) {
+        return ResponseEntity.ok(mfaService.stepUpVerify(currentUserId(), request.getAction(), request.getCode()));
     }
 }
