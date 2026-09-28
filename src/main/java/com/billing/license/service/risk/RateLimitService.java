@@ -39,6 +39,18 @@ public class RateLimitService {
     private static final int VERIFY_WINDOW_MIN = 1;
 
     /**
+     * 支付后「按机器码领取待激活授权」（plan-1.0 / S1）频控档位。
+     *
+     * <p>机器码档按客户端真实用量定标：用户点「在线激活」后客户端每 60s 轮询一次、最长 30 分钟
+     * （约 30 次），故 30 分钟窗口给 45 次余量；领到即停止轮询。IP 档更宽，避免同一 NAT 出口
+     * （办公室/CGNAT）下多台机器相互挤占额度。
+     */
+    private static final int PENDING_MACHINE_MAX = 45;
+    private static final int PENDING_MACHINE_WINDOW_MIN = 30;
+    private static final int PENDING_IP_MAX = 120;
+    private static final int PENDING_IP_WINDOW_MIN = 10;
+
+    /**
      * 检查某 key 在窗口内的事件数是否超过 max；
      * 超过则抛出异常（由调用方捕获转为 BusinessException）。
      *
@@ -154,6 +166,17 @@ public class RateLimitService {
      */
     public int checkLicenseVerify(String ip) {
         return checkAndCount("license-verify", ip, VERIFY_MAX_PER_MIN, VERIFY_WINDOW_MIN);
+    }
+
+    /**
+     * 支付后「按机器码领取待激活授权」频控（plan-1.0 / S1）：机器码 + IP **双维度**，两个独立命名空间。
+     *
+     * <p>该端点匿名可调、以机器码为凭证，故必须双维限流：机器码档挡住「锁定一台机器反复试探」，
+     * IP 档挡住「拿一批机器码遍历」。
+     */
+    public int checkLicensePending(String machineCode, String ip) {
+        checkAndCount("license-pending", machineCode, PENDING_MACHINE_MAX, PENDING_MACHINE_WINDOW_MIN);
+        return checkAndCount("license-pending-ip", ip, PENDING_IP_MAX, PENDING_IP_WINDOW_MIN);
     }
 
     /** 限流触发异常 */

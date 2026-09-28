@@ -70,6 +70,17 @@ public class LicenseResponse {
     private String signedToken;
 
     /**
+     * 下一次联网复核的间隔（毫秒）——plan-1.0 / S2。
+     *
+     * <p>仅在线校验（{@code /api/licenses/verify}）成功时填充，取自
+     * {@code billing.license-check-interval-hours}；其余视图为 null，客户端回落自身默认值。
+     * 存在的意义是<b>运营可远程调节奏</b>：改服务端配置即生效，不必等客户端发版。
+     */
+    @Schema(description = "下一次联网复核间隔（毫秒）；仅 verify 成功时返回，客户端据此排下一次复核",
+            example = "1296000000")
+    private Long nextCheckAfterMs;
+
+    /**
      * H10：管理后台安全视图。映射除敏感字段外的全部信息，
      * 显式不设置 {@code signedToken}（内部离线校验令牌，不应经管理接口返回）。
      *

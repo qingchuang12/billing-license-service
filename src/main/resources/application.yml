@@ -72,8 +72,11 @@ billing:
   private-key-path: ${PRIVATE_KEY_PATH:/keys/private.key}
   # 公钥路径（分发给客户端用于验证 License）
   public-key-path: ${PUBLIC_KEY_PATH:/keys/public.key}
-  # License 过期检查间隔（小时）
-  license-check-interval-hours: 24
+  # License 复核间隔（小时）：verify 响应 nextCheckAfterMs 的取值来源，即客户端「多久回连校验一次」。
+  # 360h = 15 天（plan-1.0 口径）。改这里即可全量调整客户端节奏，无需客户端发版。
+  license-check-interval-hours: ${BILLING_LICENSE_CHECK_INTERVAL_HOURS:360}
+  # 支付后匿名「按机器码领取待激活授权」的可领取窗口（天）：仅签发在窗口内、且从未成功校验过的件可领
+  pending-license-window-days: ${BILLING_PENDING_LICENSE_WINDOW_DAYS:7}
   # 默认 License 有效期（天）
   default-license-duration-days: 365
   # 权益特性显示名（中/英），配置驱动：改名只需改此处，前端零发版。

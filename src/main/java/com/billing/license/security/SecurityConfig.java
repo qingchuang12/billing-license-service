@@ -110,7 +110,10 @@ public class SecurityConfig {
                     "/api/licenses/activate",
                     // plan-7.0 / D2：客户端「自动上报绑定」——凭 signedToken 验签证明归属（E1 = ①），
                     // 无需登录，故必须放行；真伪与归属由方法内「验签 + 授权状态」把关。
-                    "/api/licenses/report-binding").permitAll()
+                    "/api/licenses/report-binding",
+                    // plan-1.0 / S1：支付后按机器码领取待激活授权——客户端此时还没有账号登录态、也没有令牌，
+                    // 匿名轮询是唯一形态。把关在方法内（只返回绑定本机 + 从未成功校验 + 窗口内的件）+ 双维限流。
+                    "/api/licenses/pending").permitAll()
                 // C8：机器码首次出现时间查询（客户端首跑 / 兑换前联网问一次，用于把试用起点回溯到
                 // 服务端最早见到这台机器的时间，堵住「删档重装再领一次试用」）。
                 // 只读、无 PII：机器码是硬件派生的随机串，响应只有两个时间戳。

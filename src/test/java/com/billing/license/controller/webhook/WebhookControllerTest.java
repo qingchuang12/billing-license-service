@@ -152,6 +152,8 @@ class WebhookControllerTest {
         // B2：updatePaymentStatus 现为 4 参（末位传业务订单号供回退定位）
         when(paymentService.updatePaymentStatus(any(), any(), any(), any())).thenReturn(payment);
         when(paymentRepository.save(any(Payment.class))).thenAnswer(i -> i.getArgument(0));
+        // S3（plan-1.0）：直签返回的 License 用于凭证邮件，桩件必须给出 licenseKey
+        when(licenseService.issueLicense("ORD-1", "M1")).thenReturn(issuedLicense("LIC-WEBHOOK-1", true));
 
         ResponseEntity<String> resp = controller.processWebhook(
             PaymentMethod.ALIPAY, "payload", "sig", Map.of());
@@ -161,8 +163,22 @@ class WebhookControllerTest {
         // 已绑定机器码 → 签发 License
         verify(licenseService).issueLicense("ORD-1", "M1");
         verify(emailService).sendPaymentSuccessEmail(eq("u@e.com"), anyString(), anyString(), anyDouble(), any());
+        // S3（plan-1.0）：直签分支必须**补发凭证邮件**，否则用户手上没有任何 License Key（换机/重装无从下手）
+        verify(emailService).sendLicenseIssuedEmail(eq("u@e.com"), eq("LIC-WEBHOOK-1"), anyString(), anyString());
         // 记录支付事件（已处理）
         verify(paymentEventRepository).saveAndFlush(argThat(e -> Boolean.TRUE.equals(e.getProcessed())));
+    }
+
+    /** 直签产物桩件：licenseKey 必填（凭证邮件要用）；withExpiresAt=false 表示永久授权（邮件走「永久有效」） */
+    private com.billing.license.entity.License issuedLicense(String licenseKey, boolean withExpiresAt) {
+        com.billing.license.entity.License license = com.billing.license.entity.License.builder()
+            .licenseKey(licenseKey)
+            .status(com.billing.license.entity.License.LicenseStatus.ACTIVE)
+            .build();
+        if (withExpiresAt) {
+            license.setExpiresAt(java.time.LocalDateTime.now().plusDays(365));
+        }
+        return license;
     }
 
     /**
@@ -181,6 +197,7 @@ class WebhookControllerTest {
         when(amountValidator.validateAmount(any(Order.class), any())).thenReturn(true);
         // 关键：定位失败返回 null（模拟 id 错配）
         when(paymentService.updatePaymentStatus(any(), any(), any(), any())).thenReturn(null);
+        when(licenseService.issueLicense("ORD-1", "M1")).thenReturn(issuedLicense("LIC-WEBHOOK-2", false));
 
         ResponseEntity<String> resp = controller.processWebhook(
             PaymentMethod.ALIPAY, "payload", "sig", Map.of());
@@ -188,6 +205,8 @@ class WebhookControllerTest {
         assertEquals(200, resp.getStatusCode().value());
         // 尽管 Payment 未定位，仍按订单号发货签发 License（不被 500 中断）
         verify(licenseService).issueLicense("ORD-1", "M1");
+        // 永久授权（expiresAt=null）走「永久有效」文案，同样要发凭证邮件
+        verify(emailService).sendLicenseIssuedEmail(eq("u@e.com"), eq("LIC-WEBHOOK-2"), anyString(), eq("永久有效"));
     }
 
     /**

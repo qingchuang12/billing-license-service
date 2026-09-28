@@ -32,6 +32,10 @@ public class EmailNotificationService {
     
     @Value("${billing.support-email:service@ywhome.top}")
     private String supportEmail;
+
+    /** 服务对外基址：License 签发邮件里给出「账户页（管理/解绑设备）」入口（plan-1.0 / S3） */
+    @Value("${app.base-url:}")
+    private String baseUrl;
     
     public EmailNotificationService(JavaMailSender mailSender) {
         this.mailSender = mailSender;
@@ -359,17 +363,35 @@ public class EmailNotificationService {
         html.append("</div>");
         html.append("<p><strong>使用说明：</strong></p><ol>");
         html.append("<li>下载并安装客户端软件</li>");
-        html.append("<li>在激活界面输入上述 License Key</li>");
-        html.append("<li>客户端将自动验证并激活产品</li>");
+        html.append("<li>在本机收银台页面完成付款后回到软件，会自动激活，无需手填</li>");
+        html.append("<li>若软件未自动激活（例如在别的设备或网页上下单），在激活界面输入上述 License Key</li>");
         html.append("</ol>");
         html.append("<p>注意：此 License 已绑定您的设备，无法在其他设备上使用。</p>");
+        // S3（plan-1.0）：给出自助解绑入口——用户换机后最常见的卡点是「已绑定其他机器」，
+        // 没有这一条只能靠客服人工处置（管理端解绑）。
+        String accountUrl = accountPageUrl();
+        if (accountUrl != null) {
+            html.append("<p>需要换机或释放当前设备绑定？登录账户页自助解绑：<a href='").append(esc(accountUrl))
+                .append("'>").append(esc(accountUrl)).append("</a></p>");
+        }
         html.append("</div><div class='footer'><p>此邮件由系统自动发送，请勿回复。</p></div>");
         html.append("</div></body></html>");
         return html.toString();
     }
     
-    private String buildRefundProcessedTemplate(String orderNo, String detail) {
-        StringBuilder html = new StringBuilder();
+    /**
+     * 账户页绝对地址（用于邮件里的自助解绑入口）；未配置 {@code app.base-url} 时返回 null，
+     * 调用方据此省略整行——不拼出「/account/」这种点开即 404 的相对链接。
+     */
+    private String accountPageUrl() {
+        if (baseUrl == null || baseUrl.isBlank()) {
+            return null;
+        }
+        String trimmed = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        return trimmed + "/account/";
+    }
+
+    private String buildRefundProcessedTemplate(String orderNo, String detail) {        StringBuilder html = new StringBuilder();
         html.append("<!DOCTYPE html><html><head>");
         html.append("<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;}");
         html.append(".container{max-width:600px;margin:0 auto;padding:20px;}");

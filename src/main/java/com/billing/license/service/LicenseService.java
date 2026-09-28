@@ -3,6 +3,7 @@ package com.billing.license.service;
 import com.billing.license.config.BillingProperties;
 import com.billing.license.dto.ActivateResponse;
 import com.billing.license.dto.LicenseResponse;
+import com.billing.license.dto.PendingLicenseResponse;
 import com.billing.license.entity.*;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.infrastructure.crypto.LicenseIssuer;
@@ -270,7 +271,114 @@ public class LicenseService {
         licenseRepository.save(license);
 
         // E3：verify 为**公开端点**——不回显客户邮箱（否则任何持 licenseKey 者可看到归属邮箱）
-        return mapToResponse(license, null);
+        LicenseResponse response = mapToResponse(license, null);
+        // S2（plan-1.0）：把复核节奏随校验结果下发，服务端调参不必客户端发版。
+        // 单位换算要紧：配置是**小时**，客户端要的是**毫秒**。
+        response.setNextCheckAfterMs(billingProperties.getLicenseCheckIntervalHours() * 3600_000L);
+        return response;
+    }
+
+    /**
+     * 支付完成后，客户端按**本机机器码**领取「已签发但还没拿到手」的授权（plan-1.0 / S1）。
+     *
+     * <p><b>要解决的问题</b>：客户在浏览器收银台付款后，桌面软件没有任何通道得知「款已到账」——
+     * 收银台轮询需要 {@code checkoutId}，而客户端跳转时只带了机器码、拿不到它；剩下的路径只有
+     * 「用户手动粘贴令牌」或「登录账号后自动到账」。本端点补上第三条：付款即按机器码可领，
+     * 客户端付款后轮询即可在数十秒内自动完成激活。
+     *
+     * <p><b>可见范围（安全口径，三条同时满足才返回）</b>：
+     * <ol>
+     *   <li>绑定在**该机器码**上（{@code licenses.machine_code}，或该列为空时回落
+     *       {@code orders.machine_code}——与 {@link License#getMachineCode()} 同语义，
+     *       否则管理端补签发/收银台补偿路径的件会漏）；</li>
+     *   <li>{@code status=ACTIVE} 且未过期；</li>
+     *   <li>{@code lastVerifiedAt IS NULL}（从未成功校验过＝客户端尚未领取使用）<b>且</b>
+     *       签发时间在 {@code billing.pending-license-window-days} 窗口内。</li>
+     * </ol>
+     * 用「从未成功校验」而非「未绑定」当领取判据：本端点覆盖的件**本来就是按机器码直签的**，
+     * 已绑本机；而「领过一次即不再返回」才是要的语义。用户若领完没来得及落盘就崩溃，
+     * 首次 verify 尚未发生、仍可在窗口内重新领取，不会把自己锁死。
+     *
+     * <p><b>残余风险（知情）</b>：机器码是硬件四因子 SHA-256 前 16 hex、不可枚举，但对**已知某台
+     * 具体机器**的攻击者，可在上述窗口内匿名取其新购授权。缓解=双维限流（在 controller 层，与
+     * 公开 verify 端点同惯例）+ 窗口收敛 + 首次命中留痕；且令牌绑死该机器码，攻击者在自己机器上
+     * 本地验签即拒（{@code mid} 不匹配），拿不到任何权益。
+     *
+     * <p>响应**不回显 customerEmail**，与公开 verify 端点同脱敏口径。
+     *
+     * @param machineId 客户端本机机器码
+     */
+    @Transactional
+    public PendingLicenseResponse findPendingForMachine(String machineId) {
+        if (machineId == null || machineId.isBlank()) {
+            throw new BusinessException("MACHINE_ID_REQUIRED", "machineId is required");
+        }
+        String machine = machineId.trim();
+        // 机器码正常为 19 字符（XXXX-XXXX-XXXX-XXXX）；限长防超长串污染限流 key 空间
+        if (machine.length() > 128) {
+            throw new BusinessException("MACHINE_ID_INVALID", "machineId is invalid");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime windowFrom = now.minusDays(billingProperties.getPendingLicenseWindowDays());
+
+        // 两路候选，见方法头「可见范围」第 1 条
+        java.util.Map<UUID, License> candidates = new java.util.LinkedHashMap<>();
+        for (License license : licenseRepository.findClaimableByBoundMachine(
+                License.LicenseStatus.ACTIVE, machine, windowFrom, now)) {
+            candidates.put(license.getId(), license);
+        }
+        for (Order order : orderRepository.findByMachineCodeAndCreatedAtAfter(machine, windowFrom)) {
+            for (License license : licenseRepository.findByOrder(order)) {
+                if (isClaimable(license, machine, now, windowFrom)) {
+                    candidates.putIfAbsent(license.getId(), license);
+                }
+            }
+        }
+
+        List<PendingLicenseResponse.Item> items = candidates.values().stream()
+            .map(license -> {
+                recordPendingQueried(license, machine);
+                return PendingLicenseResponse.Item.builder()
+                    .licenseKey(license.getLicenseKey())
+                    .signedToken(license.getSignedToken())
+                    .productSku(license.getProduct() != null ? license.getProduct().getSku() : null)
+                    .expiresAt(license.getExpiresAt())
+                    .issuedAt(license.getIssuedAt())
+                    .build();
+            })
+            .collect(Collectors.toList());
+
+        return PendingLicenseResponse.builder()
+            .licenses(items)
+            .serverTime(now)
+            .build();
+    }
+
+    /** {@link #findPendingForMachine} 第二路候选的 Java 侧过滤（第一路已由 JPQL 覆盖同口径条件）。 */
+    private boolean isClaimable(License license, String machine, LocalDateTime now, LocalDateTime windowFrom) {
+        return license.getStatus() == License.LicenseStatus.ACTIVE
+            && license.getLastVerifiedAt() == null
+            && machine.equals(license.getMachineCode())
+            && license.getIssuedAt() != null && license.getIssuedAt().isAfter(windowFrom)
+            && (license.getExpiresAt() == null || license.getExpiresAt().isAfter(now))
+            && license.getSignedToken() != null && !license.getSignedToken().isBlank();
+    }
+
+    /**
+     * 领取留痕：**每张授权只记一次**（首次命中写，后续轮询不重复写）。
+     *
+     * <p>客户端购买后会每 60s 轮询一次，若每次都写事件，{@code license_events} 会被放大 30 倍；
+     * 而「用户拿到过这张证」本身只需一条即可支撑售后判断。
+     */
+    private void recordPendingQueried(License license, String machine) {
+        boolean alreadyRecorded = licenseEventRepository.findByLicenseKey(license.getLicenseKey()).stream()
+            .anyMatch(e -> e.getEventType() == LicenseEvent.EventType.PENDING_QUERIED);
+        if (alreadyRecorded) {
+            return;
+        }
+        recordLicenseEvent(license, LicenseEvent.EventType.PENDING_QUERIED, machine,
+            "Delivered signedToken to client by machineId (post-payment pickup)");
     }
     
     /**

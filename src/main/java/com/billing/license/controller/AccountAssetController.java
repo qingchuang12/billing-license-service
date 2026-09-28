@@ -115,9 +115,11 @@ public class AccountAssetController {
      * 返回 {@code MACHINE_MISMATCH} 而**不自动改绑**。这条件若无出口就是死路——本端点即那个出口：
      * 用户在账号页手动解绑后，即可把该授权重新激活到新设备。
      *
-     * <p>归属凭证是「登录态 + 归属」（{@code License.customerId == 登录 userId}），
-     * 与客户端凭「旧授权签名令牌」解绑的 {@code POST /api/licenses/unbind} 互补：
-     * 后者适用于拿得到 token 的同机换绑，本端点适用于换机后令牌落在旧机器上的场景。
+     * <p>归属凭证是「登录态 + 归属」（{@code License.customerId == 登录 userId}）。
+     * 与之相邻的另一条绑定路径 {@code POST /api/licenses/report-binding} 不是解绑入口——它只把
+     * **未绑定**的件补绑到本机，已绑他机同样拒绝；曾有过的凭「旧授权签名令牌」解绑的公开端点
+     * {@code POST /api/licenses/unbind} 已按 plan-7.0 / B10 删除（彼时不在安全白名单内、始终 403），
+     * 换机场景的释放入口即本端点（用户自助）或 {@code /api/admin/licenses/{licenseKey}/unbind}（客服代处置）。
      *
      * <p>只释放设备绑定，<b>不吊销授权本身</b>；越权（他人 License）按 {@code LICENSE_NOT_FOUND}
      * 语义返回，不泄露其存在性；本就未绑定时幂等返回成功。

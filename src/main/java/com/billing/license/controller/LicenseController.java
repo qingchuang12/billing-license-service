@@ -1,10 +1,7 @@
 package com.billing.license.controller;
 
 import com.billing.license.common.web.ClientIpResolver;
-import com.billing.license.dto.ActivateRequest;
-import com.billing.license.dto.ActivateResponse;
-import com.billing.license.dto.LicenseResponse;
-import com.billing.license.dto.ReportBindingRequest;
+import com.billing.license.dto.*;
 import com.billing.license.security.CurrentUserResolver;
 import com.billing.license.service.CredentialBindingService;
 import com.billing.license.service.LicenseService;
@@ -66,6 +63,41 @@ public class LicenseController {
             return ResponseEntity.status(429).<LicenseResponse>build();
         }
         return ResponseEntity.ok(licenseService.verifyLicense(licenseKey));
+    }
+
+    /**
+     * 支付后按机器码领取待激活授权（plan-1.0 / S1，公开端点）。
+     *
+     * <p>解决的问题：客户在浏览器收银台付款后，桌面软件无从得知「款已到账」（收银台轮询要
+     * {@code checkoutId}，客户端跳转时只带了机器码、拿不到它）。本端点让客户端在打开收银台后
+     * 按<b>本机机器码</b>轮询，命中即拿到 {@code signedToken} 直接落盘激活。
+     *
+     * <p>只返回「绑定该机器 + ACTIVE 未过期 + 从未成功校验过 + 签发在窗口内」的件，
+     * 筛选与限流口径见 {@link LicenseService#findPendingForMachine(String)}。
+     *
+     * @param machineId 本机机器码（查询参数）
+     */
+    @Operation(summary = "按机器码领取待激活授权（公开）",
+            description = "支付完成后客户端按本机机器码轮询，领取已直签绑定本机、尚未被成功校验过的授权。"
+                    + "命中即返回 signedToken，客户端本地验签后落盘激活。")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "查询成功（licenses 为空数组表示当前无可领取件）"),
+            @ApiResponse(responseCode = "400", description = "machineId 缺失或非法"),
+            @ApiResponse(responseCode = "429", description = "触发频控（空 body）")
+    })
+    @GetMapping("/pending")
+    public ResponseEntity<PendingLicenseResponse> pending(
+            @Parameter(description = "本机机器码", required = true) @RequestParam String machineId,
+            HttpServletRequest request) {
+        // 与公开 verify 同惯例：限流在控制层。机器码 + 真实来源 IP 双维度，IP 取服务端解析值
+        // （机器码先 trim 再限流：与 service 内的规范化口径一致，否则 " ABC" 与 "ABC" 会落进不同计数桶）
+        try {
+            rateLimitService.checkLicensePending(machineId == null ? null : machineId.trim(),
+                clientIpResolver.resolve(request));
+        } catch (RateLimitService.RateLimitExceededException e) {
+            return ResponseEntity.status(429).<PendingLicenseResponse>build();
+        }
+        return ResponseEntity.ok(licenseService.findPendingForMachine(machineId));
     }
 
     /**

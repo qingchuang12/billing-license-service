@@ -32,9 +32,20 @@ public class BillingProperties {
     private String publicKeyPath = "/keys/public.key";
     
     /**
-     * License expiration check interval in hours
+     * License 过期检查间隔（小时）。
+     *
+     * <p>plan-1.0 / S2：此前**无任何消费点**（纯死配置）。现接成 verify 响应里
+     * {@code nextCheckAfterMs} 的取值来源——服务端调复核节奏不必客户端发版。
      */
-    private Integer licenseCheckIntervalHours = 24;
+    private Integer licenseCheckIntervalHours = 360;
+
+    /**
+     * 支付后「按机器码领取待激活授权」的可领取时间窗（天）。
+     *
+     * <p>plan-1.0 / S1：只对**签发后 N 天内、且从未成功校验过**的授权开放匿名领取，
+     * 使机器码泄漏的危害面收敛到「刚买完还没用过的那几天」，而非终身可捞。
+     */
+    private Integer pendingLicenseWindowDays = 7;
     
     /**
      * Default license duration in days

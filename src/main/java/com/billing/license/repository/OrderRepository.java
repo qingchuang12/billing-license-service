@@ -17,6 +17,11 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     /** 账务：按订单创建时间范围取订单（收入/趋势/对账聚合使用） */
     java.util.List<Order> findByCreatedAtBetween(java.time.LocalDateTime from, java.time.LocalDateTime to);
 
+    // plan-1.0 / S1：按机器码取近期订单，用于捞「机器码只落在订单上、未写进 licenses.machine_code」的签发件
+    // （管理端补签发与收银台轮询补偿走 issueLicensesForOrder，只读订单机器码；{@code License#getMachineCode()} 有同款回落）
+    java.util.List<Order> findByMachineCodeAndCreatedAtAfter(String machineCode,
+                                                              java.time.LocalDateTime after);
+
     // plan-7.0 账户基础功能 / P1：管理端用户详情的名下订单计数
     long countByCustomerId(UUID customerId);
 }

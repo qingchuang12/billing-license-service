@@ -3,6 +3,7 @@ package com.billing.license.service;
 import com.billing.license.config.BillingProperties;
 import com.billing.license.dto.ActivateResponse;
 import com.billing.license.dto.LicenseResponse;
+import com.billing.license.dto.PendingLicenseResponse;
 import com.billing.license.entity.*;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.infrastructure.crypto.LicenseIssuer;
@@ -24,8 +25,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
@@ -626,5 +626,101 @@ class LicenseServiceTest {
             () -> licenseService.reportBinding(license.getSignedToken(), "NEW-M"));
 
         assertEquals("LICENSE_NOT_ACTIVE", ex.getErrorCode());
+    }
+
+    // ---------------- plan-1.0 / S1：支付后按机器码领取待激活授权（pending） ----------------
+
+    @Test
+    void findPendingForMachine_shouldReturnClaimableAndRecordPickupEvent() {
+        License claimable = signedActiveLicense("LIC-PENDING-1");
+        when(licenseRepository.findClaimableByBoundMachine(
+            eq(License.LicenseStatus.ACTIVE), eq("M1"), any(), any())).thenReturn(List.of(claimable));
+        when(orderRepository.findByMachineCodeAndCreatedAtAfter(anyString(), any())).thenReturn(List.of());
+
+        // 入参先规范化：带前后空格的机器码与限流 key 口径一致
+        PendingLicenseResponse response = licenseService.findPendingForMachine("  M1  ");
+
+        assertEquals(1, response.getLicenses().size());
+        PendingLicenseResponse.Item item = response.getLicenses().get(0);
+        assertEquals("LIC-PENDING-1", item.getLicenseKey());
+        assertNotNull(item.getSignedToken(), "客户端要拿 signedToken 本地验签落盘，不能只给 key");
+        assertEquals("pro", item.getProductSku());
+        assertNotNull(response.getServerTime());
+        verify(licenseEventRepository).save(argThat(e ->
+            e.getEventType() == LicenseEvent.EventType.PENDING_QUERIED && "M1".equals(e.getMachineId())));
+    }
+
+    @Test
+    void findPendingForMachine_shouldFilterOutNonClaimableAndDedupTwoCandidatePaths() {
+        License otherMachine = signedActiveLicense("LIC-OTHER");
+        otherMachine.setMachineCode("M2");                       // 绑在别人机器上
+        License alreadyVerified = signedActiveLicense("LIC-SEEN");
+        alreadyVerified.setLastVerifiedAt(LocalDateTime.now());  // 已被成功校验过 → 不再是「待领取」
+        License unclaimed = signedActiveLicense("LIC-NEW");
+        License revoked = signedActiveLicense("LIC-REVOKED");
+        revoked.setStatus(License.LicenseStatus.REVOKED);
+
+        Order order = paidOrder("M1");
+        // 两路候选都会命中 unclaimed：LinkedHashMap 去重，不能出现两次
+        when(licenseRepository.findClaimableByBoundMachine(any(), anyString(), any(), any()))
+            .thenReturn(List.of(unclaimed));
+        when(orderRepository.findByMachineCodeAndCreatedAtAfter(anyString(), any())).thenReturn(List.of(order));
+        when(licenseRepository.findByOrder(order))
+            .thenReturn(List.of(otherMachine, alreadyVerified, unclaimed, revoked));
+
+        List<String> keys = licenseService.findPendingForMachine("M1").getLicenses().stream()
+            .map(PendingLicenseResponse.Item::getLicenseKey).toList();
+
+        assertEquals(List.of("LIC-NEW"), keys);
+        // 去重生效 ⇒ 领取留痕也只写一条
+        verify(licenseEventRepository, times(1)).save(any(LicenseEvent.class));
+    }
+
+    @Test
+    void findPendingForMachine_shouldNotDuplicatePickupEvent_onRepeatedPoll() {
+        License claimable = signedActiveLicense("LIC-POLL");
+        when(licenseRepository.findClaimableByBoundMachine(any(), anyString(), any(), any()))
+            .thenReturn(List.of(claimable));
+        when(orderRepository.findByMachineCodeAndCreatedAtAfter(anyString(), any())).thenReturn(List.of());
+        // 客户端每 60s 轮询一次：事件只在首次命中写，否则 license_events 会被放大 30 倍
+        when(licenseEventRepository.findByLicenseKey("LIC-POLL")).thenReturn(List.of(
+            LicenseEvent.builder().licenseKey("LIC-POLL")
+                .eventType(LicenseEvent.EventType.PENDING_QUERIED).build()));
+
+        assertEquals(1, licenseService.findPendingForMachine("M1").getLicenses().size());
+
+        verify(licenseEventRepository, never()).save(any(LicenseEvent.class));
+    }
+
+    @Test
+    void findPendingForMachine_shouldRejectMachineId_beforeTouchingRepository() {
+        assertEquals("MACHINE_ID_REQUIRED", assertThrows(BusinessException.class,
+            () -> licenseService.findPendingForMachine("   ")).getErrorCode());
+        // 限长防超长串污染限流 key 空间
+        assertEquals("MACHINE_ID_INVALID", assertThrows(BusinessException.class,
+            () -> licenseService.findPendingForMachine("M".repeat(129))).getErrorCode());
+        verify(licenseRepository, never()).findClaimableByBoundMachine(any(), anyString(), any(), any());
+    }
+
+    @Test
+    void pendingResponseDto_shouldNeverCarryCustomerEmail() {
+        // 公开端点：任何持机器码者都能查。响应结构里不得出现邮箱字段（与 verify 的脱敏口径一致），
+        // 断言写在 DTO 类上而非某次返回值上——将来加字段会在这里先失败，而不是等安全审计发现。
+        assertTrue(Arrays.stream(PendingLicenseResponse.class.getDeclaredFields())
+            .noneMatch(f -> f.getName().toLowerCase().contains("email")));
+        assertTrue(Arrays.stream(PendingLicenseResponse.Item.class.getDeclaredFields())
+            .noneMatch(f -> f.getName().toLowerCase().contains("email")));
+    }
+
+    @Test
+    void verifyLicense_shouldExposeNextCheckCadenceFromConfig() {
+        License license = signedActiveLicense("LIC-CADENCE");
+        when(licenseRepository.findByLicenseKey("LIC-CADENCE")).thenReturn(Optional.of(license));
+        when(licenseRepository.save(any(License.class))).thenAnswer(i -> i.getArgument(0));
+
+        LicenseResponse response = licenseService.verifyLicense("LIC-CADENCE");
+
+        // 360h = 15 天：节奏由服务端下发，调参不必客户端发版
+        assertEquals(360 * 3600_000L, response.getNextCheckAfterMs().longValue());
     }
 }

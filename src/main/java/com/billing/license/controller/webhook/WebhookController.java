@@ -355,12 +355,17 @@ public class WebhookController {
         if (machineCode != null && !machineCode.isEmpty()) {
             // 有机器码：直接签发绑定设备的 License
             logger.info("签发绑定设备的 License：orderId={}, machineCode={}", orderId, machineCode);
-            licenseService.issueLicense(orderId, machineCode);
+            com.billing.license.entity.License issued = licenseService.issueLicense(orderId, machineCode);
             if (email != null && !email.isEmpty()) {
                 emailNotificationService.sendPaymentSuccessEmail(
                     email, orderId, productName,
                     order.getTotalAmount() != null ? order.getTotalAmount().doubleValue() : 0.0,
                     order.getCurrency());
+                // S3（plan-1.0）：直签分支此前**只**发支付成功通知，邮件里没有 License Key——
+                // 用户换机/重装时手上没有任何凭证（{@code sendLicenseIssuedEmail} 自定义起零调用点）。
+                // 与兑换码分支「支付成功 + 凭证」两封同发的形态对齐。
+                emailNotificationService.sendLicenseIssuedEmail(email, issued.getLicenseKey(), productName,
+                    issued.getExpiresAt() != null ? issued.getExpiresAt().toLocalDate().toString() : "永久有效");
             }
         } else {
             // 无机器码：生成兑换码
