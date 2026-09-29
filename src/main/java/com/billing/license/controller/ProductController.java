@@ -2,6 +2,7 @@ package com.billing.license.controller;
 
 import com.billing.license.config.BillingProperties;
 import com.billing.license.dto.ProductPublicDto;
+import com.billing.license.entity.Product;
 import com.billing.license.repository.ProductRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
@@ -36,11 +38,18 @@ public class ProductController {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Operation(summary = "列出在售产品",
-            description = "返回全部 active=true 的产品（SKU / 双档价格 / 档位 / 周期 / 权益）。公开端点，无需鉴权")
+            description = "返回全部 active=true 的产品（SKU / 产品码 / 双档价格 / 档位 / 周期 / 权益）。"
+                    + "可选 product 参数按产品码（products.product_code，大小写不敏感）过滤目录，缺省或空白返回全量。公开端点，无需鉴权")
     @GetMapping
-    public ResponseEntity<List<ProductPublicDto>> list() {
+    public ResponseEntity<List<ProductPublicDto>> list(
+            @RequestParam(name = "product", required = false) String product) {
+        // 产品维度（V10）：product 仅作目录过滤条件；空白 = 全量，保持无参调用行为不变
+        String productCode = product == null ? "" : product.trim();
         Map<String, BillingProperties.FeatureLabel> labels = billingProperties.getFeatureLabels();
-        return ResponseEntity.ok(productRepository.findByActiveTrue().stream()
+        List<Product> catalog = productCode.isEmpty()
+                ? productRepository.findByActiveTrue()
+                : productRepository.findByActiveTrueAndProductCodeIgnoreCase(productCode);
+        return ResponseEntity.ok(catalog.stream()
                 .map(p -> {
                     ProductPublicDto dto = ProductPublicDto.from(p);
                     dto.setFeatureViews(buildFeatureViews(p.getFeatures(), labels));

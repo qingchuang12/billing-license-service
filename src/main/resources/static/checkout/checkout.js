@@ -53,7 +53,7 @@
      - pro-plus-subscription 订阅 Pro Plus   tier=PRO_PLUS  monthly
      ------------------------------------------------------------------ */
   // 构建标记：用于排查「浏览器标签页缓存了旧脚本」的支持场景（F12 控制台可见）
-  console.info('[checkout] build 2026-09-20-5 · 权益名+产品名/描述改读后端（配置/DB 驱动），前端不再写死权益字典');
+  console.info('[checkout] build 2026-09-29-1 · 目录请求支持 ?product= 产品码过滤（过滤后为空回退全量），productId 仅作 SKU 预选');
 
   var DISPLAY = {
     'pro-buyout': {
@@ -99,40 +99,56 @@
   // 前端不再维护权益键→i18n 映射与字典（渲染见 renderPlanCards）。
 
   /**
-   * 产品目录取值入口（K8 决策 B + K16）。
-   * 拉取 GET /api/products，按 SKU 合并「展示元数据 + 权威价格」；
+   * 产品目录取值入口（K8 决策 B + K16 + V10 产品维度）。
+   * 拉取 GET /api/products（带产品码时走 ?product= 过滤，值经 URL 编码），
+   * 按 SKU 合并「展示元数据 + 权威价格」；
    * 任一 SKU 不在 DISPLAY 清单、或双价皆缺，即抛弃，避免脏数据上屏。
+   * @param {string} [productCode] 产品码（如 ai-tools）；空 = 全量目录
    * @returns {Promise<Array>}
    */
-  function fetchProducts() {
-    return getJson('/api/products').then(function (list) {
-      var rows = Array.isArray(list) ? list : [];
-      var merged = [];
-      rows.forEach(function (dto) {
-        var sku = dto && dto.sku;
-        var d = sku && DISPLAY[sku];
-        if (!d) return;
-        var cny = toNumber(dto.priceCny);
-        var usd = toNumber(dto.priceUsd);
-        if (cny == null && usd == null) return;
-        merged.push({
-          sku: sku,
-          tier: dto.tier || d.tier,
-          cycle: normalizeCycle(dto.billingCycle) || d.cycle,
-          priceCny: cny,
-          priceUsd: usd,
-          recommended: d.recommended,
-          name: { zh: dto.name, en: (dto.nameEn != null ? dto.nameEn : dto.name) },
-          desc: { zh: dto.description, en: (dto.descriptionEn != null ? dto.descriptionEn : dto.description) },
-          unit: d.unit,
-          featureViews: (dto && dto.featureViews) || []
-        });
-      });
-      if (!merged.length) {
-        return Promise.reject({ kind: 'api', status: 0, code: 'INTERNAL_ERROR', message: '', traceId: '' });
+  function fetchProducts(productCode) {
+    var catalogPath = productCode
+      ? '/api/products?product=' + encodeURIComponent(productCode)
+      : '/api/products';
+    return getJson(catalogPath).then(function (list) {
+      if (productCode && !(Array.isArray(list) && list.length)) {
+        // 兜底：按产品码过滤后目录为空（如新产品漏填 product_code）——回退全量目录。
+        // 收银台空页等于阻断收款，宁可多展示档位，也不能白页。
+        console.warn('[checkout] product=' + productCode + ' 目录过滤结果为空，回退全量产品目录');
+        return getJson('/api/products').then(mergeCatalog);
       }
-      return merged;
+      return mergeCatalog(list);
     });
+  }
+
+  /** 目录 DTO 列表 → 页面档位行（DISPLAY 白名单合并 + 双价校验；空目录视为接口异常） */
+  function mergeCatalog(list) {
+    var rows = Array.isArray(list) ? list : [];
+    var merged = [];
+    rows.forEach(function (dto) {
+      var sku = dto && dto.sku;
+      var d = sku && DISPLAY[sku];
+      if (!d) return;
+      var cny = toNumber(dto.priceCny);
+      var usd = toNumber(dto.priceUsd);
+      if (cny == null && usd == null) return;
+      merged.push({
+        sku: sku,
+        tier: dto.tier || d.tier,
+        cycle: normalizeCycle(dto.billingCycle) || d.cycle,
+        priceCny: cny,
+        priceUsd: usd,
+        recommended: d.recommended,
+        name: { zh: dto.name, en: (dto.nameEn != null ? dto.nameEn : dto.name) },
+        desc: { zh: dto.description, en: (dto.descriptionEn != null ? dto.descriptionEn : dto.description) },
+        unit: d.unit,
+        featureViews: (dto && dto.featureViews) || []
+      });
+    });
+    if (!merged.length) {
+      return Promise.reject({ kind: 'api', status: 0, code: 'INTERNAL_ERROR', message: '', traceId: '' });
+    }
+    return merged;
   }
 
   /** 按当前界面语言取展示价格（K8 决策 A：zh→CNY，en→USD） */
@@ -1737,12 +1753,13 @@
     });
 
     // 先加载产品目录，再做初始化渲染与会话恢复
-    fetchProducts().then(function (list) {
+    // C9（2026-09-20）：官网产品区按钮携带 ?product=ai-tools&productId=<sku>。
+    // 两个参数职责分离（V10 产品维度）：product 只作目录过滤，productId 只作 SKU 预选。
+    fetchProducts(String(params.product || '').trim()).then(function (list) {
       products = Array.isArray(list) ? list : [];
-      // C9（2026-09-20）：官网产品区按钮携带 ?product=ai-tools&productId=<sku>，
-      // 命中即预选该档位——此前这两个参数没被消费，用户跳进来还得在页内重选一次。
-      var presetSku = String(params.productId || params.product || '').trim();
+      var presetSku = String(params.productId || '').trim();
       if (presetSku) {
+        // 预选匹配不到（如旧客户端把产品码传进 productId）即静默不预选，保持原行为
         state.product = products.filter(function (item) { return item.sku === presetSku; })[0] || null;
       }
       applyLang(lang);

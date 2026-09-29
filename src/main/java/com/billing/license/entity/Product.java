@@ -28,7 +28,14 @@ public class Product {
     
     @Column(nullable = false, unique = true)
     private String sku;
-    
+
+    /**
+     * 产品码（产品维度，如 ai-tools）：一个产品含多个 SKU 档位。
+     * 收银台 GET /api/products?product= 按此过滤目录；历史数据与非目录类产品可为空。
+     */
+    @Column(name = "product_code")
+    private String productCode;
+
     @Column(nullable = false)
     private String name;
     

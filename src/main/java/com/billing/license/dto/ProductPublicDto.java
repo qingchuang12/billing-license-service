@@ -22,6 +22,8 @@ import java.util.List;
 public class ProductPublicDto {
 
     private String sku;
+    /** 产品码（产品维度，如 ai-tools）：收银台 GET /api/products?product= 按此过滤；未归类为 null */
+    private String productCode;
     private String name;
     private String description;
     private BigDecimal priceCny;
@@ -43,6 +45,7 @@ public class ProductPublicDto {
     public static ProductPublicDto from(Product p) {
         return ProductPublicDto.builder()
                 .sku(p.getSku())
+                .productCode(p.getProductCode())
                 .name(p.getName())
                 .description(p.getDescription())
                 .priceCny(p.getPriceCny())
