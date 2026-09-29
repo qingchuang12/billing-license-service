@@ -288,9 +288,10 @@ public class LicenseService {
      *
      * <p><b>可见范围（安全口径，三条同时满足才返回）</b>：
      * <ol>
-     *   <li>绑定在**该机器码**上（{@code licenses.machine_code}，或该列为空时回落
-     *       {@code orders.machine_code}——与 {@link License#getMachineCode()} 同语义，
-     *       否则管理端补签发/收银台补偿路径的件会漏）；</li>
+     *   <li>绑定在**该机器码**上（只认 {@code licenses.machine_code} 列——E4 审计丙后该列是绑定的
+     *       唯一真相，{@code License#getMachineCode()} 不再回落到 {@code orders.machine_code}；
+     *       历史「机器码只落在订单上」的件由 {@code V11__license_machine_code_source_of_truth.sql} 抄平，
+     *       新件三条签发路径统一经 {@link #bindToMachine} 写列）；</li>
      *   <li>{@code status=ACTIVE} 且未过期；</li>
      *   <li>{@code lastVerifiedAt IS NULL}（从未成功校验过＝客户端尚未领取使用）<b>且</b>
      *       签发时间在 {@code billing.pending-license-window-days} 窗口内。</li>
@@ -595,7 +596,7 @@ public class LicenseService {
         String licenseKey = generateLicenseKey();
         LocalDateTime issuedAt = LocalDateTime.now();
         LocalDateTime expiresAt = issuedAt.plusDays(product.getLicenseDurationDays());
-        
+
         License license = License.builder()
             .licenseKey(licenseKey)
             .customerId(order.getCustomerId())
@@ -605,11 +606,12 @@ public class LicenseService {
             .issuedAt(issuedAt)
             .expiresAt(expiresAt)
             .build();
-        
-        // Sign the license
-        String signedToken = licenseIssuer.issueLicense(license);
-        license.setSignedToken(signedToken);
-        
+
+        // E4（审计丙）：机器码必须落到 licenses.machine_code，不能只留在订单上。
+        // 回落读取已退役，若这里不写列，本件就永远「按机器码领不到、也解不掉」——
+        // 与购买直签同源，统一走绑定内核（写列 → 签名 → 落库 → 登记机器）。
+        bindToMachine(license, order.getMachineCode(), MachineRegistryService.SRC_PURCHASE);
+
         return license;
     }
     

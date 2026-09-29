@@ -87,11 +87,12 @@ public class License {
         updatedAt = LocalDateTime.now();
     }
     
-    // 兼容方法 - 供LicenseService使用
-    public String getMachineCode() {
-        return this.machineCode != null ? this.machineCode : (this.order != null ? this.order.getMachineCode() : null);
-    }
-    
+    // 设备绑定的唯一真相就是上面的 machine_code 列，**不回落 orders.machine_code**（plan-1.0 / E4 审计丙）。
+    // 曾有过的回落（{@code machineCode == null ? order.getMachineCode() : machineCode}）会让「解绑只清本列」
+    // 清不掉实际生效的绑定：管理端补签发的件机器码只落在订单上，回落照旧命中 → 解绑返回成功、换机仍被拒。
+    // 存量件由 V11__backfill_license_machine_code.sql 抄平到本列；新件三条签发路径统一经
+    // {@code LicenseService#bindToMachine} 写本列。恢复回落＝重新引入那条死锁，勿再改回。
+
     public enum LicenseStatus {
         /** 有效 */
         ACTIVE,

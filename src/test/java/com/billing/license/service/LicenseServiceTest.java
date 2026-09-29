@@ -15,6 +15,7 @@ import com.billing.license.repository.UserRepository;
 import com.billing.license.service.notification.EmailNotificationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -267,6 +268,16 @@ class LicenseServiceTest {
         assertEquals(1, responses.size());
         Map<String, Object> payload = licenseIssuer.decodePayload(responses.get(0).getSignedToken());
         assertEquals("MACHINE-BATCH", payload.get("mid"));
+        // E4（审计丙）的回归点：令牌里有 mid **不代表列写了**。回落存在时这条断言曾长期只靠令牌过，
+        // 而 licenses.machine_code 一直是 NULL —— 解绑清不掉、换机永久 MACHINE_MISMATCH。
+        // 断言取落库的实体：`LicenseResponse.machineCode` 在 mapToResponse 里刻意不填
+        // （同一一映射也服务公开 verify，把绑定机器码发给任意持 key 者＝送出 pending 的领取凭证）。
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<License>> saved = ArgumentCaptor.forClass(List.class);
+        verify(licenseRepository).saveAll(saved.capture());
+        assertEquals("MACHINE-BATCH", saved.getValue().get(0).getMachineCode(),
+            "机器码必须落到 licenses.machine_code（绑定的唯一真相），不能只体现在签名令牌里");
+        verify(machineRegistryService).touch(eq("MACHINE-BATCH"), anyString());
     }
 
     @Test
@@ -626,6 +637,64 @@ class LicenseServiceTest {
             () -> licenseService.reportBinding(license.getSignedToken(), "NEW-M"));
 
         assertEquals("LICENSE_NOT_ACTIVE", ex.getErrorCode());
+    }
+
+    // ---------------- E4（审计丙）：绑定只认 licenses.machine_code，不回落 orders.machine_code ----------------
+
+    /** 「证上的列为空、机器码只落在订单上」的件——V11 之前管理端补签发就是这个形状 */
+    private License columnEmptyOrderBoundLicense(String key, String orderMachineCode) {
+        License license = unboundSignedLicense(key);
+        license.setOrder(paidOrder(orderMachineCode));
+        return license;
+    }
+
+    @Test
+    void getMachineCode_shouldNotFallBackToOrder_afterAuditC() {
+        License license = columnEmptyOrderBoundLicense("LIC-NOFALLBACK", "M-ORDER");
+
+        assertNull(license.getMachineCode(), "回落已退役：设备绑定只认证上的列");
+        assertEquals("M-ORDER", license.getOrder().getMachineCode(),
+            "订单那一列照旧保留（购买归属/对账用），只是不再参与绑定判定");
+    }
+
+    @Test
+    void unbindByOwner_shouldReportNotBound_whenColumnEmptyEvenIfOrderHasMachineCode() {
+        // 死锁的两半：回落时代码把订单值当「已绑」→ 解绑既返回"成功"又写 UNBOUND 事件，实际什么都没清，
+        // 换机激活于是永久 MACHINE_MISMATCH。去掉回落后这类件直接判为未绑定，不再有谎报。
+        License license = columnEmptyOrderBoundLicense("LIC-UNBIND-NOFB", "M-ORDER");
+        when(licenseRepository.findByLicenseKey("LIC-UNBIND-NOFB")).thenReturn(Optional.of(license));
+
+        assertNull(licenseService.unbindByOwner("LIC-UNBIND-NOFB", customerId));
+        verify(licenseEventRepository, never()).save(any(LicenseEvent.class));
+    }
+
+    @Test
+    void reportBinding_shouldBindNewMachine_whenColumnEmptyEvenIfOrderHasMachineCode() {
+        License license = columnEmptyOrderBoundLicense("LIC-REPORT-NOFB", "M-ORDER");
+        when(licenseRepository.findByLicenseKey("LIC-REPORT-NOFB")).thenReturn(Optional.of(license));
+        when(licenseRepository.save(any(License.class))).thenAnswer(i -> i.getArgument(0));
+
+        ActivateResponse resp = licenseService.reportBinding(license.getSignedToken(), "M-NEW");
+
+        assertEquals("M-NEW", license.getMachineCode(), "列空即未绑定，应真补绑而不是按订单值命中幂等分支");
+        assertEquals("M-NEW", resp.getMachineId());
+        verify(licenseEventRepository).save(argThat(e ->
+            e.getEventType() == LicenseEvent.EventType.BOUND_BY_REPORT && "M-NEW".equals(e.getMachineId())));
+    }
+
+    @Test
+    void findPendingForMachine_shouldNotServeOrderOnlyLicense_afterFallbackRetired() {
+        License legacy = columnEmptyOrderBoundLicense("LIC-LEGACY", "M1");
+        when(licenseRepository.findClaimableByBoundMachine(any(), anyString(), any(), any()))
+            .thenReturn(List.of());
+        when(orderRepository.findByMachineCodeAndCreatedAtAfter(anyString(), any()))
+            .thenReturn(List.of(legacy.getOrder()));
+        when(licenseRepository.findByOrder(legacy.getOrder())).thenReturn(List.of(legacy));
+
+        // 这类件在 V11 之前会「按机器码可领」，靠的正是那条回落；迁移把它抄平到列上之后，
+        // 两条读路径合一条，未抄平的漏网件宁可不返回也不能凭订单发令牌（避免绑定真相重新分叉）
+        assertEquals(0, licenseService.findPendingForMachine("M1").getLicenses().size());
+        verify(licenseEventRepository, never()).save(any(LicenseEvent.class));
     }
 
     // ---------------- plan-1.0 / S1：支付后按机器码领取待激活授权（pending） ----------------
