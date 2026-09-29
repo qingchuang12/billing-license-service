@@ -111,12 +111,16 @@ docker compose logs -f app
 
 ### 端点总览（共 42 个：公开 16 + 半认证 2 + 管理端 16 + 账号需登录 8）
 
+> 该计数为历史口径，**未含**下表本次补登的 `GET /api/products` 与 `GET /api/licenses/pending`；全量端点数以代码为准（各 `@RestController` 的方法映射）。
+
 | 分组 | 方法与路径 | 鉴权 |
 |---|---|---|
 | 收银台 | `POST /api/checkout/create`（可选 `provider`，一步下单） | 公开 |
 | | `POST /api/checkout/{checkoutId}/select-provider` | 公开 |
 | | `GET /api/checkout/{checkoutId}/status` | 公开 |
+| 商品目录 | `GET /api/products?product=<产品码>` | 公开（`product` 缺省/空白＝返回全部在售；见下「收银台」段） |
 | License | `GET /api/licenses/verify/{licenseKey}` | 公开（失效件返回 400，查失效件用管理端接口） |
+| | `GET /api/licenses/pending?machineId=` | 公开·**双维度限流**（机器码 + 真实来源 IP）；支付后按机器码领取未绑定授权，见下「待激活领取」段 |
 | | `POST /api/licenses/activate` | 公开·**可选鉴权**：凭证为兑换码（`RC-` 前缀）时匿名可调；为许可证密钥时**必须登录且归属本人**（判定在服务端，见下「凭证激活」） |
 | | `POST /api/licenses/report-binding` | 公开（客户端兑换/激活后**启动时自动上报机器码**完成补绑；凭 `signedToken` 验签，**无需登录**） |
 | 兑换码 | `POST /api/redeem/redeem` | 公开 |
@@ -320,6 +324,9 @@ curl -X POST http://localhost:8000/api/account/mfa/verify \
 
 ### 收银台（下单唯一入口）
 
+> **产品目录 `GET /api/products`（公开，V10 产品维度）**：收银台页面拉取在售档位（`ProductPublicDto` 含 `productCode`）。可选 `product` 参数按产品码 `products.product_code` 过滤（大小写不敏感、服务端自动 trim），**缺省 / 空白返回全部 active 商品（与旧版行为一致）**；产品码查无结果时后端如实返回空数组，回退全量是收银台前端的临时兜底职责。
+> ⚠️ **硬约束：新增商品必须填 `product_code`**，否则该产品不会出现在按产品码过滤的收银台目录里（前端会回退全量，属临时兜底，不能依赖）。
+
 ```bash
 # 1) 创建收银台会话（公开）：返回可用支付方式与应付金额
 #    区域判定：currency=CNY 或 locale=zh-CN → 国内（取 price_cny/CNY），否则国际（取 price_usd/USD）
@@ -385,6 +392,17 @@ curl -X POST http://localhost:8000/api/admin/orders/{orderNumber}/issue \
 
 # 验证许可证（公开，离线校验用）
 curl http://localhost:8000/api/licenses/verify/{licenseKey}
+#    成功响应带 nextCheckAfterMs（由 billing.license-check-interval-hours 换算，默认 360h＝15 天），
+#    供客户端对齐复核节奏。客户端已消费该字段（ai-tools 审计 D8，2026-09-29）：终态排期优先采用下发值，
+#    并夹进安全区间 [1 小时, 30 天]；失败态（网络/5xx/429/结论不明）不吃下发值，仍按客户端 2 小时重试。
+#    改本配置需客户端**回连拿到明确结论**才生效；紧急关停仍走客户端包外 license.config.json 的 recheck.enabled。
+
+# 按机器码领取待激活授权（公开；支付后客户端每 60s 轮询、窗口 30 分钟）
+#    返回 licenses[]：ACTIVE 且尚未被领取的签发件（machine_code 已等于本机器码、last_verified_at 为空），
+#    窗口 = 最近 pending-license-window-days（默认 7）天内签发；无可领取件时为空数组（不是 404）。
+#    不回显 customerEmail；命中写 license_events(PENDING_QUERIED)，每张授权只记一次防轮询放大。
+#    客户端拿到 signedToken 后走既有 POST /api/licenses/report-binding 完成领取（一次性语义：绑机后不再返回）。
+curl "http://localhost:8000/api/licenses/pending?machineId=ABCD-1234-EFGH-5678"
 
 # 查询 License（I3：一个端点替代「按客户查询」与「订单下 License 列表」，含失效件）
 curl "http://localhost:8000/api/admin/licenses?customerEmail=buyer@example.com" -H "Authorization: Bearer $ADMIN_TOKEN"
