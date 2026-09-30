@@ -684,16 +684,13 @@ class LicenseServiceTest {
 
     @Test
     void findPendingForMachine_shouldNotServeOrderOnlyLicense_afterFallbackRetired() {
-        License legacy = columnEmptyOrderBoundLicense("LIC-LEGACY", "M1");
+        // 「licenses.machine_code 为空、只有订单带机器码」的件（V11 抄平前的形态）：列不匹配即查不出，
+        // 宁可不返回也不能凭订单发令牌——那等于把绑定真相重新分叉回两条路
         when(licenseRepository.findClaimableByBoundMachine(any(), anyString(), any(), any()))
             .thenReturn(List.of());
-        when(orderRepository.findByMachineCodeAndCreatedAtAfter(anyString(), any()))
-            .thenReturn(List.of(legacy.getOrder()));
-        when(licenseRepository.findByOrder(legacy.getOrder())).thenReturn(List.of(legacy));
 
-        // 这类件在 V11 之前会「按机器码可领」，靠的正是那条回落；迁移把它抄平到列上之后，
-        // 两条读路径合一条，未抄平的漏网件宁可不返回也不能凭订单发令牌（避免绑定真相重新分叉）
         assertEquals(0, licenseService.findPendingForMachine("M1").getLicenses().size());
+        verify(licenseRepository, never()).findByOrder(any());
         verify(licenseEventRepository, never()).save(any(LicenseEvent.class));
     }
 
@@ -704,7 +701,6 @@ class LicenseServiceTest {
         License claimable = signedActiveLicense("LIC-PENDING-1");
         when(licenseRepository.findClaimableByBoundMachine(
             eq(License.LicenseStatus.ACTIVE), eq("M1"), any(), any())).thenReturn(List.of(claimable));
-        when(orderRepository.findByMachineCodeAndCreatedAtAfter(anyString(), any())).thenReturn(List.of());
 
         // 入参先规范化：带前后空格的机器码与限流 key 口径一致
         PendingLicenseResponse response = licenseService.findPendingForMachine("  M1  ");
@@ -720,28 +716,18 @@ class LicenseServiceTest {
     }
 
     @Test
-    void findPendingForMachine_shouldFilterOutNonClaimableAndDedupTwoCandidatePaths() {
-        License otherMachine = signedActiveLicense("LIC-OTHER");
-        otherMachine.setMachineCode("M2");                       // 绑在别人机器上
-        License alreadyVerified = signedActiveLicense("LIC-SEEN");
-        alreadyVerified.setLastVerifiedAt(LocalDateTime.now());  // 已被成功校验过 → 不再是「待领取」
-        License unclaimed = signedActiveLicense("LIC-NEW");
-        License revoked = signedActiveLicense("LIC-REVOKED");
-        revoked.setStatus(License.LicenseStatus.REVOKED);
-
-        Order order = paidOrder("M1");
-        // 两路候选都会命中 unclaimed：LinkedHashMap 去重，不能出现两次
-        when(licenseRepository.findClaimableByBoundMachine(any(), anyString(), any(), any()))
-            .thenReturn(List.of(unclaimed));
-        when(orderRepository.findByMachineCodeAndCreatedAtAfter(anyString(), any())).thenReturn(List.of(order));
-        when(licenseRepository.findByOrder(order))
-            .thenReturn(List.of(otherMachine, alreadyVerified, unclaimed, revoked));
+    void findPendingForMachine_shouldReadCandidatesFromSingleQuery_afterSecondPathRemoved() {
+        License claimable = signedActiveLicense("LIC-NEW");
+        // 筛选判据（ACTIVE / 未校验 / 未过期 / 窗口内）已全部落在 findClaimableByBoundMachine 那条
+        // JPQL 里，服务层不再做 Java 侧二次过滤，也不再按订单回捞；真库口径由 E1 端到端实测覆盖
+        when(licenseRepository.findClaimableByBoundMachine(
+            eq(License.LicenseStatus.ACTIVE), eq("M1"), any(), any())).thenReturn(List.of(claimable));
 
         List<String> keys = licenseService.findPendingForMachine("M1").getLicenses().stream()
             .map(PendingLicenseResponse.Item::getLicenseKey).toList();
 
         assertEquals(List.of("LIC-NEW"), keys);
-        // 去重生效 ⇒ 领取留痕也只写一条
+        verify(licenseRepository, never()).findByOrder(any());
         verify(licenseEventRepository, times(1)).save(any(LicenseEvent.class));
     }
 
@@ -750,7 +736,6 @@ class LicenseServiceTest {
         License claimable = signedActiveLicense("LIC-POLL");
         when(licenseRepository.findClaimableByBoundMachine(any(), anyString(), any(), any()))
             .thenReturn(List.of(claimable));
-        when(orderRepository.findByMachineCodeAndCreatedAtAfter(anyString(), any())).thenReturn(List.of());
         // 客户端每 60s 轮询一次：事件只在首次命中写，否则 license_events 会被放大 30 倍
         when(licenseEventRepository.findByLicenseKey("LIC-POLL")).thenReturn(List.of(
             LicenseEvent.builder().licenseKey("LIC-POLL")

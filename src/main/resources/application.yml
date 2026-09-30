@@ -49,6 +49,14 @@ spring:
           starttls:
             enable: true
             required: true
+          # F6（plan-1.0 审计）：JavaMail 默认**无超时**，SMTP 端不应答时发送线程会被无限期挂住。
+          # 邮件发送是 @Async，挂住的线程不会拖垮请求线程，但会占死线程池的一个 worker，
+          # 且业务日志里只留「发送…邮件」一行、再无成败结论，排障时无从判断。
+          # 属性名经 javap 实测核对（angus-mail 2.0.5 · SocketFetcher 常量池 .connectiontimeout/.timeout/.writetimeout）。
+          # 写超时给得比读宽：正文是 HTML 模板，慢链路上留足余量，避免把能发出去的邮件判死。
+          connectiontimeout: ${MAIL_CONNECT_TIMEOUT_MS:8000}
+          timeout: ${MAIL_READ_TIMEOUT_MS:8000}
+          writetimeout: ${MAIL_WRITE_TIMEOUT_MS:15000}
         from-address: ${MAIL_FROM_ADDRESS:service@ywhome.top}
 
 # Springdoc OpenAPI 文档开关：必须在顶层 springdoc 命名空间下才生效；
@@ -211,6 +219,8 @@ account:
   jwt-secret: ${ACCOUNT_JWT_SECRET}
   # 令牌有效期（小时），默认 7 天
   token-ttl-hours: ${ACCOUNT_TOKEN_TTL_HOURS:168}
+  # 管理端令牌有效期（小时），默认 12h——权限域大、泄漏危害高，故比消费端短（SEC-3）
+  admin-token-ttl-hours: ${ACCOUNT_ADMIN_TOKEN_TTL_HOURS:12}
   # 注册是否强制邮箱验证码（联调期可临时置 false）
   require-email-verification: ${ACCOUNT_REQUIRE_EMAIL_VERIFICATION:true}
   # 验证码位数与有效期

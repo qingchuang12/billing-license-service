@@ -323,21 +323,12 @@ public class LicenseService {
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime windowFrom = now.minusDays(billingProperties.getPendingLicenseWindowDays());
 
-        // 两路候选，见方法头「可见范围」第 1 条
-        java.util.Map<UUID, License> candidates = new java.util.LinkedHashMap<>();
-        for (License license : licenseRepository.findClaimableByBoundMachine(
-                License.LicenseStatus.ACTIVE, machine, windowFrom, now)) {
-            candidates.put(license.getId(), license);
-        }
-        for (Order order : orderRepository.findByMachineCodeAndCreatedAtAfter(machine, windowFrom)) {
-            for (License license : licenseRepository.findByOrder(order)) {
-                if (isClaimable(license, machine, now, windowFrom)) {
-                    candidates.putIfAbsent(license.getId(), license);
-                }
-            }
-        }
+        // 单路候选：判据全部落在 licenses 表上，由一条 JPQL 覆盖（E4 审计丙后 machine_code 列是唯一真相，
+        // 原先「再按订单捞一遍」的第二路与之完全同口径、恒为子集，已删除）
+        List<License> claimable = licenseRepository.findClaimableByBoundMachine(
+            License.LicenseStatus.ACTIVE, machine, windowFrom, now);
 
-        List<PendingLicenseResponse.Item> items = candidates.values().stream()
+        List<PendingLicenseResponse.Item> items = claimable.stream()
             .map(license -> {
                 recordPendingQueried(license, machine);
                 return PendingLicenseResponse.Item.builder()
@@ -356,15 +347,6 @@ public class LicenseService {
             .build();
     }
 
-    /** {@link #findPendingForMachine} 第二路候选的 Java 侧过滤（第一路已由 JPQL 覆盖同口径条件）。 */
-    private boolean isClaimable(License license, String machine, LocalDateTime now, LocalDateTime windowFrom) {
-        return license.getStatus() == License.LicenseStatus.ACTIVE
-            && license.getLastVerifiedAt() == null
-            && machine.equals(license.getMachineCode())
-            && license.getIssuedAt() != null && license.getIssuedAt().isAfter(windowFrom)
-            && (license.getExpiresAt() == null || license.getExpiresAt().isAfter(now))
-            && license.getSignedToken() != null && !license.getSignedToken().isBlank();
-    }
 
     /**
      * 领取留痕：**每张授权只记一次**（首次命中写，后续轮询不重复写）。

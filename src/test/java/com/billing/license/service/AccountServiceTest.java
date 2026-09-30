@@ -69,8 +69,8 @@ class AccountServiceTest {
             return u;
         });
         when(passwordEncoder.encode(anyString())).thenReturn("BCRYPT_HASH");
-        when(jwtTokenService.issue(any(UUID.class), anyInt())).thenReturn("jwt-token");
-        when(jwtTokenService.expiresInSeconds()).thenReturn(604800L);
+        when(jwtTokenService.issue(any(UUID.class), anyInt(), anyBoolean())).thenReturn("jwt-token");
+        when(jwtTokenService.expiresInSeconds(anyBoolean())).thenReturn(604800L);
 
         // 登录已融合 Spring Security：用真实认证链（DaoAuthenticationProvider + ProviderManager），
         // 仅 mock 数据源（userRepository）与密码器（passwordEncoder）。密码比对、锁定/停用预检
@@ -159,6 +159,9 @@ class AccountServiceTest {
 
         assertThrows(BusinessException.class, () -> service.login(EMAIL, "wrong", "1.2.3.4"));
         assertNotNull(user.getLockedUntil(), "达到阈值须锁定账号");
+        // SEC-5：锁定触发时向被锁账号邮箱发旁路提醒，锁定分钟数随文案下发
+        verify(emailNotificationService).sendAccountLockedEmail(
+            EMAIL, properties.getRisk().getLoginAccountLockMinutes());
 
         User locked = activeUser();
         locked.setLockedUntil(LocalDateTime.now().plusMinutes(10));
@@ -167,6 +170,27 @@ class AccountServiceTest {
         BusinessException ex = assertThrows(BusinessException.class,
             () -> service.login(EMAIL, "wrong", "1.2.3.4"));
         assertEquals("ACCOUNT_LOCKED", ex.getErrorCode());
+        // 已锁定账号的后续尝试在认证链即被拦（LockedException），不再进入 recordLoginFailure，
+        // 故锁定提醒每次锁定事件只发一封——此处累计仍为 1 次。
+        verify(emailNotificationService, times(1)).sendAccountLockedEmail(anyString(), anyInt());
+    }
+
+    /**
+     * SEC-5 旁路容错：锁定提醒邮件即使发送抛异常，也<b>绝不能</b>回滚或阻断锁定本身
+     * （锁定是安全动作，邮件只是通知）。{@code sendAccountLockedEmail} 为 {@code @Async}
+     * 且内部吞异常，这里用 mock 抛出来模拟「通知链路故障」，断言账号仍被锁定、登录仍按预期失败。
+     */
+    @Test
+    void login_lockEmailFailure_doesNotBlockLock() {
+        User user = activeUser();
+        user.setFailedLoginCount(properties.getRisk().getLoginAccountFailMax() - 1);
+        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
+        org.mockito.Mockito.doThrow(new RuntimeException("SMTP down"))
+            .when(emailNotificationService).sendAccountLockedEmail(anyString(), anyInt());
+
+        assertThrows(BusinessException.class, () -> service.login(EMAIL, "wrong", "1.2.3.4"));
+        assertNotNull(user.getLockedUntil(), "邮件发送失败也必须照常锁定账号");
     }
 
     @Test
@@ -184,6 +208,37 @@ class AccountServiceTest {
         assertNull(user.getLockedUntil());
         assertNotNull(user.getLastLoginAt());
         assertEquals("jwt-token", resp.getAccessToken());
+    }
+
+    /**
+     * SEC-3：登录签发的令牌 TTL 必须按角色分叉——ADMIN 走短 TTL（issue/expiresIn 传 true），
+     * 消费者走长 TTL（传 false）。这里只验「路由正确的布尔量」，具体 TTL 值由
+     * {@code JwtTokenServiceTtlTest} 用真实签发验签覆盖。
+     */
+    @Test
+    void login_adminRole_issuesShortTtlToken() {
+        User admin = activeUser();
+        admin.setRole(User.UserRole.ADMIN);
+        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(admin));
+        when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(true);
+
+        service.login(EMAIL, PASSWORD, "1.2.3.4");
+
+        verify(jwtTokenService).issue(eq(admin.getId()), anyInt(), eq(true));
+        verify(jwtTokenService).expiresInSeconds(true);
+    }
+
+    @Test
+    void login_consumerRole_issuesLongTtlToken() {
+        User user = activeUser();
+        user.setRole(User.UserRole.USER);
+        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(true);
+
+        service.login(EMAIL, PASSWORD, "1.2.3.4");
+
+        verify(jwtTokenService).issue(eq(user.getId()), anyInt(), eq(false));
+        verify(jwtTokenService).expiresInSeconds(false);
     }
 
     @Test

@@ -8,6 +8,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -16,6 +17,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
@@ -45,6 +47,40 @@ import java.util.List;
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
+
+    /**
+     * SEC-1（plan-7.0，2026-09-30）：三个静态页（admin/account/checkout）共用的**唯一内联脚本**
+     * {@code document.documentElement.classList.add('js');} 的 SHA-256（base64）。
+     *
+     * <p>盘点结论（据此定 CSP，未凭印象）：三页 {@code <head>} 里各有同一段内联脚本（给 {@code <html>}
+     * 加 {@code js} 类以启用隐藏态/动效），除此之外**无** {@code <style>} 块、**无** {@code style=} 属性、
+     * **无** {@code onclick} 等内联事件；外部脚本/样式全同源，MFA 二维码是 {@code data:} URI，
+     * 收银台二维码是内联 {@code <svg>}（不受 img-src 约束），fetch 全打同源 {@code /api/**}。
+     *
+     * <p>⚠️ <b>改这段内联脚本必须同步重算本常量</b>，否则 CSP 会拦掉它 → {@code js} 类加不上 →
+     * 页面退化为「无脚本态」（内容可见但登录/支付/MFA 全失效）。{@code SecurityHeaderContractTest}
+     * 在构建期从三份 HTML 重算并断言一致，把「静默失效」变成「测试变红」。
+     * 重算命令：{@code node -e "console.log(require('crypto').createHash('sha256').update(SOURCE,'utf8').digest('base64'))"}。
+     */
+    public static final String INLINE_SCRIPT_SHA256 = "sha256-/x7W7R75k8Roq0WaVRQX9blP4OufE5xbAdzklGxsgpw=";
+
+    /**
+     * SEC-1：内容安全策略。{@code default-src 'self'} 兜底，逐项按上面盘点放开最小面：
+     * script 只许同源 + 那一段哈希内联脚本；style 只许同源（无内联样式故不需 {@code 'unsafe-inline'}）；
+     * img 放开 {@code data:}（MFA 二维码）；connect 只同源；{@code object-src 'none'} 封插件；
+     * {@code frame-ancestors 'none'} 与下面的 {@code X-Frame-Options: DENY} 双保险防点击劫持；
+     * {@code base-uri}/{@code form-action} 锁同源防 base 标签劫持与表单外发。
+     */
+    public static final String CONTENT_SECURITY_POLICY =
+        "default-src 'self'; "
+            + "script-src 'self' '" + INLINE_SCRIPT_SHA256 + "'; "
+            + "style-src 'self'; "
+            + "img-src 'self' data:; "
+            + "connect-src 'self'; "
+            + "object-src 'none'; "
+            + "frame-ancestors 'none'; "
+            + "base-uri 'self'; "
+            + "form-action 'self'";
 
     private final JwtTokenService jwtTokenService;
     private final UserRepository userRepository;
@@ -93,6 +129,14 @@ public class SecurityConfig {
         http
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .csrf(csrf -> csrf.disable())
+            // SEC-1（plan-7.0）：显式安全响应头。X-Frame-Options/nosniff 本就是 Spring Security 默认，
+            // 这里显式声明是为「自文档化 + 防将来 headers().disable() 一并关掉」；Referrer-Policy 与
+            // CSP 是**净新增**（默认不发）。四者对全部响应生效（含静态页与 /api/**）。
+            .headers(headers -> headers
+                .frameOptions(frame -> frame.deny())
+                .contentTypeOptions(Customizer.withDefaults())
+                .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+                .contentSecurityPolicy(csp -> csp.policyDirectives(CONTENT_SECURITY_POLICY)))
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/error").permitAll()

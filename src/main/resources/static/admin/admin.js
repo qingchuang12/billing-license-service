@@ -39,7 +39,9 @@
     /** 当前管理员自己的 userId：仅用于前端禁用「对自己的操作」（服务端 requireTarget 才是安全边界） */
     meId: '',
     /** 当前管理员是否已开启二次验证：决定敏感动作前是否走 step-up 弹层（P2） */
-    meMfa: false
+    meMfa: false,
+    /** 本次会话是否已忽略 MFA 引导横幅（SEC-4）：忽略后不再弹出，重新登录复位 */
+    mfaBannerDismissed: false
   };
 
   /** 半认证态：密码已通过、尚待第二因子时持有的票据（不落存储，刷新即失效） */
@@ -84,6 +86,9 @@
       'userbar.scopeLs': '（localStorage）',
       'userbar.scopeSession': '（sessionStorage，关闭标签页失效）',
       'userbar.logout': '退出登录',
+      'mfaBanner.text': '当前管理员账号尚未开启二次验证（MFA）。管理台可处置 License 与用户账号，建议尽快绑定认证器 App 以降低凭据泄漏后的接管风险。',
+      'mfaBanner.enable': '去开启',
+      'mfaBanner.dismiss': '本次忽略',
       'range.from': '起始时间',
       'range.to': '结束时间',
       'range.apply': '查询',
@@ -375,6 +380,9 @@
       'userbar.scopeLs': ' (localStorage)',
       'userbar.scopeSession': ' (sessionStorage, cleared when the tab closes)',
       'userbar.logout': 'Sign out',
+      'mfaBanner.text': 'This admin account has not enabled two-factor authentication (MFA). The console can manage licenses and user accounts — bind an authenticator app soon to reduce takeover risk if credentials leak.',
+      'mfaBanner.enable': 'Enable now',
+      'mfaBanner.dismiss': 'Dismiss',
       'range.from': 'From',
       'range.to': 'To',
       'range.apply': 'Apply',
@@ -865,7 +873,7 @@
     showMain();
     resetRangeToDefault();
     /* 先取自身 ID 再渲染分区：用户列表要靠它禁用「对自己的操作」 */
-    loadMe().then(function () { loadTab(state.tab); });
+    loadMe().then(function () { loadTab(state.tab); renderMfaBanner(); });
   }
 
   /** 取当前管理员资料（识别自身用；失败不阻塞渲染，禁用态退化为「全部可点」）。 */
@@ -878,6 +886,17 @@
       state.meId = '';
       state.meMfa = false;
     });
+  }
+
+  /**
+   * MFA 引导横幅（SEC-4）：管理员已登录但未开启二次验证时显示，纯提示、不拦截任何操作。
+   * 本次会话内点「忽略」后不再弹出；开启 MFA 或退出登录后复位。
+   */
+  function renderMfaBanner() {
+    var banner = $('mfaBanner');
+    if (!banner) return;
+    var show = !!state.token && !state.meMfa && !state.mfaBannerDismissed;
+    banner.hidden = !show;
   }
 
   function showMfaStep(methods) {
@@ -908,6 +927,9 @@
     clearToken();
     state.meId = '';
     state.meMfa = false;
+    state.mfaBannerDismissed = false;
+    var banner = $('mfaBanner');
+    if (banner) banner.hidden = true;
     closeResetModal();
     closeStepUpModal();
     closeUserDetail();
@@ -1445,6 +1467,10 @@
     apiPost('/api/admin/mfa/activate', { code: code }, true).then(function () {
       $('mfaActivateBtn').disabled = false;
       $('mfaActivateCode').value = '';
+      /* 已开启 MFA：同步本地态并收起引导横幅（SEC-4） */
+      state.meMfa = true;
+      state.mfaBannerDismissed = false;
+      renderMfaBanner();
       loadMfa();
     }).catch(function (err) {
       $('mfaActivateBtn').disabled = false;
@@ -1465,6 +1491,9 @@
       $('mfaUnbindBtn').disabled = false;
       $('mfaUnbindPassword').value = '';
       $('mfaUnbindCode').value = '';
+      /* 已解绑 MFA：恢复引导横幅（SEC-4） */
+      state.meMfa = false;
+      renderMfaBanner();
       loadMfa();
     }).catch(function (err) {
       $('mfaUnbindBtn').disabled = false;
@@ -2162,6 +2191,17 @@
 
     $('lockBtn').addEventListener('click', lock);
 
+    /* MFA 引导横幅（SEC-4）：去开启 → 跳安全设置分区；本次忽略 → 本会话不再弹 */
+    $('mfaBannerEnable').addEventListener('click', function () {
+      state.mfaBannerDismissed = true;
+      renderMfaBanner();
+      loadTab('security');
+    });
+    $('mfaBannerDismiss').addEventListener('click', function () {
+      state.mfaBannerDismissed = true;
+      renderMfaBanner();
+    });
+
     $('applyRange').addEventListener('click', applyRange);
 
     var chips = document.querySelectorAll('.chip');
@@ -2244,7 +2284,7 @@
       state.token = stored;
       showMain();
       resetRangeToDefault();
-      loadMe().then(function () { loadTab(state.tab); });
+      loadMe().then(function () { loadTab(state.tab); renderMfaBanner(); });
     } else {
       showAuth();
       resetRangeToDefault();

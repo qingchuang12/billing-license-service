@@ -401,7 +401,8 @@ curl http://localhost:8000/api/licenses/verify/{licenseKey}
 #    返回 licenses[]：ACTIVE 且尚未被领取的签发件（machine_code 已等于本机器码、last_verified_at 为空），
 #    窗口 = 最近 pending-license-window-days（默认 7）天内签发；无可领取件时为空数组（不是 404）。
 #    不回显 customerEmail；命中写 license_events(PENDING_QUERIED)，每张授权只记一次防轮询放大。
-#    客户端拿到 signedToken 后走既有 POST /api/licenses/report-binding 完成领取（一次性语义：绑机后不再返回）。
+#    客户端拿到 signedToken 后本地验签落盘，按需走既有 POST /api/licenses/report-binding 补绑（同机幂等）。
+#    一次性语义的判据是「首次成功 verify 置 last_verified_at」而非绑机：窗口内未校验过就还能重领。
 curl "http://localhost:8000/api/licenses/pending?machineId=ABCD-1234-EFGH-5678"
 
 # 查询 License（I3：一个端点替代「按客户查询」与「订单下 License 列表」，含失效件）

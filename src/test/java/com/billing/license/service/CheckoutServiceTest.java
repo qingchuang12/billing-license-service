@@ -295,4 +295,94 @@ class CheckoutServiceTest {
 
         assertEquals("tok.abc", resp.getLicense());
     }
+
+    // ── F8：订单级发放锁的引用计数（串行化仍成立 + 用完即摘，不随订单量只增不减）─────────
+
+    /** 反射读取私有的锁表，验证「临界区退出后条目被摘除」。 */
+    @SuppressWarnings("unchecked")
+    private java.util.Map<String, ?> lockTable() throws Exception {
+        java.lang.reflect.Field f = CheckoutService.class.getDeclaredField("fulfillmentLocks");
+        f.setAccessible(true);
+        return (java.util.Map<String, ?>) f.get(checkoutService);
+    }
+
+    private CheckoutSession paidMachineBoundSession() {
+        return CheckoutSession.builder()
+            .checkoutId("chk_1").orderId(UUID.randomUUID()).orderNumber("ORD-1")
+            .status(CheckoutSession.Status.PAID).machineId("M1").build();
+    }
+
+    @Test
+    void getStatus_concurrentPolls_shouldSerialize_andIssueOnlyOnce_andLeaveNoLockEntries() throws Exception {
+        CheckoutSession session = paidMachineBoundSession();
+        when(checkoutSessionRepository.findByCheckoutId("chk_1")).thenReturn(Optional.of(session));
+
+        // 有状态的「已签发」视图：首次签发后，后续轮询走复用分支（与真实 DB 行为一致）
+        List<com.billing.license.entity.License> issuedView = new java.util.ArrayList<>();
+        when(licenseRepository.findByOrderId(any())).thenAnswer(inv -> List.copyOf(issuedView));
+
+        java.util.concurrent.atomic.AtomicInteger inFlight = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger maxOverlap = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger issueCalls = new java.util.concurrent.atomic.AtomicInteger();
+        when(licenseService.issueLicensesForOrder(any())).thenAnswer(inv -> {
+            maxOverlap.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+            issueCalls.incrementAndGet();
+            Thread.sleep(30); // 放大竞态窗口：若未串行化，重叠必然被观测到
+            issuedView.add(com.billing.license.entity.License.builder()
+                .signedToken("tok." + issueCalls.get()).build());
+            inFlight.decrementAndGet();
+            return List.of(com.billing.license.dto.LicenseResponse.builder()
+                .signedToken("tok." + issueCalls.get()).build());
+        });
+
+        int threads = 8;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        List<java.util.concurrent.Future<String>> futures = new java.util.ArrayList<>();
+        for (int i = 0; i < threads; i++) {
+            futures.add(pool.submit(() -> {
+                start.await();
+                return checkoutService.getStatus("chk_1").getLicense();
+            }));
+        }
+        start.countDown();
+        java.util.Set<String> tokens = new java.util.HashSet<>();
+        for (var f : futures) {
+            tokens.add(f.get(30, java.util.concurrent.TimeUnit.SECONDS));
+        }
+        pool.shutdown();
+
+        assertEquals(1, maxOverlap.get(), "同一订单的发放必须串行（R5），不得有两个线程同时在临界区");
+        assertEquals(1, issueCalls.get(), "并发轮询只能签发一次 License（重复签发＝资损）");
+        assertEquals(1, tokens.size(), "所有轮询拿到的是同一个 token，实际=" + tokens);
+        assertTrue(lockTable().isEmpty(), "临界区退出后锁条目必须摘除，否则按订单量无界增长");
+    }
+
+    @Test
+    void getStatus_shouldReleaseLock_whenFulfillmentThrows() throws Exception {
+        CheckoutSession session = paidMachineBoundSession();
+        when(checkoutSessionRepository.findByCheckoutId("chk_1")).thenReturn(Optional.of(session));
+        when(licenseService.issueLicensesForOrder(any()))
+            .thenThrow(new RuntimeException("签发失败"));
+
+        assertThrows(RuntimeException.class, () -> checkoutService.getStatus("chk_1"));
+        assertTrue(lockTable().isEmpty(), "异常路径也必须释放锁条目（finally 兜底）");
+    }
+
+    @Test
+    void getStatus_differentOrders_shouldUseIndependentLocks() throws Exception {
+        CheckoutSession s1 = paidMachineBoundSession();
+        CheckoutSession s2 = CheckoutSession.builder()
+            .checkoutId("chk_2").orderId(UUID.randomUUID()).orderNumber("ORD-2")
+            .status(CheckoutSession.Status.PAID).machineId("M2").build();
+        when(checkoutSessionRepository.findByCheckoutId("chk_1")).thenReturn(Optional.of(s1));
+        when(checkoutSessionRepository.findByCheckoutId("chk_2")).thenReturn(Optional.of(s2));
+        when(licenseService.issueLicensesForOrder(any())).thenAnswer(inv ->
+            List.of(com.billing.license.dto.LicenseResponse.builder().signedToken("tok").build()));
+
+        checkoutService.getStatus("chk_1");
+        checkoutService.getStatus("chk_2");
+
+        assertTrue(lockTable().isEmpty(), "两个订单各自用完即摘，锁表应回空");
+    }
 }

@@ -52,7 +52,14 @@ public class CheckoutService {
     private final CustomerIdentityService customerIdentityService;
 
     // R5：单实例内按订单号串行化发放，避免并发轮询重复签发 License/兑换码（资损）
-    private ConcurrentHashMap<String, Object> fulfillmentLocks = new ConcurrentHashMap<>();
+    // F8：锁条目引用计数，最后一个持有者退出即摘除——只增不减会让每个被轮询过的订单号永久占位。
+    private final ConcurrentHashMap<String, OrderLock> fulfillmentLocks = new ConcurrentHashMap<>();
+
+    /** 订单级发放锁：{@code monitor} 是同步对象，{@code refs} 只在 {@code fulfillmentLocks.compute} 内改动（按 key 原子）。 */
+    private static final class OrderLock {
+        private final Object monitor = new Object();
+        private int refs;
+    }
 
     /**
      * 创建收银台会话
@@ -288,36 +295,59 @@ public class CheckoutService {
             // 避免并发轮询重复签发 License 或兑换码（资损）。
             // Webhook 侧发放由 R1（原子幂等）+ 订单状态机（canFulfill/markPaid）兜底；
             // 多实例部署建议额外部署分布式锁（见修复说明）。
-            synchronized (orderLock(session.getOrderNumber())) {
-                if (session.getMachineId() != null && !session.getMachineId().isEmpty()) {
-                    // 已绑定机器码：优先返回已签发的 License，避免轮询重复签发（B13）
-                    var existing = licenseRepository.findByOrderId(session.getOrderId());
-                    if (!existing.isEmpty()) {
-                        resp.license(existing.get(0).getSignedToken());
+            OrderLock lock = acquireOrderLock(session.getOrderNumber());
+            try {
+                synchronized (lock.monitor) {
+                    if (session.getMachineId() != null && !session.getMachineId().isEmpty()) {
+                        // 已绑定机器码：优先返回已签发的 License，避免轮询重复签发（B13）
+                        var existing = licenseRepository.findByOrderId(session.getOrderId());
+                        if (!existing.isEmpty()) {
+                            resp.license(existing.get(0).getSignedToken());
+                        } else {
+                            var licenses = licenseService.issueLicensesForOrder(session.getOrderId());
+                            if (!licenses.isEmpty()) {
+                                resp.license(licenses.get(0).getSignedToken());
+                            }
+                        }
                     } else {
-                        var licenses = licenseService.issueLicensesForOrder(session.getOrderId());
-                        if (!licenses.isEmpty()) {
-                            resp.license(licenses.get(0).getSignedToken());
+                        // 未绑定机器码：优先返回已生成的兑换码，避免轮询重复签发（B13）
+                        var existing = redeemCodeRepository.findByOrderId(session.getOrderNumber());
+                        if (!existing.isEmpty()) {
+                            resp.redeemCode(existing.get(0).getCode());
+                        } else {
+                            String code = redeemCodeService.generateCode(session.getOrderNumber());
+                            resp.redeemCode(code);
                         }
                     }
-                } else {
-                    // 未绑定机器码：优先返回已生成的兑换码，避免轮询重复签发（B13）
-                    var existing = redeemCodeRepository.findByOrderId(session.getOrderNumber());
-                    if (!existing.isEmpty()) {
-                        resp.redeemCode(existing.get(0).getCode());
-                    } else {
-                        String code = redeemCodeService.generateCode(session.getOrderNumber());
-                        resp.redeemCode(code);
-                    }
                 }
+            } finally {
+                releaseOrderLock(session.getOrderNumber(), lock);
             }
         }
         return resp.build();
     }
 
     // R5：获取订单级发放锁（单实例串行化，避免并发轮询重复签发）
-    private Object orderLock(String orderNumber) {
-        return fulfillmentLocks.computeIfAbsent(orderNumber, k -> new Object());
+    private OrderLock acquireOrderLock(String orderNumber) {
+        return fulfillmentLocks.compute(orderNumber, (k, v) -> {
+            OrderLock lock = (v != null) ? v : new OrderLock();
+            lock.refs++;
+            return lock;
+        });
+    }
+
+    /**
+     * F8：释放锁条目。必须在**退出 monitor 之后**调用——若在临界区内释放，
+     * 计数归零摘除后另一线程会新建一个不同的 monitor 并立即进入，两个线程同时处在临界区。
+     */
+    private void releaseOrderLock(String orderNumber, OrderLock lock) {
+        fulfillmentLocks.compute(orderNumber, (k, v) -> {
+            if (v != lock) {
+                return v;
+            }
+            lock.refs--;
+            return (lock.refs == 0) ? null : lock;
+        });
     }
 
     /**
@@ -365,15 +395,20 @@ public class CheckoutService {
             if (PaymentStatus.SUCCESS == status) {
                 // C5：统一发货入口——会话与订单同置 PAID，复用与 fulfillOrder 等价的发放逻辑（幂等），
                 // 避免「只改会话不发货 / 订单恒 PENDING」导致 Webhook 迟到二次发放或永远拿不到 License。
-                synchronized (orderLock(session.getOrderNumber())) {
-                    session.setStatus(CheckoutSession.Status.PAID);
-                    checkoutSessionRepository.save(session);
-                    Order order = orderRepository.findById(session.getOrderId()).orElse(null);
-                    if (order != null && order.canFulfill()) {
-                        order.markPaid();
-                        orderRepository.save(order);
-                        fulfillSession(session);
+                OrderLock lock = acquireOrderLock(session.getOrderNumber());
+                try {
+                    synchronized (lock.monitor) {
+                        session.setStatus(CheckoutSession.Status.PAID);
+                        checkoutSessionRepository.save(session);
+                        Order order = orderRepository.findById(session.getOrderId()).orElse(null);
+                        if (order != null && order.canFulfill()) {
+                            order.markPaid();
+                            orderRepository.save(order);
+                            fulfillSession(session);
+                        }
                     }
+                } finally {
+                    releaseOrderLock(session.getOrderNumber(), lock);
                 }
                 log.info("主动对账补偿：渠道确认已支付，已标记会话/订单 PAID 并发货：checkoutId={}", session.getCheckoutId());
             }

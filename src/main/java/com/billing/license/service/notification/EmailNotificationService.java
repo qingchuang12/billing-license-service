@@ -267,6 +267,42 @@ public class EmailNotificationService {
         }
     }
 
+    /**
+     * 账号锁定提醒（SEC-5）：连续登录失败触发锁定时，向<b>被锁账号邮箱</b>发旁路提醒。
+     *
+     * <p>锁定本身即「有人正在撞库」的强信号，此前仅写服务端日志、账号主人毫不知情。
+     * 与密码变更提醒同款：{@code @Async} 旁路、内部吞异常，<b>发送失败绝不回滚锁定主流程</b>
+     * （锁定是安全动作，不能因为邮件发不出去就不锁）。
+     *
+     * @param to          被锁账号邮箱
+     * @param lockMinutes 本次锁定时长（分钟），用于文案告知解锁等待时间
+     */
+    @Async
+    public void sendAccountLockedEmail(String to, int lockMinutes) {
+        logger.info("发送账号锁定提醒：to={}, lockMinutes={}", to, lockMinutes);
+
+        if (!isEmailConfigured()) {
+            logger.warn("邮件服务未配置，跳过发送账号锁定提醒");
+            return;
+        }
+
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+            helper.setFrom(fromAddress != null ? fromAddress : "noreply@billing.com");
+            helper.setTo(to);
+            helper.setSubject("您的账号已被临时锁定 - 安全提醒");
+
+            helper.setText(buildAccountLockedTemplate(lockMinutes), true);
+
+            mailSender.send(message);
+            logger.info("账号锁定提醒发送成功：to={}", to);
+        } catch (Exception e) {
+            logger.error("发送账号锁定提醒失败：to={}", to, e);
+        }
+    }
+
     /** 用途枚举名 → 中文说明（仅用于邮件文案） */
     private static String purposeLabel(String purpose) {
         return "RESET_PASSWORD".equalsIgnoreCase(purpose) ? "找回密码" : "注册验证";
@@ -469,6 +505,32 @@ public class EmailNotificationService {
     }
 
     /** 密码变更提醒模板：按变更来源给出对应措辞；正文只有事实，没有任何密码。 */
+    private String buildAccountLockedTemplate(int lockMinutes) {
+        StringBuilder html = new StringBuilder();
+        html.append("<!DOCTYPE html><html><head>");
+        html.append("<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;}");
+        html.append(".container{max-width:600px;margin:0 auto;padding:20px;}");
+        html.append(".header{background:#f44336;color:white;padding:20px;text-align:center;}");
+        html.append(".content{padding:20px;background:#f9f9f9;}");
+        html.append(".order-info{background:white;padding:15px;margin:15px 0;border-radius:5px;}");
+        html.append(".footer{text-align:center;padding:20px;color:#666;font-size:12px;}</style>");
+        html.append("</head><body><div class='container'>");
+        html.append("<div class='header'><h1>账号临时锁定</h1></div>");
+        html.append("<div class='content'><p>尊敬的客户，您好！</p>");
+        html.append("<p>您的账号因<b>连续多次登录失败</b>已被临时锁定。这通常意味着有人正在尝试用错误密码登录您的账号。</p>");
+        html.append("<div class='order-info'>");
+        html.append("<p><strong>锁定时间：</strong>").append(java.time.LocalDateTime.now()
+            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("</p>");
+        html.append("<p><strong>预计解锁：</strong>约 ").append(lockMinutes).append(" 分钟后自动解锁</p>");
+        html.append("</div>");
+        html.append("<p><strong>如果这是您本人的操作</strong>（例如忘记了密码），请在解锁后通过「邮箱验证码找回」重设密码。</p>");
+        html.append("<p><strong>如果不是您本人的操作</strong>，说明您的账号可能正被恶意尝试登录，建议解锁后立即修改密码，"
+            + "并联系我们的客服：").append(esc(supportEmail)).append("</p>");
+        html.append("</div><div class='footer'><p>此邮件由系统自动发送，请勿回复。</p></div>");
+        html.append("</div></body></html>");
+        return html.toString();
+    }
+
     private String buildPasswordChangedTemplate(String scenario) {
         String action;
         if ("SELF_RESET".equals(scenario)) {

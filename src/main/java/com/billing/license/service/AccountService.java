@@ -11,15 +11,11 @@ import com.billing.license.security.AuthUserPrincipal;
 import com.billing.license.security.JwtTokenService;
 import com.billing.license.security.MfaTicketService;
 import com.billing.license.security.PasswordPolicy;
-import com.billing.license.service.risk.RateLimitService;
 import com.billing.license.service.notification.EmailNotificationService;
+import com.billing.license.service.risk.RateLimitService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.security.authentication.DisabledException;
-import org.springframework.security.authentication.LockedException;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.authentication.*;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -276,6 +272,16 @@ public class AccountService {
             user.setLockedUntil(LocalDateTime.now().plusMinutes(risk.getLoginAccountLockMinutes()));
             log.warn("账号因连续登录失败被锁定：userId={}, failures={}, 锁定时长={}分钟",
                 user.getId(), failures, risk.getLoginAccountLockMinutes());
+            // SEC-5：锁定即「被撞库」强信号，旁路提醒被锁账号邮箱。本方法仅在 BadCredentials 分支调用；
+            // 账号一旦锁定，后续尝试在认证链即抛 LockedException 被单独捕获、不再进入此处，故每次锁定只发一封。
+            // try/catch 兜底：@Async 的「提交」本身可能同步抛 TaskRejectedException（线程池饱和），
+            // 若不放行会让下面的 save 被跳过、锁定丢失——通知是旁路，绝不能阻断安全动作。
+            try {
+                emailNotificationService.sendAccountLockedEmail(
+                    user.getEmail(), risk.getLoginAccountLockMinutes());
+            } catch (Exception e) {
+                log.warn("锁定提醒邮件提交失败，不影响锁定：userId={}", user.getId(), e);
+            }
         }
         userRepository.save(user);
     }
@@ -294,9 +300,10 @@ public class AccountService {
     }
 
     private AuthResponse toAuthResponse(User user) {
+        boolean admin = user.getRole() == User.UserRole.ADMIN;
         return AuthResponse.builder()
-            .accessToken(jwtTokenService.issue(user.getId(), user.getTokenVersion()))
-            .expiresIn(jwtTokenService.expiresInSeconds())
+            .accessToken(jwtTokenService.issue(user.getId(), user.getTokenVersion(), admin))
+            .expiresIn(jwtTokenService.expiresInSeconds(admin))
             .user(UserProfileResponse.from(user))
             .build();
     }

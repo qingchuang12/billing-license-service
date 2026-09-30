@@ -14,7 +14,7 @@
   <script>document.documentElement.classList.add('js');</script>
   <!-- 设计体系与收银台同源复用（design tokens + 通用组件）；页面专属样式见 admin.css -->
   <link rel="stylesheet" href="../checkout/checkout.css">
-  <link rel="stylesheet" href="admin.css?v=20260925-1">
+  <link rel="stylesheet" href="admin.css?v=20260930-1">
 </head>
 <body>
   <a class="skip-link" href="#main" data-i18n="a11y.skip">跳到主要内容</a>
@@ -115,6 +115,15 @@
         <div class="userbar">
           <p class="userbar__note"><span data-i18n="userbar.note">已登录 · 令牌保存在本机</span><span id="keyScopeNote"></span></p>
           <button class="linklike" type="button" id="lockBtn" data-i18n="userbar.logout">退出登录</button>
+        </div>
+
+        <!-- MFA 引导横幅（SEC-4）：管理员未开启二次验证时提示，纯前端提示式、不拦截任何操作 -->
+        <div class="mfa-banner" id="mfaBanner" role="status" hidden>
+          <p class="mfa-banner__text" id="mfaBannerText" data-i18n="mfaBanner.text">当前管理员账号尚未开启二次验证（MFA）。管理台可处置 License 与用户账号，建议尽快绑定认证器 App 以降低凭据泄漏后的接管风险。</p>
+          <div class="mfa-banner__actions">
+            <button class="btn btn--primary" type="button" id="mfaBannerEnable" data-i18n="mfaBanner.enable">去开启</button>
+            <button class="linklike" type="button" id="mfaBannerDismiss" data-i18n="mfaBanner.dismiss">本次忽略</button>
+          </div>
         </div>
 
         <!-- 工具栏：时间范围（安全设置分区不需要，切到该分区时隐藏） -->
@@ -551,6 +560,6 @@
     </div>
   </footer>
 
-  <script src="admin.js?v=20260925-2"></script>
+  <script src="admin.js?v=20260930-1"></script>
 </body>
 </html>

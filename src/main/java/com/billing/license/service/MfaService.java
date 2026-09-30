@@ -1,21 +1,12 @@
 package com.billing.license.service;
 
 import com.billing.license.config.AccountProperties;
-import com.billing.license.dto.AuthResponse;
-import com.billing.license.dto.MfaEnrollResponse;
-import com.billing.license.dto.MfaStatusResponse;
-import com.billing.license.dto.MfaStepUpResponse;
-import com.billing.license.dto.UserProfileResponse;
+import com.billing.license.dto.*;
 import com.billing.license.entity.User;
 import com.billing.license.entity.VerificationCode;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.UserRepository;
-import com.billing.license.security.AdminStepUpService;
-import com.billing.license.security.JwtTokenService;
-import com.billing.license.security.MfaSecretCipher;
-import com.billing.license.security.MfaTicketService;
-import com.billing.license.security.TotpQrCodeService;
-import com.billing.license.security.TotpService;
+import com.billing.license.security.*;
 import com.billing.license.service.risk.RateLimitService;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
@@ -271,9 +262,10 @@ public class MfaService {
         User saved = userRepository.save(user);
         log.info("第二因子校验通过，签发令牌：userId={}", saved.getId());
 
+        boolean admin = saved.getRole() == User.UserRole.ADMIN;
         return AuthResponse.builder()
-            .accessToken(jwtTokenService.issue(saved.getId(), saved.getTokenVersion()))
-            .expiresIn(jwtTokenService.expiresInSeconds())
+            .accessToken(jwtTokenService.issue(saved.getId(), saved.getTokenVersion(), admin))
+            .expiresIn(jwtTokenService.expiresInSeconds(admin))
             .user(UserProfileResponse.from(saved))
             .build();
     }

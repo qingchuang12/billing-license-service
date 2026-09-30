@@ -33,8 +33,11 @@
 | V6 | 管理员 MFA（plan-7.0 / B8） | `users` 增二次因子四列（详见 `V6__users_mfa.sql`） |
 | V7 | 机器「已转正」标记（plan-7.0 / D3，B7 = B） | `machine_first_seen.converted_at`（NULL = 未转正；首次置位后不回收） |
 | V8 | 强制改密标记（plan-7.0 账户基础功能 / Q3） | `users.must_change_password`（管理员代重置置 true，用户自助改密 / 找回后清除） |
+| V9 | 机器码索引（plan-1.0 / S1） | `licenses.machine_code` / `orders.machine_code` 查询索引；`license_events.event_type` 注释补 `BOUND_BY_REPORT` / `PENDING_QUERIED` |
+| V10 | 产品维度（plan-1.0 / D2） | `products.product_code`（收银台按产品码过滤目录，现有商品回填 `ai-tools`） |
+| V11 | 机器码唯一真相回填（plan-1.0 / E4 审计丙） | **数据回填、不动 schema**：把「机器码只落在 `orders.machine_code`」的历史签发件抄平到 `licenses.machine_code`，并改写该列注释为唯一真相口径。配套退役了 `License#getMachineCode()` 的订单回落 |
 
-> ⚠️ **迁移文件一经首次部署即被 Flyway 校验和锁定**：之后不得再编辑内容（变更请新建版本号，下一个可用 **V8**）。
+> ⚠️ **迁移文件一经首次部署即被 Flyway 校验和锁定**：之后不得再编辑内容（变更请新建版本号，下一个可用 **V12**）。
 > 上线前如需补充头注释可直接修改；上线后修改会导致启动失败。
 
 查看已执行迁移：

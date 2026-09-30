@@ -6,7 +6,7 @@
 
 其契约与实现现状以 `README.md`「凭证激活」段、`接口调用时序图.md` §1.7.6 / §3.13–3.14 / §4.10 为准，本 plan **只承载未完成项与待决策**。
 
-**2026-09-25 追加**：登录链路安全评估（IP/账号限流、MFA 票据隔离、防枚举等已证实到位）产出安全加固任务 SEC-1～SEC-5（P0/P1），见 TODOS；P2 档（HttpOnly cookie 迁移、新设备登录提醒、IP 窗口持久化）经评估暂不做，已记入范围边界。
+**2026-09-25 追加**：登录链路安全评估（IP/账号限流、MFA 票据隔离、防枚举等已证实到位）产出安全加固任务 SEC-1～SEC-5（P0/P1）——**已于 2026-09-30 全部落地并经 code-audit 单条目复核通过后从 TODOS 清理**（长留结论「全局 CSP 拦 swagger-ui 仅 dev」并入「取舍与风险」）；TODOS 仅剩 **SEC-4 拦截式升级（待拍板）** 与 **SEC-0 收尾（需真实凭据实机登录后由用户提交）**。P2 档（HttpOnly cookie 迁移、新设备登录提醒、IP 窗口持久化）经评估暂不做，已记入范围边界。
 
 
 ## 范围与边界
@@ -38,16 +38,13 @@
 - **「抢绑」已被落地实现堵住，红线须保留**：归属判定取登录用户 id，明文 key **单独泄漏不足以完成绑定**（需同时持有受害人登录态）。**若日后有人把该分支放宽为匿名，「抢绑」立即回归，B3 也随之重新升级为安全红线**。
 - **渠道部分退款未收口风险（须实测）**：`PaymentStrategy.refundPayment` 现为 `boolean`，无法区分「渠道明确拒绝部分金额」与「调用超时/网络失败」。若部分退款实际已受理却返回 false，降级会**重复退款**。缓解：失败与降级均写审计 + metadata 便于对账；列入登记表的渠道沙箱实测。
 - **跨仓库契约风险已收窄（C2 已查实）**：`ai-tools` 客户端**只支持兑换码**、**无登录代码**，故 A9 的改造量集中在「先做账号登录」+「改指向新端点」两件事；且其对外文案已统一为 `license.errors.generic`（不读服务端错误码），故本仓改码**无需**客户端 i18n 联动。**注意其 plan 已由用户合并为 `plan-4.1.md`（原 `doc/plan-3.1.md` 已并入）**。
-- **静态资源缓存**：`/admin/` 与 `/account/` 的 JS 引用带 `?v=` 版本参数防浏览器启发式缓存新旧混用（当前 `?v=20260925`）——**后续改动这两个静态页的 JS 后须同步 bump 该版本号**。
+- **静态资源缓存**：`/admin/` 与 `/account/` 的 JS 引用带 `?v=` 版本参数防浏览器启发式缓存新旧混用（当前 `?v=20260930-1`）——**后续改动这两个静态页的 JS 后须同步 bump 该版本号**。
+- **全局 CSP 拦 swagger-ui 内联脚本（SEC-1 有意偏差 · 勿回头误修）**：`SecurityConfig` 的 CSP 以 SHA-256 hash 白名单放行三静态页唯一内联脚本（`document.documentElement.classList.add('js')`），但 swagger-ui 的内联初始化脚本不在白名单 → **仅 dev 受影响**；prod 已关 `springdoc.api-docs`+`swagger-ui`（`application-prod.yml`），故**不做 per-path 放行**（属过度设计）。dev 需看文档时临时注掉 CSP 或用浏览器扩展禁用即可。`SecurityHeaderContractTest` 从三 HTML 重算内联脚本 SHA-256 断言 == `INLINE_SCRIPT_SHA256`，HTML 改了忘同步常量会红。
 - **回滚**：MFA 属增量列 + 增量端点，回滚 = 移除端点与列；`verification_codes` 新枚举值无 DDL 影响。
 
 ## TODOS（仅未完成项）
 
-- [ ] **SEC-1 · 安全响应头（P0）**：全站响应补安全头。① 先盘点 `admin/` `account/` `checkout/` 三静态页资源来源（index.html 有内联 `<script>`、logo 为 `https://www.ywhome.top` 外链），据此定 CSP 策略（内联脚本是否收敛为外链文件由盘点结果定）；② `X-Frame-Options: DENY` + `frame-ancestors 'none'`（防点击劫持）；③ `X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`。触点：`SecurityConfig`（或独立 header filter）。验收：curl 验证响应头存在；三页真机渲染与登录、支付回调、License 校验均不受影响。
-- [ ] **SEC-2 · 上线检查单补部署项（P0，仅文档）**：`上线准备工作.md` 追加三条并注明理由：① 生产 HTTPS 强制（TLS 由部署层保证）；② 反代层对 `/api/account/login`、验证码发送等端点加限流——应用层单机限流挡不住分布式换 IP 撞库；③ 反代后**必须**显式配 `billing.trust-x-forwarded-for=true`，并写明两侧后果：不开 → 所有请求按反代 IP 计，一人触发限流全员被限流；开 → 反代必须剥除/覆盖客户端可伪造的 `X-Forwarded-For`，只注入真实来源。
-- [ ] **SEC-3 · 管理端会话 TTL 单独调短（P1）**：ADMIN 登录签发的 access token 用短 TTL（默认 12h，新配置项如 `ACCOUNT_ADMIN_TOKEN_TTL_HOURS`），消费端维持 `168h` 不变。触点：`AccountService.login`、`JwtTokenService`（按角色选 TTL；`expiresInSeconds` 响应字段随之）。验收：单测覆盖两角色 TTL 分叉；MFA 票据链路与 `JwtAuthFilter` 过期校验不受影响（exp 在 token 内，天然兼容）。
-- [ ] **SEC-4 · 引导管理员开启 MFA（P1）**：管理台登录后检测到 ADMIN 未开 MFA → 显著提示横幅引导绑定。`UserProfileResponse.mfaEnabled` 与前端 `state.meMfa`（`loadMe` 已缓存）均就绪，默认方案为**纯前端提示式**改动。**待确认项**：是否升级为拦截式（未开 MFA 的 ADMIN 仅放行 MFA 绑定/改密/登出，仿 `MustChangePasswordFilter`）——拦得越死越安全，但唯一管理员在 TOTP 不可用且邮箱兜底关闭时可能困住自己；默认先提示式，拦截式由用户拍板后再立项。
-- [ ] **SEC-5 · 账号锁定邮件提醒（P1）**：`AccountService.recordLoginFailure` 触发账号锁定时，向**被锁账号邮箱**发旁路提醒（`@Async`、失败不回滚主流程，与改密提醒同款）——锁定本身即被撞库信号，当前无人知晓。多管理员互告暂不做。验收：单测覆盖锁定触发与旁路容错；本地 `code-log-only` 模式实测邮件内容；锁定流程行为不变。
+- [ ] **SEC-4 拦截式 MFA 升级（待拍板）**：提示式横幅已落地（管理台检测 ADMIN 未开 MFA → `#mfaBanner` 引导绑定，契约级 `AdminStaticPageContractTest` 验证）；是否**升级为拦截式**（未开 MFA 的 ADMIN 仅放行 MFA 绑定/改密/登出，仿 `MustChangePasswordFilter`）待用户拍板——拦得越死越安全，但唯一管理员在 TOTP 不可用且邮箱兜底关闭时可能困住自己。同登记 `plan-1.0.md` 待处理清单第三类；实机 GUI 走查并入登记表「MFA 实机走查」。
 - [ ] **SEC-0 · admin.js 修复收尾（2026-09-25 hotfix 遗留）**：登录崩溃修复后已补 bump `?v=20260925-2` 并同步 target/classes；剩余动作＝管理员真实凭据 + 动态码走一遍完整登录（覆盖登记表「MFA 实机走查」登录分支）后随本批 SEC 一起由用户提交。
 
 > 原开发项已于 2026-09-25 收口（D 组、A10、MFA B8、Web 后台账户基础功能 T01–T05、A9 均已落地，实现现状见 `README.md` / `接口调用时序图.md` 端点 24–29 / `上线准备工作.md` §3.1；A9 客户端于 2026-09-24 在 `ai-tools` 侧完成，本仓守门核实两端点契约零改动 + 回归基线 536 测试全绿）。剩余真实后端 E2E 验证在下方登记表。

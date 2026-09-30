@@ -19,7 +19,7 @@
 |---|---|
 | [`../scripts/README.md`](../scripts/README.md) | 运维脚本、构建/部署、Flyway 迁移清单与环境变量速查（**日常操作入口**） |
 | [`上线准备工作.md`](./上线准备工作.md) | **上线执行手册**：Go/No-Go 阻断项清单、签名密钥生成（已实测命令）与轮换、支付渠道设置与回调注册、环境变量基线、DB 迁移与备份、安全加固、部署与验收清单。上线前逐节执行。 |
-| `src/main/resources/db/migration/` | Flyway 迁移脚本（**现存 V1–V10**，2026-09-29 回目录核实；**下一个可用版本号为 V11**，V10＝`V10__product_code.sql` 为 `products` 增 `product_code`）。注意：历史增量序列（原 V2–V11）已按注释分段并入 `V1__baseline_schema.sql`，故「V11」在旧文档里的指代与目录实际编号不同，一律以目录文件为准。变更请遵循 `scripts/README.md` 的「禁止合并/禁止首次部署后修改」规则 |
+| `src/main/resources/db/migration/` | Flyway 迁移脚本（**现存 V1–V11**，2026-09-29 回目录核实；**下一个可用版本号为 V12**，V10＝`V10__product_code.sql` 为 `products` 增 `product_code`，V11＝`V11__license_machine_code_source_of_truth.sql` 为**数据回填**（把只落在 `orders.machine_code` 的历史件抄平到 `licenses.machine_code`，不加列、不改表结构，已在测试真库执行 `success=t`）。注意：历史增量序列（原 V2–V11）已按注释分段并入 `V1__baseline_schema.sql`，故旧文档里的「V11」指代与目录实际编号不同，一律以目录文件为准。变更请遵循 `scripts/README.md` 的「禁止合并/禁止首次部署后修改」规则 |
 
 ## 内部工作文档（非交付物）
 

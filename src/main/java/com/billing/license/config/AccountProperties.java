@@ -24,6 +24,14 @@ public class AccountProperties {
     /** 令牌有效期（小时），默认 7 天 */
     private int tokenTtlHours = 168;
 
+    /**
+     * 管理端令牌有效期（小时），默认 12h（SEC-3）。
+     *
+     * <p>管理员令牌权限域远大于消费者（可访问 {@code /api/admin/**}），一旦泄漏危害更高，
+     * 故单独调短 TTL 缩小窗口；消费端维持 {@link #tokenTtlHours}（168h）不变。
+     */
+    private int adminTokenTtlHours = 12;
+
     /** 注册是否强制邮箱验证码；联调期可临时关闭 */
     private boolean requireEmailVerification = true;
 

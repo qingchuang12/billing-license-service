@@ -55,15 +55,28 @@ public class JwtTokenService {
     }
 
     /**
-     * 签发访问令牌。
+     * 签发访问令牌（消费端 TTL，168h）。
      *
      * @param userId       用户 ID（作为 {@code sub}）
      * @param tokenVersion 用户当前令牌版本号（作为 {@code ver}）
      * @return JWS compact 串
      */
     public String issue(UUID userId, int tokenVersion) {
+        return issue(userId, tokenVersion, false);
+    }
+
+    /**
+     * 签发访问令牌，按角色选 TTL（SEC-3）。
+     *
+     * <p>管理端令牌权限域更大、泄漏危害更高，故用更短的 {@code adminTokenTtlHours}（默认 12h）；
+     * 消费端维持 {@code tokenTtlHours}（默认 168h）。{@code exp} 写在令牌内，
+     * {@link JwtAuthFilter} 的过期校验天然兼容两种 TTL，无需改动。
+     *
+     * @param admin true 表示签发管理端令牌，采用短 TTL
+     */
+    public String issue(UUID userId, int tokenVersion, boolean admin) {
         Instant now = Instant.now();
-        Instant exp = now.plus(properties.getTokenTtlHours(), ChronoUnit.HOURS);
+        Instant exp = now.plus(ttlHours(admin), ChronoUnit.HOURS);
         return Jwts.builder()
             .subject(userId.toString())
             .claim("ver", tokenVersion)
@@ -73,9 +86,18 @@ public class JwtTokenService {
             .compact();
     }
 
-    /** 令牌有效期（秒），供响应体 {@code expiresIn} 使用 */
+    /** 令牌有效期（秒），供响应体 {@code expiresIn} 使用（消费端 TTL） */
     public long expiresInSeconds() {
-        return (long) properties.getTokenTtlHours() * 3600L;
+        return expiresInSeconds(false);
+    }
+
+    /** 令牌有效期（秒），按角色选 TTL，供响应体 {@code expiresIn} 使用（SEC-3） */
+    public long expiresInSeconds(boolean admin) {
+        return ttlHours(admin) * 3600L;
+    }
+
+    private long ttlHours(boolean admin) {
+        return admin ? properties.getAdminTokenTtlHours() : properties.getTokenTtlHours();
     }
 
     /**
