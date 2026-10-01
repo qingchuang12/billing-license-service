@@ -1,66 +1,16 @@
 # plan-7.0 · 剩余收口（实机验证与外部待办）
 
-> 本 plan 由 `plan-4.1`（用户端退款）、`plan-5.0`（凭证体系治理）、`plan-6.0`（统一登录）三份并行 plan 于 2026-09-23 合并而成，原三份文件已删除。未完成项均标注来源。
+> 本仓**唯一活动 plan**，只承载未完成项；已完成内容与决策叙述不留存（历史结论查 `git log -- docs/`）。
+> 权威口径落点：契约与实现现状 → `README.md`（API 总览 / 凭证激活 / 二次因子）、`接口调用时序图.md`（42 个端点 + 横切机制）；上线执行与验收 → `上线准备工作.md`（§0 Go/No-Go、§二 渠道与证书、§3.1 必填变量、§五 安全加固、§6.6 回滚、§6.7 静态页缓存版本号、§七 验收清单 A/B/C/D/E、§九 风险登记）；授权域「明确不做」与红线 → `授权设计方案.md` §十八；管理台 / MFA / 退款范围边界 → `架构与业务流程设计.md`「附：范围边界定案」；客户端复核节奏与红线 → `ai-tools/doc/license-recheck-design.md`（§0.4 现行口径、§1.5 时钟回拨、§8 共享知识）。**测试数据与清理 SQL 全在 `D:\ProductSpace\.e1b-ledger.md`。**
 
-## 背景与目标
+## TODOS（仅未完成）
 
-其契约与实现现状以 `README.md`「凭证激活」段、`接口调用时序图.md` §1.7.6 / §3.13–3.14 / §4.10 为准，本 plan **只承载未完成项与待决策**。
-
-**2026-09-25 追加**：登录链路安全评估（IP/账号限流、MFA 票据隔离、防枚举等已证实到位）产出安全加固任务 SEC-1～SEC-5（P0/P1）——**已于 2026-09-30 全部落地并经 code-audit 单条目复核通过后从 TODOS 清理**（长留结论「全局 CSP 拦 swagger-ui 仅 dev」并入「取舍与风险」）；TODOS 仅剩 **SEC-4 拦截式升级（待拍板）** 与 **SEC-0 收尾（需真实凭据实机登录后由用户提交）**。P2 档（HttpOnly cookie 迁移、新设备登录提醒、IP 窗口持久化）经评估暂不做，已记入范围边界。
-
-
-## 范围与边界
-
-**做**
-- **管理端 License 处置（主体三，2026-09-23 追加）**：新增管理端**解绑**端点（只清设备绑定、保留授权）；`reissue` 增**管理端豁免**重发上限的显式开关并放宽 `newMachineId` 为可选；管理台新增「License 管理」分区（查询 + 解绑 / 作废 / 失效重发）。
-- **管理员 MFA**：TOTP 主因子 + 邮箱验证码兜底；默认关、管理员在管理台自助开启/解绑（B8 定案）。
-- 跨仓库 `ai-tools` 客户端契约对齐（A9：两条自动路径）。
-- Paddle 续费幂等加固（防重复延长 License）。
-- 管理员降权/停用即时生效的**入口**决策与落地。
-- 激活体系落地后衍生的决策收口（B2–B7、B10）。
-
-**暂不做**
-- **管理员口令策略加严**（B8 已定「不加严，只做 MFA」）：不做管理员专用复杂档、不做弱口令黑名单、不做定期轮换。
-- **一次性恢复码**：邮箱码已覆盖同一场景（认证器丢失 / 换机），再加恢复码是重复设施。
-- 面向普通用户的 MFA（本次仅管理员；实现上挑战条件不判角色，故逻辑天然可扩展，但不开入口）。
-- 退款申请单 / 审核工作流。
-- 订阅类订单自助退款（渠道侧无取消订阅 API，仅 webhook 侧处理 `canceled`）。
-- 退款政策页面文案（官网侧）。
-- **安全加固 P2 档（2026-09-25 评估后明确不做）**：token 迁移 HttpOnly cookie（CSP 补上后收益/成本比不高，动前端三套 JS + CORS/CSRF 动静大）；新设备/新 IP 登录邮件提醒；IP 限流窗口持久化（账号锁已落库兜底）。日后若 XSS 面扩大或做多实例部署，再重开评估。
-
-## 取舍与风险
-
-- **`ACCOUNT_MFA_KEY` 是本轮唯一的破坏性变更**：fail-fast 意味着**现有部署升级前必须先配好该变量**，否则服务起不来。详见 `上线准备工作.md` §3.1（本 plan 不再重复罗列）。
-- **迁移占位**：MFA 新增列由 `V6__users_mfa.sql` 落库（`users` 四列）；D3 的转正标记由 `V7__machine_converted_at.sql` 落库（`machine_first_seen.converted_at`，2026-09-23）。**下一个可用版本为 V8**。`mvn test` 不跑 Flyway，故单测不依赖新增列存在（与既有约定一致）。
-- **密钥轮换/丢失后已绑定的 TOTP 密钥不可解密**：即便 fail-fast 也一样（起不来）。缓解 = `reset-admin-mfa.sql` 重新绑定；且**邮箱兜底不依赖该密钥**，故不会把管理员硬锁在管理台外。
-- **邮箱兜底的因子独立性弱于 TOTP**：邮箱与登录标识同源。故保留 `account.mfa.email-fallback-enabled` 开关，且文档**必须标明档次差异**，不得宣称「邮箱码 = 同等强度第二因子」。
-- **票据在 TTL 内可重放，但不足以冒用**：票据不含动态码，且 TOTP 侧有 `mfa_last_used_step` 防同码重放、`verifyFailMax` 限制猜测次数（6 位码 + 5 次上限 + 300s TTL）。若日后多实例部署，需把失败计数迁到共享存储（与既有限流同源问题）。
-- **「抢绑」已被落地实现堵住，红线须保留**：归属判定取登录用户 id，明文 key **单独泄漏不足以完成绑定**（需同时持有受害人登录态）。**若日后有人把该分支放宽为匿名，「抢绑」立即回归，B3 也随之重新升级为安全红线**。
-- **渠道部分退款未收口风险（须实测）**：`PaymentStrategy.refundPayment` 现为 `boolean`，无法区分「渠道明确拒绝部分金额」与「调用超时/网络失败」。若部分退款实际已受理却返回 false，降级会**重复退款**。缓解：失败与降级均写审计 + metadata 便于对账；列入登记表的渠道沙箱实测。
-- **跨仓库契约风险已收窄（C2 已查实）**：`ai-tools` 客户端**只支持兑换码**、**无登录代码**，故 A9 的改造量集中在「先做账号登录」+「改指向新端点」两件事；且其对外文案已统一为 `license.errors.generic`（不读服务端错误码），故本仓改码**无需**客户端 i18n 联动。**注意其 plan 已由用户合并为 `plan-4.1.md`（原 `doc/plan-3.1.md` 已并入）**。
-- **静态资源缓存**：`/admin/` 与 `/account/` 的 JS 引用带 `?v=` 版本参数防浏览器启发式缓存新旧混用（当前 `?v=20260930-1`）——**后续改动这两个静态页的 JS 后须同步 bump 该版本号**。
-- **全局 CSP 拦 swagger-ui 内联脚本（SEC-1 有意偏差 · 勿回头误修）**：`SecurityConfig` 的 CSP 以 SHA-256 hash 白名单放行三静态页唯一内联脚本（`document.documentElement.classList.add('js')`），但 swagger-ui 的内联初始化脚本不在白名单 → **仅 dev 受影响**；prod 已关 `springdoc.api-docs`+`swagger-ui`（`application-prod.yml`），故**不做 per-path 放行**（属过度设计）。dev 需看文档时临时注掉 CSP 或用浏览器扩展禁用即可。`SecurityHeaderContractTest` 从三 HTML 重算内联脚本 SHA-256 断言 == `INLINE_SCRIPT_SHA256`，HTML 改了忘同步常量会红。
-- **回滚**：MFA 属增量列 + 增量端点，回滚 = 移除端点与列；`verification_codes` 新枚举值无 DDL 影响。
-
-## TODOS（仅未完成项）
-
-- [ ] **SEC-4 拦截式 MFA 升级（待拍板）**：提示式横幅已落地（管理台检测 ADMIN 未开 MFA → `#mfaBanner` 引导绑定，契约级 `AdminStaticPageContractTest` 验证）；是否**升级为拦截式**（未开 MFA 的 ADMIN 仅放行 MFA 绑定/改密/登出，仿 `MustChangePasswordFilter`）待用户拍板——拦得越死越安全，但唯一管理员在 TOTP 不可用且邮箱兜底关闭时可能困住自己。同登记 `plan-1.0.md` 待处理清单第三类；实机 GUI 走查并入登记表「MFA 实机走查」。
-- [ ] **SEC-0 · admin.js 修复收尾（2026-09-25 hotfix 遗留）**：登录崩溃修复后已补 bump `?v=20260925-2` 并同步 target/classes；剩余动作＝管理员真实凭据 + 动态码走一遍完整登录（覆盖登记表「MFA 实机走查」登录分支）后随本批 SEC 一起由用户提交。
-
-> 原开发项已于 2026-09-25 收口（D 组、A10、MFA B8、Web 后台账户基础功能 T01–T05、A9 均已落地，实现现状见 `README.md` / `接口调用时序图.md` 端点 24–29 / `上线准备工作.md` §3.1；A9 客户端于 2026-09-24 在 `ai-tools` 侧完成，本仓守门核实两端点契约零改动 + 回归基线 536 测试全绿）。剩余真实后端 E2E 验证在下方登记表。
-
-## 登记表（外部阻塞 / 需你本人动手，不占 TODOS）
-
-- **Q5 · 生产 SMTP 与 `ACCOUNT_CODE_LOG_ONLY` 实机确认（账户基础功能遗留）**：上线放行前核对启动日志——不得出现 `AccountNotificationStartupCheck` 的【上线阻断】/【告警】两条；并实收一封「密码变更提醒」确认通知链路可达（P1 通知为旁路，不可达不影响功能但必须知情）。
-- **账户基础功能实机走查（新增）**：① 管理台：用户列表查询 / 翻页 / 行内改角色与启停 / 代重置（弹层关闭即清空、无密码回显）/ 详情抽屉「查看许可证」/ 导出 CSV（Excel 打开无公式注入、中文不乱码）/ 安全设置本人改密（成功即退回登录）；② 被代重置账号：登录后仅能改密与登出，改密成功后资产恢复可见；③ 已开启 MFA 的操作者：敏感动作弹二次确认（TOTP 与邮箱兜底各走一遍），同码第二次被拒；④ C 端账号页：`?mode=reset` 直达找回表单。
-- **A9 · 真实后端 E2E 验证（2026-09-25 自「需开发」收口；客户端开发已于 2026-09-24 在 `ai-tools` 侧完成）**：起本仓服务（8000）+ ai-tools 客户端实机走「账号登录 → 自动拉取 License 列表 → 优先级 `status==ACTIVE && machineCode==null` > `machineCode==本机` → 自动 `POST /api/licenses/activate` 到账」闭环；并覆盖两个负例：无可用 License 时不动不弹窗；兑换路径（`redeem.ts` 新契约 `credential`）可用。`ai-tools/plan-4.1.md` 登记表同步挂账。
-
-- **启动配置（如 `ACCOUNT_MFA_KEY`）**：已并入 `上线准备工作.md` §3.1（缺失即拒启，升级前必配；升级顺序＝先配环境变量、再发布镜像/重启）——本 plan 不再重复罗列。
-- **MFA 实机走查（新增）**：管理台「绑定（**扫码**或手抄密钥录入认证器）→ 退出 → 动态码登录 → 换用邮箱码登录 → 解绑」全闭环；并**专项验证**直接用 `mfaTicket` 调 `/api/admin/**` 被拒（防 MFA 绕过）、同码重放被拒。**二维码仅在管理台可见，须真机用认证器 App 扫一次确认可绑**（单测已验证 PNG 能被 ZXing 解码回原 otpauth URI，但未验证真实 App 扫描）。
-- **H7 · Paddle 沙箱实测**：① `Transaction` 金额单位是否需 ×100（Paddle v2 最小货币单位）；② **A10 依赖项**——用沙箱模拟 `subscription renewed`，抓取真实 `transaction.billed/completed` 原始 payload，确认其是否含周期字段、以及 `subscription.updated` 是否稳定先于交易事件落库（决定 A10 第一阶段幂等是否在生产成立）；与 A10 同批做。
-- **渠道部分退款能力沙箱实测**：Alipay / Wechat / Stripe / Paddle / PayPal 逐家验证「按指定金额（非全额）退款」是否受理；Paddle 走 Classic v2 `/transactions/{id}/refund`（非 Billing 的 `/adjustments`）。
-- **重新下载支付宝公钥证书（2026-09-24 发现）**：`keys/alipay/alipayPublicCert.crt` 首张（沙箱）已于 2026-07-29 过期、同文件中间 CA 已于 2024-08-01 过期。SDK 验签不校验证书有效期，故**不会直接报错**，但应到开放平台重下 `alipayCertPublicKey_RSA2.crt` 覆盖；应用公钥证书 `appPublicCert.crt` 有效（至 2027-09-25）、根证书 4 张均未过期。
-- **N6 报错文案实机复测**：后端已在线（8000），浏览器真实报错文案需 GUI 走一遍。
-- **B2/B3 回调路径实机验证**：发货 / 渠道退款吊销需真实支付宝异步通知或构造签名回调触发，建议管理端造单或沙箱回调复核。
-- **实机走查**：浏览器全流程（登录 → 订单 → 申请退款 → License 状态刷新）。
-- **激活/解绑实机走查**：客户端或 curl 走「密钥激活 → 同机重试幂等 → 换机 `MACHINE_MISMATCH` → 账号页解绑 → 再激活成功」闭环；并确认账户页解绑按钮仅在已绑定时出现。
+- [ ] **【需你决策】SEC-4 · 是否把「未开 MFA」提示式横幅升级为拦截式**：现状实测＝管理台检测 ADMIN 未开 MFA → `#mfaBanner` 引导绑定（`static/admin/index.html:121`，逻辑 `admin.js:896-898`，契约级 `AdminStaticPageContractTest`），`security/` 下**没有任何**按 MFA 状态拦截的过滤器（只有 `TraceIdFilter` / `JwtAuthFilter` / `MustChangePasswordFilter`）。
+  - 选项①**保持提示式**：零新代码；代价＝管理员可长期不带第二因子。
+  - 选项②**仿 `MustChangePasswordFilter` 做拦截式**：未开 MFA 的 ADMIN 仅放行 MFA 绑定 / 改密 / 登出；更安全，但**唯一管理员在 TOTP 不可用且邮箱兜底被关闭时会自锁**，须同时定死应急出口（运维手动跑 `scripts/db/reset-admin-mfa.sql`）。
+  - **推荐①**——与已定案的「不做管理员口令加严」同一取舍尺度，且邮箱兜底已覆盖认证器丢失/换机场景（其强度档次差异已在 `README.md`「二次因子」标明，不得当作等同 TOTP）。
+- [ ] **【需你处理】E1 · 真人付款腿（唯一未跑的功能腿）** 真人扫支付宝沙箱码 → 触发 `fulfillOrder` 直签 + 两封真邮件（支付通知 / 含 licenseKey）+ 客户端 60s 到账轮询循环本身（`startPurchasePolling` 首 tick 固定 `PURCHASE_POLL_INTERVAL_MS=60s`、窗口 30 分钟，`purchase-poll.ts:58-63` + `constants.ts:107-108`；`pollOnce` 私有不可注入）。**⚠️ 须重新下单**：原备单 `ORD-1790691168309-616DF8FE`（pro-buyout ¥712.80，`machine_code=5E01-7EB8-3661-E06A`）二维码会话已于 2026-09-30 00:12 过期。其余三条腿已实跑通过：服务端 curl 腿（V9/V10/V11 真库执行、pending 命中与一次性消费、`nextCheckAfterMs=1296000000`、换机 400 `MACHINE_MISMATCH`、同机幂等、解绑后再激活 200、频控第 46 次起 429 空响应体）、客户端真模块腿（真 Ed25519 验签 + 到账 + 31 天提醒态功能不减 + 61 天且断网才停用 + 复网自愈）、邮件腿（本机 SMTP sink 实收验证码邮件）。
+- [ ] **【需你处理】E3 · 实机走查合批（与 SEC-0 同一趟）** 一次跑完 `上线准备工作.md` §七 的 **A9**（跨仓登录后自动到账，客户端代码已在 `ai-tools` 落地：`account.ts` + `redeem.ts` 列表拉取 + `claim.ts`）、**A10** 自助解绑、**A11/A12** MFA 全流程与反绕过、**A13** License 处置、**B1/B4** 真实小额与退款吊销、**B7** 渠道部分退款、**B8** Paddle 续费 payload、**E 段 1–5** 管理台与账户走查 + 报错文案 GUI 复测。
+- [ ] **【需你处理】SEC-0 · 2026-09-25 admin.js hotfix 收尾** 剩余动作＝用管理员真实凭据 + 动态码走一遍完整登录（并入上条 E 段），完成后由你随本批 SEC 一起提交。**更正**：旧文本写「已 bump `?v=20260925-2`」，该值在两仓代码中**不存在**；admin 页实测为 `?v=20260930-1`（`static/admin/index.html:17,563`），account 页 `?v=20260925-1`（`static/account/index.html:16,284`），后续改动须按 `上线准备工作.md` §6.7 逐页 bump。
+- [ ] **【需你处理】F4 · 仓库卫生** 本仓 commit `be3631e` 的 message 是一段 AI 生成的英文自述（「Based on the diff…Here's a commit message following your conventions:」+ 结尾「如果你希望把类型改为 refactor…」），不符仓库中文约定；实测 `git show --stat be3631e` ＝ 6 文件 +114/−19（时序图文档、`License.java`、`LicenseRepository`/`LicenseService`、`V11__*.sql`、`LicenseServiceTest`），且**已在 `origin/main`**（`git branch -r --contains be3631e`）→ `--amend` 属改写已发布历史，**不在建议范围**；推荐后续提交规范起 message 让历史自明，坚持改写须 force-push 并由你明示。ai-tools 侧同类问题见 `ai-tools/doc/plan-4.1.md`「仓库卫生」。
+- [ ] **【需你处理】支付宝公钥证书重下** `keys/alipay/alipayPublicCert.crt` 叶子证书 2026-07-29、同文件中间 CA 2024-08-01 **已过期**（`openssl x509 -enddate` 实测）；SDK 验签不校验有效期故**不会报错**，须到开放平台重下 `alipayCertPublicKey_RSA2.crt` 覆盖。完整有效期清单与位置见 `上线准备工作.md` §2.2.1。

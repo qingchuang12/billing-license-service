@@ -347,7 +347,6 @@ public class LicenseService {
             .build();
     }
 
-
     /**
      * 领取留痕：**每张授权只记一次**（首次命中写，后续轮询不重复写）。
      *

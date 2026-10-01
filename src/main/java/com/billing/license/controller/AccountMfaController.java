@@ -1,6 +1,7 @@
 package com.billing.license.controller;
 
 import com.billing.license.annotation.Audit;
+import com.billing.license.common.web.AcceptLanguageResolver;
 import com.billing.license.common.web.ClientIpResolver;
 import com.billing.license.dto.AuthResponse;
 import com.billing.license.dto.MfaTicketRequest;
@@ -40,6 +41,7 @@ public class AccountMfaController {
 
     private final MfaService mfaService;
     private final ClientIpResolver clientIpResolver;
+    private final AcceptLanguageResolver acceptLanguageResolver;
 
     /**
      * 请求发送邮箱兜底验证码（票据有效且服务端开启邮箱兜底时才可发）。
@@ -58,7 +60,8 @@ public class AccountMfaController {
     @PostMapping("/challenge")
     public ResponseEntity<Void> challenge(@Valid @RequestBody MfaTicketRequest request,
                                          HttpServletRequest httpRequest) {
-        mfaService.challenge(request.getTicket(), clientIpResolver.resolve(httpRequest));
+        mfaService.challenge(request.getTicket(), clientIpResolver.resolve(httpRequest),
+            acceptLanguageResolver.resolve(httpRequest));
         return ResponseEntity.ok().build();
     }
 

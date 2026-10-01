@@ -107,7 +107,7 @@ public class AccountService {
     // ==================== A3 登录 ====================
 
     @Transactional
-    public AuthResponse login(String rawEmail, String password, String clientIp) {
+    public AuthResponse login(String rawEmail, String password, String clientIp, String locale) {
         String email = normalize(rawEmail);
         AccountProperties.Risk risk = properties.getRisk();
 
@@ -133,7 +133,7 @@ public class AccountService {
             // 防账号枚举：邮箱不存在（UsernameNotFound 已被 hideUserNotFoundExceptions 收敛为
             // BadCredentials）与密码错误统一同一文案，并同样记录失败（user 为 null 时只计 IP）。
             User failed = userRepository.findByEmail(email).orElse(null);
-            recordLoginFailure(clientIp, risk, failed);
+            recordLoginFailure(clientIp, risk, failed, locale);
             if (failed == null) {
                 log.info("登录失败：邮箱不存在 email={}", email);
             } else {
@@ -181,7 +181,7 @@ public class AccountService {
     // ==================== A6 改密 ====================
 
     @Transactional
-    public void changePassword(UUID userId, String oldPassword, String newPassword) {
+    public void changePassword(UUID userId, String oldPassword, String newPassword, String locale) {
         AccountProperties.Risk risk = properties.getRisk();
         try {
             rateLimitService.checkAndCount("acct-change-pwd", userId.toString(),
@@ -207,13 +207,13 @@ public class AccountService {
         userRepository.save(user);
         invalidateTokens(userId, "改密");
         // P1 安全提醒（旁路，@Async）：只告知发生过变更，不含任何密码；失败不回滚上面的变更
-        emailNotificationService.sendPasswordChangedEmail(user.getEmail(), "SELF_CHANGE");
+        emailNotificationService.sendPasswordChangedEmail(user.getEmail(), "SELF_CHANGE", locale);
     }
 
     // ==================== A7 找回密码 ====================
 
     @Transactional
-    public void resetPassword(String rawEmail, String code, String newPassword, String clientIp) {
+    public void resetPassword(String rawEmail, String code, String newPassword, String clientIp, String locale) {
         String email = normalize(rawEmail);
         AccountProperties.Risk risk = properties.getRisk();
         try {
@@ -254,13 +254,13 @@ public class AccountService {
         log.info("密码重置成功：userId={}", user.getId());
         invalidateTokens(user.getId(), "重置密码");
         // P1 安全提醒（旁路，@Async）：不含密码；失败不回滚上面的重置
-        emailNotificationService.sendPasswordChangedEmail(user.getEmail(), "SELF_RESET");
+        emailNotificationService.sendPasswordChangedEmail(user.getEmail(), "SELF_RESET", locale);
     }
 
     // ==================== 内部方法 ====================
 
     /** 记录一次登录失败：IP 计数（内存）+ 账号计数与锁定（落库） */
-    private void recordLoginFailure(String clientIp, AccountProperties.Risk risk, User user) {
+    private void recordLoginFailure(String clientIp, AccountProperties.Risk risk, User user, String locale) {
         rateLimitService.countOnly("acct-login-ip-fail", clientIp,
             risk.getLoginIpFailWindowMinutes(), risk.getLoginIpFailMax() + 1);
         if (user == null) {
@@ -278,7 +278,7 @@ public class AccountService {
             // 若不放行会让下面的 save 被跳过、锁定丢失——通知是旁路，绝不能阻断安全动作。
             try {
                 emailNotificationService.sendAccountLockedEmail(
-                    user.getEmail(), risk.getLoginAccountLockMinutes());
+                    user.getEmail(), risk.getLoginAccountLockMinutes(), locale);
             } catch (Exception e) {
                 log.warn("锁定提醒邮件提交失败，不影响锁定：userId={}", user.getId(), e);
             }

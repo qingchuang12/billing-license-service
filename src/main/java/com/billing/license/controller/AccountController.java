@@ -1,6 +1,7 @@
 package com.billing.license.controller;
 
 import com.billing.license.annotation.Audit;
+import com.billing.license.common.web.AcceptLanguageResolver;
 import com.billing.license.common.web.ClientIpResolver;
 import com.billing.license.dto.*;
 import com.billing.license.security.CurrentUserResolver;
@@ -35,6 +36,7 @@ public class AccountController {
     private final AccountService accountService;
     private final VerificationCodeService verificationCodeService;
     private final ClientIpResolver clientIpResolver;
+    private final AcceptLanguageResolver acceptLanguageResolver;
 
     /**
      * A1：发送邮箱验证码（公开）。
@@ -53,7 +55,7 @@ public class AccountController {
     public ResponseEntity<Void> sendVerificationCode(@Valid @RequestBody SendCodeRequest request,
                                                      HttpServletRequest httpRequest) {
         verificationCodeService.send(request.getEmail(), request.getPurpose(),
-            clientIpResolver.resolve(httpRequest));
+            clientIpResolver.resolve(httpRequest), acceptLanguageResolver.resolve(httpRequest));
         return ResponseEntity.ok().build();
     }
 
@@ -85,7 +87,8 @@ public class AccountController {
     public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request,
                                               HttpServletRequest httpRequest) {
         return ResponseEntity.ok(accountService.login(
-            request.getEmail(), request.getPassword(), clientIpResolver.resolve(httpRequest)));
+            request.getEmail(), request.getPassword(), clientIpResolver.resolve(httpRequest),
+            acceptLanguageResolver.resolve(httpRequest)));
     }
 
     /** A4：登出（需登录）。tokenVersion +1，该用户所有已签发令牌立即失效。 */
@@ -121,8 +124,10 @@ public class AccountController {
     })
     @Audit(action = "CHANGE_PASSWORD")
     @PostMapping("/password/change")
-    public ResponseEntity<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
-        accountService.changePassword(currentUserId(), request.getOldPassword(), request.getNewPassword());
+    public ResponseEntity<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request,
+                                               HttpServletRequest httpRequest) {
+        accountService.changePassword(currentUserId(), request.getOldPassword(), request.getNewPassword(),
+            acceptLanguageResolver.resolve(httpRequest));
         return ResponseEntity.ok().build();
     }
 
@@ -137,7 +142,7 @@ public class AccountController {
     public ResponseEntity<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest request,
                                               HttpServletRequest httpRequest) {
         accountService.resetPassword(request.getEmail(), request.getCode(), request.getNewPassword(),
-            clientIpResolver.resolve(httpRequest));
+            clientIpResolver.resolve(httpRequest), acceptLanguageResolver.resolve(httpRequest));
         return ResponseEntity.ok().build();
     }
 

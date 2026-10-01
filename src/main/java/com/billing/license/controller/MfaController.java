@@ -132,8 +132,9 @@ public class MfaController {
     @PostMapping("/step-up/challenge")
     public ResponseEntity<Void> stepUpChallenge(@Valid @RequestBody MfaStepUpChallengeRequest request,
                                                 HttpServletRequest httpRequest) {
+        // F7：管理员 step-up 兜底码——收件人是管理员，按回落 en（不取买家 locale）
         mfaService.stepUpChallenge(currentUserId(), request.getAction(),
-            clientIpResolver.resolve(httpRequest));
+            clientIpResolver.resolve(httpRequest), null);
         return ResponseEntity.ok().build();
     }
 

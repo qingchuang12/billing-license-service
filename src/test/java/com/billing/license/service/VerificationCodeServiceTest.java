@@ -19,13 +19,8 @@ import org.mockito.quality.Strictness;
 import java.time.LocalDateTime;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -57,7 +52,7 @@ class VerificationCodeServiceTest {
 
     @Test
     void send_storesHashOnlyAndInvalidatesOldCodes() {
-        service.send(EMAIL, VerificationCode.CodePurpose.REGISTER, "1.2.3.4");
+        service.send(EMAIL, VerificationCode.CodePurpose.REGISTER, "1.2.3.4", null);
 
         ArgumentCaptor<VerificationCode> captor = ArgumentCaptor.forClass(VerificationCode.class);
         verify(codeRepository).save(captor.capture());
@@ -77,7 +72,7 @@ class VerificationCodeServiceTest {
             .thenThrow(new RateLimitService.RateLimitExceededException("acct-code-cooldown", NORMALIZED, 2, 1));
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.send(EMAIL, VerificationCode.CodePurpose.REGISTER, "1.2.3.4"));
+            () -> service.send(EMAIL, VerificationCode.CodePurpose.REGISTER, "1.2.3.4", null));
         assertEquals("CODE_SEND_TOO_FREQUENT", ex.getErrorCode());
     }
 

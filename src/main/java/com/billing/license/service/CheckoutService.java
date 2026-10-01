@@ -437,6 +437,17 @@ public class CheckoutService {
     }
 
     /**
+     * F7：按业务订单号回查收银台会话的买家 locale，供发货/退款邮件选中英文。
+     * 会话缺失时返回 {@code null}（{@code EmailNotificationService.preferEn} 据此回落 en）。
+     */
+    @Transactional(readOnly = true)
+    public String findLocaleByOrderNumber(String orderNumber) {
+        return checkoutSessionRepository.findByOrderNumber(orderNumber)
+            .map(CheckoutSession::getLocale)
+            .orElse(null);
+    }
+
+    /**
      * 标记收银台为已支付（由 Webhook 发货成功后调用）
      */
     @Transactional

@@ -323,7 +323,7 @@ class AdminUserServiceTest {
 
         service.resetPassword(operator, targetId, "NewPassw0rd", null);
 
-        verify(emailNotificationService).sendPasswordChangedEmail("u@example.com", "ADMIN_RESET");
+        verify(emailNotificationService).sendPasswordChangedEmail("u@example.com", "ADMIN_RESET", null);
     }
 
     /** 校验失败 / 护栏拦截时不得发通知：动作并未发生。 */
@@ -338,7 +338,7 @@ class AdminUserServiceTest {
         assertThrows(BusinessException.class,
             () -> service.resetPassword(operator, targetId, "short", null));
 
-        verify(emailNotificationService, never()).sendPasswordChangedEmail(anyString(), anyString());
+        verify(emailNotificationService, never()).sendPasswordChangedEmail(anyString(), anyString(), any());
     }
 
     // ==================== 用户详情（P1） ====================

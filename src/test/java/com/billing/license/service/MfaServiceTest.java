@@ -336,9 +336,9 @@ class MfaServiceTest {
     void challenge_shouldSendSecondFactorCode() {
         enableMfa();
 
-        service.challenge(validTicket(), "1.2.3.4");
+        service.challenge(validTicket(), "1.2.3.4", null);
 
-        verify(verificationCodeService).sendSecondFactorCode(admin.getEmail(), "1.2.3.4");
+        verify(verificationCodeService).sendSecondFactorCode(admin.getEmail(), "1.2.3.4", null);
     }
 
     @Test
@@ -348,10 +348,10 @@ class MfaServiceTest {
         properties.getMfa().setEmailFallbackEnabled(false);
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.challenge(validTicket(), "1.2.3.4"));
+            () -> service.challenge(validTicket(), "1.2.3.4", null));
 
         assertEquals("MFA_EMAIL_FALLBACK_DISABLED", ex.getErrorCode());
-        verify(verificationCodeService, never()).sendSecondFactorCode(anyString(), anyString());
+        verify(verificationCodeService, never()).sendSecondFactorCode(anyString(), anyString(), any());
     }
 
     // ==================== 解绑 ====================

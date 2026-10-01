@@ -4,10 +4,7 @@ import com.billing.license.dto.LicenseResponse;
 import com.billing.license.dto.OrderResponse;
 import com.billing.license.entity.*;
 import com.billing.license.exception.BusinessException;
-import com.billing.license.repository.LicenseRepository;
-import com.billing.license.repository.OrderRepository;
-import com.billing.license.repository.PaymentRepository;
-import com.billing.license.repository.UserRepository;
+import com.billing.license.repository.*;
 import com.billing.license.service.notification.EmailNotificationService;
 import com.billing.license.service.payment.PaymentService;
 import com.billing.license.service.payment.impl.PaymentServiceFactory;
@@ -52,6 +49,8 @@ public class AdminService {
     // D6（plan-7.0）：退款吊销同样要写 license_events 留痕，事件口径复用 LicenseService#recordLicenseEvent
     // （与「管理端作废 / 解绑 / 重发」同一来源，避免各写一套）。LicenseService 不反向依赖本类，无循环。
     private final LicenseService licenseService;
+    // F7：退款邮件按买家收银台 locale 出中/英（放最后，避免打乱前面依赖的构造器位置）
+    private final CheckoutSessionRepository checkoutSessionRepository;
 
     // i6：复用 ObjectMapper 构造 metadata JSON，避免手写拼接导致的转义/注入问题
     private static final ObjectMapper METADATA_MAPPER = new ObjectMapper();
@@ -303,11 +302,16 @@ public class AdminService {
         if (order.getEmail() != null && !order.getEmail().isEmpty()) {
             // M5 修正：退款通知使用退款专用文案，不再复用「支付失败」模板
             // plan-4.1：文案带上实际退款金额（部分退款时用户需知道退了多少钱）
+            // F7：管理员代退款——locale 仍取该订单收银台会话（买家语言）；无会话时回落 en。
             String currency = order.getCurrency() != null ? " " + order.getCurrency().code() : "";
+            String locale = checkoutSessionRepository.findByOrderNumber(orderNumber)
+                .map(CheckoutSession::getLocale).orElse(null);
+            boolean en = EmailNotificationService.preferEn(locale);
+            String detail = (en ? "Refund processed: " : "退款已处理：") + refundedAmount.toPlainString() + currency
+                + (reason != null && !reason.isBlank()
+                    ? (en ? " (" + reason + ")" : "（" + reason + "）") : "");
             emailNotificationService.sendRefundProcessedEmail(
-                order.getEmail(), orderNumber,
-                "退款已处理：" + refundedAmount.toPlainString() + currency
-                    + (reason != null && !reason.isBlank() ? "（" + reason + "）" : ""));
+                order.getEmail(), orderNumber, detail, locale);
         }
 
         log.info("退款完成：orderNumber={}", orderNumber);

@@ -168,14 +168,14 @@ public class MfaService {
      * {@code ROLE_ADMIN}），不是登录票据。TOTP 用户不需要本步——认证器上本就有当天的动态码。
      */
     @Transactional
-    public void stepUpChallenge(UUID userId, String action, String clientIp) {
+    public void stepUpChallenge(UUID userId, String action, String clientIp, String locale) {
         User user = requireEnabledUser(userId);
         requireProtectedAction(action);
         if (!emailFallbackEnabled()) {
             throw new BusinessException("MFA_EMAIL_FALLBACK_DISABLED",
                 "本服务未开放邮箱验证码兜底，请使用认证器动态码");
         }
-        verificationCodeService.sendSecondFactorCode(user.getEmail(), clientIp);
+        verificationCodeService.sendSecondFactorCode(user.getEmail(), clientIp, locale);
     }
 
     /**
@@ -227,7 +227,7 @@ public class MfaService {
      * {@link VerificationCodeService} 的邮箱冷却与窗口次数限制把守。
      */
     @Transactional
-    public void challenge(String ticket, String clientIp) {
+    public void challenge(String ticket, String clientIp, String locale) {
         User user = resolveTicket(ticket);
         if (!user.isMfaEnabled()) {
             throw new BusinessException("MFA_NOT_ENABLED", "该账号未开启二次验证");
@@ -236,7 +236,7 @@ public class MfaService {
             throw new BusinessException("MFA_EMAIL_FALLBACK_DISABLED",
                 "本服务未开放邮箱验证码兜底，请使用认证器动态码");
         }
-        verificationCodeService.sendSecondFactorCode(user.getEmail(), clientIp);
+        verificationCodeService.sendSecondFactorCode(user.getEmail(), clientIp, locale);
     }
 
     /**

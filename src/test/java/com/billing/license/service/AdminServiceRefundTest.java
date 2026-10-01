@@ -45,6 +45,7 @@ class AdminServiceRefundTest {
     private CustomerIdentityService customerIdentityService;
     private UserRepository userRepository;
     private LicenseService licenseService;
+    private com.billing.license.repository.CheckoutSessionRepository checkoutSessionRepository;
 
     private AdminService adminService;
 
@@ -62,10 +63,11 @@ class AdminServiceRefundTest {
         // D6：退款吊销须写 license_events，事件走 LicenseService#recordLicenseEvent。此处用 mock，
         // 既避免拉入 LicenseService 的真实依赖，也便于对「退款是否留痕」单独断言。
         licenseService = mock(LicenseService.class);
+        checkoutSessionRepository = mock(com.billing.license.repository.CheckoutSessionRepository.class);
         adminService = new AdminService(
                 orderRepository, orderService, licenseRepository,
                 paymentServiceFactory, paymentService, emailNotificationService, paymentRepository,
-                customerIdentityService, userRepository, licenseService);
+                customerIdentityService, userRepository, licenseService, checkoutSessionRepository);
         // self 为 @Lazy 自注入代理，脱离 Spring 容器时为 null，直调 self.persistRefundFailed 会 NPE。
         // 单测无事务，将 self 指向自身即可让 persistRefundFailed 正常执行（等价直调）。
         ReflectionTestUtils.setField(adminService, "self", adminService);
@@ -150,7 +152,7 @@ class AdminServiceRefundTest {
         verify(licenseService).recordLicenseEvent(eq(license), eq(LicenseEvent.EventType.REVOKED),
                 any(), contains("ORD-REF-1"));
         // 退款通知已发送（M5 专用文案）
-        verify(emailNotificationService).sendRefundProcessedEmail(eq("buyer@example.com"), eq("ORD-REF-1"), anyString());
+        verify(emailNotificationService).sendRefundProcessedEmail(eq("buyer@example.com"), eq("ORD-REF-1"), anyString(), isNull());
     }
 
     @Test

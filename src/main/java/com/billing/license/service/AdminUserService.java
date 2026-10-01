@@ -188,7 +188,8 @@ public class AdminUserService {
         // 只记谁对谁做了什么：新密码不落日志
         log.info("管理端重置用户密码：operator={}, target={}", operatorId, targetUserId);
         // P1 安全提醒（旁路，@Async）：告知本人密码已被管理员重置（正文不含密码）；失败不回滚重置
-        emailNotificationService.sendPasswordChangedEmail(target.getEmail(), "ADMIN_RESET");
+        // F7：管理员代重置——无买家 locale 上下文，按回落 en
+        emailNotificationService.sendPasswordChangedEmail(target.getEmail(), "ADMIN_RESET", null);
     }
 
     // ==================== 用户详情（P1） ====================

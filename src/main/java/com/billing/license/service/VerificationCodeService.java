@@ -67,11 +67,11 @@ public class VerificationCodeService {
      * @param clientIp 客户端 IP（用于 IP 维度限流）
      */
     @Transactional
-    public void send(String rawEmail, VerificationCode.CodePurpose purpose, String clientIp) {
+    public void send(String rawEmail, VerificationCode.CodePurpose purpose, String clientIp, String locale) {
         if (!PUBLIC_PURPOSES.contains(purpose)) {
             throw new BusinessException("PURPOSE_NOT_ALLOWED", "该验证码用途不接受直接请求");
         }
-        doSend(rawEmail, purpose, clientIp);
+        doSend(rawEmail, purpose, clientIp, locale);
     }
 
     /**
@@ -81,8 +81,8 @@ public class VerificationCodeService {
      * {@link #PUBLIC_PURPOSES} 限制。
      */
     @Transactional
-    public void sendSecondFactorCode(String rawEmail, String clientIp) {
-        doSend(rawEmail, VerificationCode.CodePurpose.LOGIN_MFA, clientIp);
+    public void sendSecondFactorCode(String rawEmail, String clientIp, String locale) {
+        doSend(rawEmail, VerificationCode.CodePurpose.LOGIN_MFA, clientIp, locale);
     }
 
     /**
@@ -154,7 +154,7 @@ public class VerificationCodeService {
     }
 
     /** 签发并投递的主体：限流 → 作废旧码 → 落库 → 投递。两个公开入口共用。 */
-    private void doSend(String rawEmail, VerificationCode.CodePurpose purpose, String clientIp) {
+    private void doSend(String rawEmail, VerificationCode.CodePurpose purpose, String clientIp, String locale) {
         String email = normalize(rawEmail);
         checkSendRateLimit(email, clientIp);
 
@@ -172,7 +172,7 @@ public class VerificationCodeService {
             .attemptCount(0)
             .build());
 
-        deliver(email, code, purpose);
+        deliver(email, code, purpose, locale);
     }
 
     /**
@@ -196,14 +196,14 @@ public class VerificationCodeService {
     /**
      * 投递验证码：联调模式只写日志（SMTP 未配置时不被阻塞），否则发邮件。
      */
-    private void deliver(String email, String code, VerificationCode.CodePurpose purpose) {
+    private void deliver(String email, String code, VerificationCode.CodePurpose purpose, String locale) {
         if (properties.isCodeLogOnly()) {
             // 联调模式：明文入日志。生产务必关闭（account.code-log-only=false）并配置真实 SMTP。
             log.info("[code-log-only] 验证码已生成：email={}, purpose={}, code={}", email, purpose, code);
             return;
         }
         emailNotificationService.sendVerificationCodeEmail(email, code, purpose.name(),
-            properties.getCodeTtlMinutes());
+            properties.getCodeTtlMinutes(), locale);
     }
 
     /** 生成定长数字验证码（SecureRandom，与兑换码生成同源思路） */

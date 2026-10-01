@@ -133,7 +133,7 @@ class AccountServiceTest {
         when(passwordEncoder.matches("wrong", "BCRYPT_HASH")).thenReturn(false);
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.login(EMAIL, "wrong", "1.2.3.4"));
+            () -> service.login(EMAIL, "wrong", "1.2.3.4", null));
 
         assertEquals("INVALID_CREDENTIALS", ex.getErrorCode(), "不得区分「邮箱不存在」与「密码错误」");
         assertEquals(1, user.getFailedLoginCount());
@@ -144,7 +144,7 @@ class AccountServiceTest {
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.empty());
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.login(EMAIL, PASSWORD, "1.2.3.4"));
+            () -> service.login(EMAIL, PASSWORD, "1.2.3.4", null));
 
         assertEquals("INVALID_CREDENTIALS", ex.getErrorCode(), "邮箱不存在也须返回统一文案");
         verify(rateLimitService).countOnly(anyString(), anyString(), anyInt(), anyInt());
@@ -157,22 +157,22 @@ class AccountServiceTest {
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
         when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
 
-        assertThrows(BusinessException.class, () -> service.login(EMAIL, "wrong", "1.2.3.4"));
+        assertThrows(BusinessException.class, () -> service.login(EMAIL, "wrong", "1.2.3.4", null));
         assertNotNull(user.getLockedUntil(), "达到阈值须锁定账号");
         // SEC-5：锁定触发时向被锁账号邮箱发旁路提醒，锁定分钟数随文案下发
         verify(emailNotificationService).sendAccountLockedEmail(
-            EMAIL, properties.getRisk().getLoginAccountLockMinutes());
+            EMAIL, properties.getRisk().getLoginAccountLockMinutes(), null);
 
         User locked = activeUser();
         locked.setLockedUntil(LocalDateTime.now().plusMinutes(10));
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(locked));
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.login(EMAIL, "wrong", "1.2.3.4"));
+            () -> service.login(EMAIL, "wrong", "1.2.3.4", null));
         assertEquals("ACCOUNT_LOCKED", ex.getErrorCode());
         // 已锁定账号的后续尝试在认证链即被拦（LockedException），不再进入 recordLoginFailure，
         // 故锁定提醒每次锁定事件只发一封——此处累计仍为 1 次。
-        verify(emailNotificationService, times(1)).sendAccountLockedEmail(anyString(), anyInt());
+        verify(emailNotificationService, times(1)).sendAccountLockedEmail(anyString(), anyInt(), any());
     }
 
     /**
@@ -187,9 +187,9 @@ class AccountServiceTest {
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
         when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
         org.mockito.Mockito.doThrow(new RuntimeException("SMTP down"))
-            .when(emailNotificationService).sendAccountLockedEmail(anyString(), anyInt());
+            .when(emailNotificationService).sendAccountLockedEmail(anyString(), anyInt(), any());
 
-        assertThrows(BusinessException.class, () -> service.login(EMAIL, "wrong", "1.2.3.4"));
+        assertThrows(BusinessException.class, () -> service.login(EMAIL, "wrong", "1.2.3.4", null));
         assertNotNull(user.getLockedUntil(), "邮件发送失败也必须照常锁定账号");
     }
 
@@ -202,7 +202,7 @@ class AccountServiceTest {
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
         when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(true);
 
-        AuthResponse resp = service.login(EMAIL, PASSWORD, "1.2.3.4");
+        AuthResponse resp = service.login(EMAIL, PASSWORD, "1.2.3.4", null);
 
         assertEquals(0, user.getFailedLoginCount());
         assertNull(user.getLockedUntil());
@@ -222,7 +222,7 @@ class AccountServiceTest {
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(admin));
         when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(true);
 
-        service.login(EMAIL, PASSWORD, "1.2.3.4");
+        service.login(EMAIL, PASSWORD, "1.2.3.4", null);
 
         verify(jwtTokenService).issue(eq(admin.getId()), anyInt(), eq(true));
         verify(jwtTokenService).expiresInSeconds(true);
@@ -235,7 +235,7 @@ class AccountServiceTest {
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
         when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(true);
 
-        service.login(EMAIL, PASSWORD, "1.2.3.4");
+        service.login(EMAIL, PASSWORD, "1.2.3.4", null);
 
         verify(jwtTokenService).issue(eq(user.getId()), anyInt(), eq(false));
         verify(jwtTokenService).expiresInSeconds(false);
@@ -248,7 +248,7 @@ class AccountServiceTest {
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.login(EMAIL, PASSWORD, "1.2.3.4"));
+            () -> service.login(EMAIL, PASSWORD, "1.2.3.4", null));
         assertEquals("ACCOUNT_DISABLED", ex.getErrorCode());
     }
 
@@ -269,7 +269,7 @@ class AccountServiceTest {
         when(passwordEncoder.matches("wrong", "BCRYPT_HASH")).thenReturn(false);
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.changePassword(user.getId(), "wrong", "NewPassw0rd2026"));
+            () -> service.changePassword(user.getId(), "wrong", "NewPassw0rd2026", null));
         assertEquals("OLD_PASSWORD_MISMATCH", ex.getErrorCode());
     }
 
@@ -280,7 +280,7 @@ class AccountServiceTest {
         when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(true);
         when(passwordEncoder.matches("NewPassw0rd2026", "BCRYPT_HASH")).thenReturn(false);
 
-        service.changePassword(user.getId(), PASSWORD, "NewPassw0rd2026");
+        service.changePassword(user.getId(), PASSWORD, "NewPassw0rd2026", null);
 
         assertEquals("BCRYPT_HASH", user.getPasswordHash());
         assertEquals(1, user.getTokenVersion(), "改密后须强制重新登录");
@@ -298,7 +298,7 @@ class AccountServiceTest {
         when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(true);
         when(passwordEncoder.matches("NewPassw0rd2026", "BCRYPT_HASH")).thenReturn(false);
 
-        service.changePassword(user.getId(), PASSWORD, "NewPassw0rd2026");
+        service.changePassword(user.getId(), PASSWORD, "NewPassw0rd2026", null);
 
         assertFalse(user.isMustChangePassword(), "改密后须清除强制改密标记");
     }
@@ -312,7 +312,7 @@ class AccountServiceTest {
         when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
         when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(false);
 
-        service.resetPassword(EMAIL, "123456", PASSWORD, "1.2.3.4");
+        service.resetPassword(EMAIL, "123456", PASSWORD, "1.2.3.4", null);
 
         assertFalse(user.isMustChangePassword(), "自助找回后须清除强制改密标记");
     }
@@ -328,9 +328,9 @@ class AccountServiceTest {
         when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(true);
         when(passwordEncoder.matches("NewPassw0rd2026", "BCRYPT_HASH")).thenReturn(false);
 
-        service.changePassword(user.getId(), PASSWORD, "NewPassw0rd2026");
+        service.changePassword(user.getId(), PASSWORD, "NewPassw0rd2026", null);
 
-        verify(emailNotificationService).sendPasswordChangedEmail(EMAIL, "SELF_CHANGE");
+        verify(emailNotificationService).sendPasswordChangedEmail(EMAIL, "SELF_CHANGE", null);
     }
 
     @Test
@@ -340,9 +340,9 @@ class AccountServiceTest {
         when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
         when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(false);
 
-        service.resetPassword(EMAIL, "123456", PASSWORD, "1.2.3.4");
+        service.resetPassword(EMAIL, "123456", PASSWORD, "1.2.3.4", null);
 
-        verify(emailNotificationService).sendPasswordChangedEmail(EMAIL, "SELF_RESET");
+        verify(emailNotificationService).sendPasswordChangedEmail(EMAIL, "SELF_RESET", null);
     }
 
     /** 防枚举的静默路径不得发通知：那等于告诉攻击者「这个邮箱存在」。 */
@@ -350,9 +350,9 @@ class AccountServiceTest {
     void resetPassword_emailWithoutAccount_sendsNoNotification() {
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.empty());
 
-        assertDoesNotThrow(() -> service.resetPassword(EMAIL, "123456", PASSWORD, "1.2.3.4"));
+        assertDoesNotThrow(() -> service.resetPassword(EMAIL, "123456", PASSWORD, "1.2.3.4", null));
 
-        verify(emailNotificationService, never()).sendPasswordChangedEmail(anyString(), anyString());
+        verify(emailNotificationService, never()).sendPasswordChangedEmail(anyString(), anyString(), any());
     }
 
     @Test
@@ -377,7 +377,7 @@ class AccountServiceTest {
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.empty());
 
         // 不抛任何异常（防枚举：与"密码已重置"同响应）
-        assertDoesNotThrow(() -> service.resetPassword(EMAIL, "123456", PASSWORD, "1.2.3.4"));
+        assertDoesNotThrow(() -> service.resetPassword(EMAIL, "123456", PASSWORD, "1.2.3.4", null));
 
         // 验证码仍被消费（上一步），但绝不落库任何用户变更
         verify(userRepository, never()).save(any(User.class));
@@ -391,7 +391,7 @@ class AccountServiceTest {
         when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
         when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(false);
 
-        service.resetPassword(EMAIL, "123456", PASSWORD, "1.2.3.4");
+        service.resetPassword(EMAIL, "123456", PASSWORD, "1.2.3.4", null);
 
         assertEquals("BCRYPT_HASH", user.getPasswordHash());
         assertEquals(1, user.getTokenVersion(), "重置密码须使该用户所有旧令牌失效");
@@ -410,7 +410,7 @@ class AccountServiceTest {
         when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(true);
         when(mfaTicketService.issue(any(UUID.class), anyInt())).thenReturn("mfa-ticket");
 
-        AuthResponse resp = service.login(EMAIL, PASSWORD, "1.2.3.4");
+        AuthResponse resp = service.login(EMAIL, PASSWORD, "1.2.3.4", null);
 
         assertTrue(resp.isMfaRequired(), "启用 MFA 的账号须返回「需第二因子」");
         assertEquals("mfa-ticket", resp.getMfaTicket());
@@ -426,7 +426,7 @@ class AccountServiceTest {
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
         when(passwordEncoder.matches(PASSWORD, "BCRYPT_HASH")).thenReturn(true);
 
-        AuthResponse resp = service.login(EMAIL, PASSWORD, "1.2.3.4");
+        AuthResponse resp = service.login(EMAIL, PASSWORD, "1.2.3.4", null);
 
         assertFalse(resp.isMfaRequired(), "未启用 MFA 的账号行为必须与改造前完全一致");
         assertEquals("jwt-token", resp.getAccessToken());
@@ -443,7 +443,7 @@ class AccountServiceTest {
         when(mfaTicketService.issue(any(UUID.class), anyInt())).thenReturn("mfa-ticket");
         properties.getMfa().setEmailFallbackEnabled(false);
 
-        AuthResponse resp = service.login(EMAIL, PASSWORD, "1.2.3.4");
+        AuthResponse resp = service.login(EMAIL, PASSWORD, "1.2.3.4", null);
 
         assertEquals(List.of("TOTP"), resp.getMfaMethods(),
             "邮箱兜底关闭时不得下发 EMAIL，避免客户端引导用户走服务端不接受的路径");

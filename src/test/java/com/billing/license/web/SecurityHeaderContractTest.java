@@ -40,7 +40,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * </ol>
  *
  * <p>⚠️ 本用例只证「头存在且哈希自洽」，<b>不</b>证「浏览器真机渲染不受影响」——那需要真人打开
- * 三页跑登录/支付回调/License 校验（见 plan-7.0 登记表 SEC-1 验收项）。
+ * 三页跑登录/支付回调/License 校验（真机走查项见 `docs/上线准备工作.md` §七 E 段）。
  */
 @SpringBootTest
 @ActiveProfiles("test")

@@ -26,7 +26,7 @@ public interface LicenseRepository extends JpaRepository<License, UUID> {
     // plan-1.0 / S1：支付后按机器码领取「待激活」件——绑定在本机列上、从未成功校验、仍在有效期内。
     // 状态作参数传入而非 JPQL 里写枚举全限定名：避免依赖特定 Hibernate 版本的字面量解析行为。
     @Query("select l from License l where l.status = :status and l.machineCode = :machineCode "
-        + "and l.lastVerifiedAt is null and l.issuedAt > :issuedAfter "
+        + "and l.signedToken is not null and l.lastVerifiedAt is null and l.issuedAt > :issuedAfter "
         + "and (l.expiresAt is null or l.expiresAt > :now)")
     List<License> findClaimableByBoundMachine(@Param("status") License.LicenseStatus status,
                                               @Param("machineCode") String machineCode,

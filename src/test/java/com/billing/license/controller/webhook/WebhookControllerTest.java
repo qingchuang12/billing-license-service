@@ -162,14 +162,14 @@ class WebhookControllerTest {
         assertEquals("Success", resp.getBody());
         // 已绑定机器码 → 签发 License
         verify(licenseService).issueLicense("ORD-1", "M1");
-        verify(emailService).sendPaymentSuccessEmail(eq("u@e.com"), anyString(), anyString(), anyDouble(), any());
+        verify(emailService).sendPaymentSuccessEmail(eq("u@e.com"), anyString(), anyString(), anyDouble(), any(), any());
         // S3（plan-1.0）：直签分支必须**补发凭证邮件**，否则用户手上没有任何 License Key（换机/重装无从下手）
-        verify(emailService).sendLicenseIssuedEmail(eq("u@e.com"), eq("LIC-WEBHOOK-1"), anyString(), anyString());
+        verify(emailService).sendLicenseIssuedEmail(eq("u@e.com"), eq("LIC-WEBHOOK-1"), anyString(), anyString(), any());
         // 记录支付事件（已处理）
         verify(paymentEventRepository).saveAndFlush(argThat(e -> Boolean.TRUE.equals(e.getProcessed())));
     }
 
-    /** 直签产物桩件：licenseKey 必填（凭证邮件要用）；withExpiresAt=false 表示永久授权（邮件走「永久有效」） */
+    /** 直签产物桩件：licenseKey 必填（凭证邮件要用）；withExpiresAt=false 表示永久授权（发货侧传 null，模板出「永久有效」） */
     private com.billing.license.entity.License issuedLicense(String licenseKey, boolean withExpiresAt) {
         com.billing.license.entity.License license = com.billing.license.entity.License.builder()
             .licenseKey(licenseKey)
@@ -205,8 +205,8 @@ class WebhookControllerTest {
         assertEquals(200, resp.getStatusCode().value());
         // 尽管 Payment 未定位，仍按订单号发货签发 License（不被 500 中断）
         verify(licenseService).issueLicense("ORD-1", "M1");
-        // 永久授权（expiresAt=null）走「永久有效」文案，同样要发凭证邮件
-        verify(emailService).sendLicenseIssuedEmail(eq("u@e.com"), eq("LIC-WEBHOOK-2"), anyString(), eq("永久有效"));
+        // 永久授权（expiresAt=null）→ 发货侧传 expiryDate=null，由模板按 locale 出「永久有效 / No expiration」；同样要发凭证邮件
+        verify(emailService).sendLicenseIssuedEmail(eq("u@e.com"), eq("LIC-WEBHOOK-2"), anyString(), isNull(), any());
     }
 
     /**

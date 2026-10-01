@@ -351,6 +351,8 @@ public class WebhookController {
         String machineCode = order.getMachineCode();
         String productName = order.getTitle() != null ? order.getTitle() : "License";
         String email = order.getEmail();
+        // F7：发货邮件按买家收银台 locale 出中/英（回调请求头属渠道服务器，不能用作买家语言）
+        String locale = checkoutService.findLocaleByOrderNumber(orderId);
 
         if (machineCode != null && !machineCode.isEmpty()) {
             // 有机器码：直接签发绑定设备的 License
@@ -360,12 +362,13 @@ public class WebhookController {
                 emailNotificationService.sendPaymentSuccessEmail(
                     email, orderId, productName,
                     order.getTotalAmount() != null ? order.getTotalAmount().doubleValue() : 0.0,
-                    order.getCurrency());
+                    order.getCurrency(), locale);
                 // S3（plan-1.0）：直签分支此前**只**发支付成功通知，邮件里没有 License Key——
                 // 用户换机/重装时手上没有任何凭证（{@code sendLicenseIssuedEmail} 自定义起零调用点）。
                 // 与兑换码分支「支付成功 + 凭证」两封同发的形态对齐。
+                // F7：有效期文案改传 null，由模板按 locale 出「永久有效 / No expiration」，不再硬编码中文。
                 emailNotificationService.sendLicenseIssuedEmail(email, issued.getLicenseKey(), productName,
-                    issued.getExpiresAt() != null ? issued.getExpiresAt().toLocalDate().toString() : "永久有效");
+                    issued.getExpiresAt() != null ? issued.getExpiresAt().toLocalDate().toString() : null, locale);
             }
         } else {
             // 无机器码：生成兑换码
@@ -376,9 +379,9 @@ public class WebhookController {
                 emailNotificationService.sendPaymentSuccessEmail(
                     email, orderId, productName,
                     order.getTotalAmount() != null ? order.getTotalAmount().doubleValue() : 0.0,
-                    order.getCurrency());
+                    order.getCurrency(), locale);
                 emailNotificationService.sendRedeemCodeEmail(email, code, productName,
-                    order.getPaidAt() != null ? order.getPaidAt().toString() : "");
+                    order.getPaidAt() != null ? order.getPaidAt().toString() : "", locale);
             }
         }
 
