@@ -5,6 +5,7 @@
 
 ## TODOS（仅未完成）
 
+
 - [ ] **【需你决策】SEC-4 · 是否把「未开 MFA」提示式横幅升级为拦截式**：现状实测＝管理台检测 ADMIN 未开 MFA → `#mfaBanner` 引导绑定（`static/admin/index.html:121`，逻辑 `admin.js:896-898`，契约级 `AdminStaticPageContractTest`），`security/` 下**没有任何**按 MFA 状态拦截的过滤器（只有 `TraceIdFilter` / `JwtAuthFilter` / `MustChangePasswordFilter`）。
   - 选项①**保持提示式**：零新代码；代价＝管理员可长期不带第二因子。
   - 选项②**仿 `MustChangePasswordFilter` 做拦截式**：未开 MFA 的 ADMIN 仅放行 MFA 绑定 / 改密 / 登出；更安全，但**唯一管理员在 TOTP 不可用且邮箱兜底被关闭时会自锁**，须同时定死应急出口（运维手动跑 `scripts/db/reset-admin-mfa.sql`）。
