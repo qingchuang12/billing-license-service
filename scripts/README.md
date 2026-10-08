@@ -21,21 +21,21 @@
 （`application.yml` 中 `spring.flyway.enabled=true`，`locations=classpath:db/migration`）。
 **无需手动执行 SQL**；重新部署即自动增量迁移。
 
-### 迁移清单（V1–V8，禁止合并、禁止首次部署后修改）
+### 迁移清单（V1–V11，禁止合并、禁止首次部署后修改）
 
 | 版本 | 主题 | 关键内容 |
 |---|---|---|
-| V1 | 全量基线 | 14 张核心表：`products` / `orders` / `order_items` / `licenses` / `redeem_codes` / `payment_transactions` / `payments` / `checkout_sessions` / `license_events` / `payment_events` / `audit_logs` / `users` / `verification_codes` / `machine_first_seen`；历史增量序列（档位 / 订阅 / 双币种 / 账号 / 审计等，原 V2–V11）已按注释分段并入本文件 |
+| V1 | 全量基线 | 15 张核心表：`products` / `orders` / `order_items` / `licenses` / `redeem_codes` / `payment_transactions` / `payments` / `checkout_sessions` / `license_events` / `payment_events` / `subscriptions` / `audit_logs` / `users` / `verification_codes` / `machine_first_seen`；历史增量序列（档位 / 订阅 / 双币种 / 账号 / 审计等，原 V2–V11）已按注释分段并入本文件 |
 | V2 | 产品文案双语化（K16 延伸） | `products.name_en` / `description_en` |
 | V3 | 产品权益键改名 | `feature.api_access` → `cloud_sync` |
 | V4 | 账务统计索引 | `orders` / `payments` 的 `created_at` 时间范围查询索引 |
-| V5 | 统一登录用户角色（plan-6.0 / A1） | `users.role`（管理员判定） |
-| V6 | 管理员 MFA（plan-7.0 / B8） | `users` 增二次因子四列（详见 `V6__users_mfa.sql`） |
-| V7 | 机器「已转正」标记（plan-7.0 / D3，B7 = B） | `machine_first_seen.converted_at`（NULL = 未转正；首次置位后不回收） |
-| V8 | 强制改密标记（plan-7.0 账户基础功能 / Q3） | `users.must_change_password`（管理员代重置置 true，用户自助改密 / 找回后清除） |
-| V9 | 机器码索引（plan-1.0 / S1） | `licenses.machine_code` / `orders.machine_code` 查询索引；`license_events.event_type` 注释补 `BOUND_BY_REPORT` / `PENDING_QUERIED` |
-| V10 | 产品维度（plan-1.0 / D2） | `products.product_code`（收银台按产品码过滤目录，现有商品回填 `ai-tools`） |
-| V11 | 机器码唯一真相回填（plan-1.0 / E4 审计丙） | **数据回填、不动 schema**：把「机器码只落在 `orders.machine_code`」的历史签发件抄平到 `licenses.machine_code`，并改写该列注释为唯一真相口径。配套退役了 `License#getMachineCode()` 的订单回落 |
+| V5 | 统一登录用户角色（A1） | `users.role`（管理员判定） |
+| V6 | 管理员 MFA（B8） | `users` 增二次因子四列（详见 `V6__users_mfa.sql`） |
+| V7 | 机器「已转正」标记（D3，B7 = B） | `machine_first_seen.converted_at`（NULL = 未转正；首次置位后不回收） |
+| V8 | 强制改密标记（Q3） | `users.must_change_password`（管理员代重置置 true，用户自助改密 / 找回后清除） |
+| V9 | 机器码索引（S1） | `licenses.machine_code` / `orders.machine_code` 查询索引；`license_events.event_type` 注释补 `BOUND_BY_REPORT` / `PENDING_QUERIED` |
+| V10 | 产品维度（D2） | `products.product_code`（收银台按产品码过滤目录，现有商品回填 `ai-tools`） |
+| V11 | 机器码唯一真相回填（E4 审计丙） | **数据回填、不动 schema**：把「机器码只落在 `orders.machine_code`」的历史签发件抄平到 `licenses.machine_code`，并改写该列注释为唯一真相口径。配套退役了 `License#getMachineCode()` 的订单回落 |
 
 > ⚠️ **迁移文件一经首次部署即被 Flyway 校验和锁定**：之后不得再编辑内容（变更请新建版本号，下一个可用 **V12**）。
 > 上线前如需补充头注释可直接修改；上线后修改会导致启动失败。
@@ -61,7 +61,7 @@
 export DB_URL=jdbc:postgresql://127.0.0.1:5432/license
 export DB_USERNAME=license
 export DB_PASSWORD='<强口令>'
-export APP_BASE_URL='http://localhost:8000'   # K10 起无默认值，缺失即拒启
+export APP_BASE_URL='http://localhost:8000'   # yml 默认就是该值；**生产必须显式填公网 HTTPS**（见 docs/上线准备工作.md §2.2）
 # 各支付渠道密钥见 .env.example（ALIPAY_*/WECHAT_*/STRIPE_* 等）
 ./scripts/deploy/run.sh
 ```
@@ -122,7 +122,7 @@ docker compose logs -f app
 | `ACCOUNT_JWT_SECRET` / `ACCOUNT_CODE_PEPPER` | 用户令牌签名密钥（≥32B）/ 验证码哈希 pepper（生产必配）；管理端鉴权复用同一账号体系（管理员 JWT） |
 | `ACCOUNT_MFA_KEY` | 二次因子主密钥（≥32B，**无默认值，缺失即拒启**）：派生半认证票据签名密钥与 TOTP 密钥加密密钥（B8）。轮换前须先跑 `db/reset-admin-mfa.sql` |
 | `MAIL_PASSWORD` | SMTP 口令（无默认值）；`MAIL_HOST` / `MAIL_PORT` / `MAIL_USERNAME` 有默认值 |
-| `APP_BASE_URL` | 对外基址，用于拼接各渠道回调/回跳地址（**无默认值，缺失即拒启**） |
+| `APP_BASE_URL` | 对外基址，用于拼接各渠道回调/回跳地址（⚠️ yml 默认 `http://localhost:8000`，**不拒启** → 生产必须显式填公网 HTTPS） |
 | `PAYMENT_ENABLED_CHANNELS` | 启用的支付渠道（逗号分隔；留空=按各渠道配置齐全度自动启用） |
 | `SPRING_PROFILES_ACTIVE` | `docker`（默认，schema 护栏）/ `prod`（关 Swagger、强制真发邮件）/ `prod,docker` |
 | `BILLING_TRUST_XFF` | 置于可信反代之后时置 `true`，否则限流会把所有用户当成同一 IP |

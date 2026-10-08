@@ -117,16 +117,16 @@ billing:
 payment:
   # 启用的支付渠道（逗号分隔，大小写不敏感，空格会被忽略）
   # 例：PAYMENT_ENABLED_CHANNELS=stripe,alipay
-  # 默认留空 = 自动判定：关键配置齐全的渠道自动启用，缺配置的自动禁用（本地未配任何渠道也能启动，便于联调/查看文档）
+  # 留空 = 自动判定：关键配置齐全的渠道自动启用，缺配置的自动禁用（本地未配任何渠道也能启动，便于联调/查看文档）
   # 显式配置时以本项为准；渠道名写错会直接启动失败（fail-fast），避免渠道莫名不可用
   # 启动日志会打印各渠道自检报告，也可调 GET /api/admin/payment-channels 在线查询
   # （可选值：alipay / wechat_pay / stripe / paddle / paypal）
-  # K10（2026-09-18）：默认由 ALIPAY 改为**留空**——原默认值会让「未配任何渠道」的环境
-  # 直接启用沙箱支付宝；留空即走自动判定，生产必须显式声明（APP_BASE_URL 与渠道密钥到位后再填）。
-  enabled-channels: ${PAYMENT_ENABLED_CHANNELS:alipay}
+  # 仓库内不得留默认渠道：一旦留值，未配任何渠道的环境就会静默启用该渠道（沙箱支付宝）；
+  # 生产与本地联调均须显式声明（.env 或环境变量），留空即走自动判定。
+  enabled-channels: ${PAYMENT_ENABLED_CHANNELS:}
 
   # 支付宝（国内）
-  # K10：以下沙箱密钥（AppID / 应用私钥 / 支付宝公钥 / 网关地址）已从仓库移出，改为**无默认值**；
+  # 仓库内不留任何沙箱凭据：AppID / 应用私钥 / 支付宝公钥一律无默认值，由 .env 或环境变量注入（缺失即该渠道不可用）；
   # 本地联调值放项目根 .env，生产用真实开放平台应用值（网关 https://openapi.alipay.com/gateway.do）。
   alipay:
     # 开放平台应用 ID（AppID）
@@ -137,7 +137,7 @@ payment:
     # 必须是「支付宝公钥」纯 RSA 公钥：base64 以 MIIBIjANBgkq 开头、单行、无换行与空格。
     # 切勿填 X.509 公钥证书（以 MIID 开头）——本工程走 AlipaySignature.rsaCheckV1（纯公钥模式），
     # 传证书会直接抛 InvalidKeyException: Unable to decode key content，下单与回调验签全链路失败。
-    # 由 .env 的 ALIPAY_PUBLIC_KEY 注入（K10：无默认值，缺失即该渠道不可用）。
+    # 由 .env 的 ALIPAY_PUBLIC_KEY 注入（无仓库默认值，缺失即该渠道不可用）。
     public-key: ${ALIPAY_PUBLIC_KEY:}
     # 加签模式：PUBLIC_KEY（普通公钥）/ CERT（公钥证书）。
     # 留空 = 自动判定：下面三份证书路径齐全即走证书模式，否则走公钥模式。
@@ -155,8 +155,11 @@ payment:
     # 网页支付完成后的回跳地址
     return-url: ${ALIPAY_RETURN_URL:${app.base-url}/payment/return}
     # 网关地址：生产 https://openapi.alipay.com/gateway.do；沙箱 https://openapi-sandbox.dl.alipaydev.com/gateway.do
-    # K10：无默认值 —— 留默认沙箱地址会让生产部署静默打到沙箱（「收钱不发货」的高危配置）
-    gateway-url: ${ALIPAY_GATEWAY_URL:https://openapi-sandbox.dl.alipaydev.com/gateway.do}
+    # 默认值即**生产网关**（与 `AlipayStrategy.java:65` 的 `@Value` 默认一致）：仓库内不留沙箱地址，
+    # 否则生产漏配会静默打到沙箱（「收钱不发货」的高危配置）；沙箱联调必须显式配 ALIPAY_GATEWAY_URL。
+    # 也不给空默认：支付宝客户端在下单时才构建（`AlipayStrategy.java:175 getAlipayClient`），
+    # 空串会把故障推迟到第一笔下单并表现为 PAYMENT_CREATE_FAILED，不如默认生产网关让漏配尽早暴露。
+    gateway-url: ${ALIPAY_GATEWAY_URL:https://openapi.alipay.com/gateway.do}
     # 签名类型：RSA2（SHA256withRSA），与支付宝后台保持一致
     sign-type: ${ALIPAY_SIGN_TYPE:RSA2}
 

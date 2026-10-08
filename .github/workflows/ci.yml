@@ -24,6 +24,6 @@ jobs:
 
       # 单测走 src/test/resources/application-test.yml（H2 + Flyway 关闭），
       # 因此不需要 DB / 渠道密钥 / SMTP 凭据等外部资源。
-      # 基线：186 用例全绿（2026-09-18）。
+      # 基线：592 用例全绿（2026-10-16 本机实跑 `mvn -o test`）。
       - name: mvn test
         run: mvn -B -ntp test

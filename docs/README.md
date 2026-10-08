@@ -1,6 +1,6 @@
 # Billing & License Service
 
-统一的计费与许可证管理服务，基于 **Java 21 + Spring Boot 4.0.6**（JPA/Hibernate + PostgreSQL + Flyway + 5 家支付渠道 + KMS）构建，为桌面端 exe 工具提供 license 签发、兑换、换机与计费/退款后端。
+统一的计费与许可证管理服务，基于 **Java 21 + Spring Boot 4.1.1**（JPA/Hibernate + PostgreSQL + Flyway + 5 家支付渠道 + KMS）构建，为桌面端 exe 工具提供 license 签发、兑换、换机与计费/退款/账务查看后端。
 
 > **上线执行手册见 [`上线准备工作.md`](./上线准备工作.md)**（阻断项清单 / 密钥生成实测命令 / 渠道设置 / 上线当天清单）。
 > 已知风险与待实测项见 [`上线准备工作.md`](./上线准备工作.md) §九「风险登记」与 §七 验收清单（含 B7 渠道部分退款、B8 Paddle 续费 payload、E 段管理台实机走查）；授权域「明确不做」与红线定案见 [`授权设计方案.md`](./授权设计方案.md) §十八，管理台 / MFA / 退款范围边界见 [`架构与业务流程设计.md`](./架构与业务流程设计.md) 末节「附：范围边界定案」。活动 plan [`plan-7.0.md`](./plan-7.0.md) **只承载未完成项**（上线闸门 T1–T4 均需外部资源）。
@@ -80,9 +80,9 @@ cp .env.example .env
 #   编辑 .env：设置 DB_PASSWORD 与账号令牌签名密钥 ACCOUNT_JWT_SECRET
 
 # 2. 准备签名密钥（挂载到 ./keys，容器只读读取；KMS=local 时必须）
+#    默认算法 Ed25519，加载器只收「裸 32 字节」或 DER，**不收 PEM**（`-----BEGIN…` 会加载失败）；
+#    生成命令与两条自检见 docs/上线准备工作.md §1.2（全局唯一权威源，已在本机实测）。
 mkdir -p keys
-openssl genrsa -out keys/private.key 2048
-openssl rsa -in keys/private.key -pubout -out keys/public.key
 
 # 3. 构建并启动
 ./scripts/deploy/build.sh
@@ -101,17 +101,17 @@ docker compose logs -f app
 > **路径约定（D1，2026-09-14）**：端点前缀统一为 `/api/**`，**不再使用 `/api/v1`**。
 
 > **鉴权为四档（v2.10 增设用户档；B8 增设半认证档；X-API-Key 特权档已于 A12 / 2026-09-23 移除，统一为管理员 JWT）**：
-> 1. **公开**：`/api/checkout/**`、`/api/redeem/redeem`、`/api/licenses/verify/**`、`POST /api/licenses/activate`、`/api/webhooks/**`、`/v3/api-docs`，以及账号的 `POST /api/account/verification-code`、`register`、`login`、`password/reset`；
+> 1. **公开**：`/api/checkout/**`、`GET /api/products`、`/api/redeem/redeem`、`/api/licenses/verify/**`、`GET /api/licenses/pending`、`POST /api/licenses/activate`、`POST /api/licenses/report-binding`、`GET /api/licenses/machine/**`（机器首次出现查询）、`/api/webhooks/**`、`/v3/api-docs`，以及账号的 `POST /api/account/verification-code`、`register`、`login`、`password/reset`；三个静态页（`/checkout/**`、`/account/**`、`/admin/**`）的 GET 也放行（后端同源托管，接口仍按上述档位鉴权）；
 > 2. **半认证（B8 新增）**：`POST /api/account/mfa/challenge`、`POST /api/account/mfa/verify`——框架层同为 `permitAll`，但**方法内强制校验一次性登录票据**（独立密钥签名 + `tokenVersion` 比对 + 300 秒有效期）。之所以不能要求 `ROLE_USER`：调用者此时尚未持有访问令牌，要求令牌会形成死锁（与登录端点同坑，故 `SecurityConfig` 中这两条也须声明在 `/api/account/**` 之前）；
 > 3. **用户（v2.10 新增）**：`Authorization: Bearer <JWT>` → `ROLE_USER`，适用于 `POST /api/account/logout`、`GET /api/account/me`、`POST /api/account/password/change`，以及「我的资产」五端点（`/api/account/licenses|subscriptions|orders`、`POST /api/account/orders/{orderNumber}/refund`、`POST /api/account/licenses/{licenseKey}/unbind`）。管理员兼授 `ROLE_USER`（B1），故同样可用；
-> 4. **管理（A12 起替代原 X-API-Key 特权档；B8 增设二次因子绑定入口）**：`/api/admin/**` 全部管理动作携带 `Authorization: Bearer <JWT>`，且持有账号的 `role=ADMIN`（即 `ROLE_ADMIN`）。管理员与普通用户共用同一套账号体系与登录端点 `POST /api/account/login`，登录后 `JwtAuthFilter` 按 `users.role` 动态注入角色——**无独立 API Key、无独立密钥配置**。二次因子的绑定入口（`/api/admin/mfa/**` 四个端点）挂在 `admin` 前缀下，由框架统一保证 `ROLE_ADMIN`，普通用户不开放。
+> 4. **管理（A12 起替代原 X-API-Key 特权档；B8 增设二次因子绑定入口）**：`/api/admin/**` 全部管理动作携带 `Authorization: Bearer <JWT>`，且持有账号的 `role=ADMIN`（即 `ROLE_ADMIN`）。管理员与普通用户共用同一套账号体系与登录端点 `POST /api/account/login`，登录后 `JwtAuthFilter` 按 `users.role` 动态注入角色——**无独立 API Key、无独立密钥配置**。二次因子的绑定入口（`/api/admin/mfa/**` 四个端点）挂在 `admin` 前缀下，由框架统一保证 `ROLE_ADMIN`，普通用户不开放；平台账务（`/api/admin/accounting/**`）同为管理员 JWT。
 >
 > 历史注记：`X-Admin-API-Key`（`AdminController` 自校验）与 `X-API-Key`（`ApiKeyAuthFilter` 机读通道）均已删除（A12）。公开端点依赖签名 License + 限流保护。
 > **权限域严格隔离**：用户令牌（`ROLE_USER`）不能访问 `/api/admin/**`；管理动作依赖「当前管理员用户」上下文，actor 取自 `SecurityContext` 的 `userId`（审计日志可追溯操作人）。
 
-### 端点总览（共 42 个：公开 16 + 半认证 2 + 管理端 16 + 账号需登录 8）
+### 端点总览（共 59 个：公开 19 + 半认证 2 + 用户令牌 8 + 管理端 30）
 
-> 该计数为历史口径，**未含**下表本次补登的 `GET /api/products` 与 `GET /api/licenses/pending`；全量端点数以代码为准（各 `@RestController` 的方法映射）。
+> 下表逐条列全。数字以代码为准（各 `@RestController` 的方法映射），新增端点时必须同步本表与 [`接口调用时序图.md`](./接口调用时序图.md) §1.6。
 
 | 分组 | 方法与路径 | 鉴权 |
 |---|---|---|
@@ -125,6 +125,7 @@ docker compose logs -f app
 | | `POST /api/licenses/report-binding` | 公开（客户端兑换/激活后**启动时自动上报机器码**完成补绑；凭 `signedToken` 验签，**无需登录**） |
 | 兑换码 | `POST /api/redeem/redeem` | 公开 |
 | 支付回调 | `POST /api/webhooks/{alipay \| wechat \| stripe \| paddle \| paypal}` | 公开（各渠道自行验签） |
+| 机器台账 | `GET /api/licenses/machine/{machineCode}/first-seen` | 公开只读（返回 `seen` / `firstSeenAt`，供客户端试用防重置：删档重装不能白嫖试用，C8） |
 | 订单 | `GET /api/admin/orders?status=&orderNumber=&orderId=` | 管理员 JWT |
 | | `POST /api/admin/orders/{orderNumber}/issue` | 管理员 JWT |
 | | `POST /api/admin/orders/{orderNumber}/refund` | 管理员 JWT |
@@ -136,11 +137,25 @@ docker compose logs -f app
 | 兑换码 | `POST /api/admin/redeem-codes/generate?productSku=&count=` | 管理员 JWT |
 | | `GET /api/admin/redeem-codes?productSku=&status=` | 管理员 JWT |
 | | `POST /api/admin/redeem-codes/revoke/{code}` | 管理员 JWT |
-| 运维 | `GET /api/admin/payment-channels` | 管理员 JWT |
+| 运维 | `GET /api/admin/payment-channels` | 管理员 JWT（各渠道启用与缺失配置项自查，不回显密钥） |
+| 用户管理 | `GET /api/admin/users?email=&role=&status=&page=&size=` | 管理员 JWT（列表，page 从 0 起、size 默认 20 上限 200） |
+| | `GET /api/admin/users/{userId}` | 管理员 JWT（详情：脱敏资料 + 名下许可证/订单计数；许可证明细复用 `GET /api/admin/licenses?customerEmail=`） |
+| | `PATCH /api/admin/users/{userId}/role` | 管理员 JWT（USER ↔ ADMIN；`tokenVersion+1` 即时失效；护栏：禁自操作、禁降级最后一个可登录管理员） |
+| | `PATCH /api/admin/users/{userId}/status` | 管理员 JWT（ACTIVE ↔ DISABLED；同上护栏） |
+| | `POST /api/admin/users/{userId}/password/reset` | 管理员 JWT（代重置：请求体只含 `newPassword`、响应无 body，并置 `must_change_password`） |
+| | `GET /api/admin/users/export?email=&role=&status=` | 管理员 JWT（按当前过滤条件导出 CSV，UTF-8 带 BOM、防公式注入、上限 10000 行） |
+| 平台账务 | `GET /api/admin/accounting/overview?from=&to=` | 管理员 JWT（GMV/实收/已退款/净收入/订单数/客单价，按币种分组不跨币种求和；默认最近 30 天，跨度 ≤366 天；口径与参数均由单测锁定） |
+| | `GET /api/admin/accounting/by-channel` | 管理员 JWT（渠道 × 币种汇总；provider 缺失的历史订单归「未知渠道」） |
+| | `GET /api/admin/accounting/by-product` | 管理员 JWT（产品 × 币种汇总；金额取自订单明细） |
+| | `GET /api/admin/accounting/transactions` | 管理员 JWT（支付流水：每条支付一行，支持 `channel`/`status`/`currency` 过滤 + 分页；管理端退款会写 `status=REFUNDED` 行） |
+| | `GET /api/admin/accounting/trend` | 管理员 JWT（`granularity=DAY\|MONTH`（默认 MONTH）分桶的收入趋势） |
+| | `GET /api/admin/accounting/discrepancies` | 管理员 JWT（订单与支付记录状态/金额不一致疑点：已支付无成功支付、金额不符、已退无支付、成功支付但未标已支付） |
 | 二次因子 | `GET /api/admin/mfa/status` | 管理员 JWT（绑定状态，不回显密钥） |
 | | `POST /api/admin/mfa/enroll` | 管理员 JWT（须当前密码，生成密钥） |
 | | `POST /api/admin/mfa/activate` | 管理员 JWT（认证器动态码激活） |
 | | `POST /api/admin/mfa/unbind` | 管理员 JWT（须密码 + 动态码/邮箱码） |
+| | `POST /api/admin/mfa/step-up/challenge` | 管理员 JWT（敏感动作二次确认：发邮箱兜底码） |
+| | `POST /api/admin/mfa/step-up/verify` | 管理员 JWT（换短时效（默认 120s，`account.mfa.step-up-ttl-seconds`）、单次使用、与动作绑定的 `X-Step-Up-Token`） |
 | 账号 | `POST /api/account/verification-code` | 公开 |
 | | `POST /api/account/register` | 公开 |
 | | `POST /api/account/login` | 公开 |
@@ -703,7 +718,7 @@ billing-license-service/
 │   ├── aspect/               # AOP 切面（AuditAspect：审计统一落库）
 │   ├── common/               # 通用组件（响应壳/常量等）
 │   ├── config/               # 配置类（SecurityConfig / OpenApiConfig / BillingProperties）
-│   ├── controller/           # REST 控制器（订单/许可证/兑换码/收银台/Webhook/管理端）
+│   ├── controller/           # REST 控制器（收银台/产品目录/许可证/机器台账/兑换码/账号与我的资产/二次因子/Webhook/管理端/平台账务）
 │   ├── security/             # 鉴权（JwtAuthFilter：JWT 解析 + 按 users.role 动态注入 ROLE_USER/ROLE_ADMIN）
 │   ├── service/
 │   │   ├── payment/          # 支付编排（PaymentService / PaymentServiceFactory）
@@ -724,10 +739,10 @@ billing-license-service/
 ├── src/main/resources/
 │   ├── application.yml       # 主配置（含 management/actuator、payment；KMS 为纯本地文件方案；鉴权无独立配置块，角色由 users.role 决定）
 │   ├── application-docker.yml
-│   └── db/migration/         # Flyway 迁移脚本 V1–V7
+│   └── db/migration/         # Flyway 迁移脚本 V1–V11（下一个可用版本号 V12；已入库文件受 checksum 保护，不得改内容）
 ├── src/test/                 # 单元测试 + 集成测试（含 @SpringBootTest 上下文闸门、OpenAPI 文档可用性）
 ├── scripts/{db,deploy,ops}/  # 运维脚本（package/run/healthcheck/show_migrations…）
-└── pom.xml                   # Maven 配置（Java 21 + Spring Boot 4.0.6）
+└── pom.xml                   # Maven 配置（Java 21 + Spring Boot 4.1.1）
 ```
 
 ## 配置说明
@@ -739,11 +754,16 @@ billing:
   signature-algorithm: ED25519
   private-key-path: /keys/private.key
   public-key-path: /keys/public.key
+  license-check-interval-hours: 360   # verify 响应 nextCheckAfterMs 的来源（360h = 15 天），改这里即可全量调整客户端复核节奏
+  pending-license-window-days: 7      # 支付后按机器码匿名领取待激活授权的窗口
   default-license-duration-days: 365
   trust-x-forwarded-for: false   # 默认不信 X-Forwarded-For，防限流伪造
 
 payment:
-  enabled-channels: ""          # 逗号分隔：alipay / wechat_pay / stripe / paddle / paypal；留空=按各渠道配置齐全度自动启用
+  enabled-channels: ""          # 逗号分隔：alipay / wechat_pay / stripe / paddle / paypal；仓库内不留默认渠道，留空=按各渠道配置齐全度自动启用
+  alipay:
+    # gateway-url 默认是**生产网关** https://openapi.alipay.com/gateway.do；走沙箱必须显式配 ALIPAY_GATEWAY_URL
+    # （仓库内不留沙箱默认值，避免生产漏配时静默打到沙箱 = 收钱不发货）
   stripe:
     api-key: ${STRIPE_API_KEY}
     webhook-secret: ${STRIPE_WEBHOOK_SECRET}
@@ -806,4 +826,4 @@ Payload 包含：
 mvn test
 ```
 
-当前共 **343 个测试，0 失败 0 错误**（2026-09-23 实跑 `mvn test` 复核：`Tests run: 343, Failures: 0, Errors: 0, Skipped: 0`，并已接入 CI：`.github/workflows/ci.yml`；覆盖 5 渠道策略与退款契约、收银台/订单状态机、兑换码、订阅生命周期、限流淘汰、审计切面、异常脱敏、管理员 MFA（TOTP / 票据 / 密钥加密）、凭证激活体系统一、客户端自动上报绑定、管理端 License 处置（解绑 / 失效重发 / 作废）、机器「已转正」标记（B7 / D3）、OpenAPI 文档可用性与响应壳一致性、ApplicationContext 加载与 `healthEndpoint` Bean 装配）。
+当前共 **592 个测试，0 失败 0 错误**（2026-10-16 实跑 `mvn -o test`：`Tests run: 592, Failures: 0, Errors: 0, Skipped: 0`，`BUILD SUCCESS`；并已接入 CI：`.github/workflows/ci.yml`；覆盖 5 渠道策略与退款契约、收银台/订单状态机、兑换码、订阅生命周期、限流淘汰、审计切面、异常脱敏、管理员 MFA（TOTP / 票据 / 密钥加密 / 二次确认）、凭证激活体系统一、客户端自动上报绑定、管理端 License 处置（解绑 / 失效重发 / 作废）、机器「已转正」标记与首次出现账本、管理端用户管理与代重置、强制改密拦截、**平台账务聚合口径与参数护栏**（不跨币种求和 / 退款归类 / 366 天跨度 / 枚举入参 / 分页封顶）、静态页契约与安全响应头、OpenAPI 文档可用性与响应壳一致性、ApplicationContext 加载与 `healthEndpoint` Bean 装配）。
