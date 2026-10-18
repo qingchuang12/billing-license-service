@@ -4,7 +4,6 @@ import com.billing.license.dto.accounting.AccountOverviewResponse;
 import com.billing.license.entity.Currency;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.service.AccountingService;
-import com.billing.license.service.AccountingServiceTest;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentStatus;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,7 +22,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
- * AccountingController 参数护栏测试（只读端点的入口校验，聚合口径由 {@link AccountingServiceTest} 锁）。
+ * AccountingController 参数护栏测试（只读端点的入口校验，聚合口径由同仓 `AccountingServiceTest` 锁）。
  *
  * <p>锁住四件事：① from/to 缺省补「最近 30 天」；② 时间区间与跨度的两条 400；
  * ③ 渠道 / 支付状态 / 币种三个枚举入参非法时报各自错误码（未知币种由 {@code Currency.fromCode} 兜住）；
