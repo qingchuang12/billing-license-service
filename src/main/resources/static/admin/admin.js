@@ -1537,13 +1537,13 @@
     licLastQuery = { byEmail: byEmail, term: term };
 
     var url = byEmail
-      ? '/api/admin/licenses?customerEmail=' + encodeURIComponent(term)
+      ? '/api/admin/licenses?customerEmail=' + encodeURIComponent(term) + '&size=200'
       : '/api/admin/licenses/' + encodeURIComponent(term);
 
     requestJson(url).then(function (data) {
-      // 单件查询返回对象、列表查询返回数组，此处统一收敛为数组
+      // 单件查询返回对象、列表查询返回分页视图（#9：数据在 Page.content），此处统一收敛为数组
       var list = byEmail
-        ? (Array.isArray(data) ? data : [])
+        ? (data && Array.isArray(data.content) ? data.content : [])
         : (data && data.licenseKey ? [data] : []);
       renderLicTable(list);
     }).catch(function (err) {
@@ -2057,15 +2057,15 @@
     $('userDetailBody').hidden = false;
   }
 
-  /** 复用既有 GET /api/admin/licenses?customerEmail=：完整密钥、不含 signedToken */
+  /** 复用既有 GET /api/admin/licenses?customerEmail=：完整密钥、不含 signedToken（#9 起为分页视图） */
   function loadUserDetailLicenses() {
     var email = $('userDetailLicensesBtn').getAttribute('data-email');
     if (!email) { return; }
     $('userDetailLicensesBox').hidden = false;
     $('userDetailLicensesEmpty').hidden = true;
-    requestJson('/api/admin/licenses?customerEmail=' + encodeURIComponent(email))
-      .then(function (list) {
-        var items = Array.isArray(list) ? list : [];
+    requestJson('/api/admin/licenses?customerEmail=' + encodeURIComponent(email) + '&size=200')
+      .then(function (page) {
+        var items = page && Array.isArray(page.content) ? page.content : [];
         var rows = '';
         for (var i = 0; i < items.length; i++) {
           var l = items[i];

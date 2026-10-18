@@ -1,5 +1,6 @@
 package com.billing.license.service.payment.impl;
 
+import com.billing.license.config.PaymentHttpClientConfig;
 import com.billing.license.entity.Order;
 import com.billing.license.service.payment.strategy.*;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -34,7 +35,8 @@ public class PayPalStrategy implements PaymentStrategy {
     @Value("${payment.paypal.client-secret:}")
     private String clientSecret;
 
-    @Value("${payment.paypal.environment:https://api-m.sandbox.paypal.com}")
+    /** 默认**生产**网关；沙箱只在 `.env` 显式配 `PAYPAL_ENVIRONMENT`（与 `application.yml` 的 payment.paypal.environment 默认一致）。 */
+    @Value("${payment.paypal.environment:https://api-m.paypal.com}")
     private String environment;
 
     @Value("${payment.paypal.webhook-id:}")
@@ -46,16 +48,22 @@ public class PayPalStrategy implements PaymentStrategy {
     @Value("${payment.paypal.cancel-url:}")
     private String cancelUrl;
 
+    /** #5：全渠道共享的 HttpClient（带连接超时），由 {@code PaymentHttpClientConfig} 提供。 */
+    private final HttpClient httpClient;
+
+    public PayPalStrategy(HttpClient httpClient) {
+        this.httpClient = httpClient;
+    }
+
     private String getAccessToken() throws Exception {
         String auth = Base64.getEncoder().encodeToString((clientId + ":" + clientSecret).getBytes(StandardCharsets.UTF_8));
-        HttpClient client = HttpClient.newHttpClient();
-        HttpRequest request = HttpRequest.newBuilder()
+        HttpRequest request = HttpRequest.newBuilder().timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
                 .uri(URI.create(environment + "/v1/oauth2/token"))
                 .header("Authorization", "Basic " + auth)
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .POST(HttpRequest.BodyPublishers.ofString("grant_type=client_credentials"))
                 .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         JsonNode json = objectMapper.readTree(response.body());
         return json.get("access_token").asText();
     }
@@ -93,15 +101,14 @@ public class PayPalStrategy implements PaymentStrategy {
             body.put("purchase_units", List.of(purchaseUnit));
             body.put("application_context", appContext);
 
-            HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest request = HttpRequest.newBuilder().timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
                     .uri(URI.create(environment + "/v2/checkout/orders"))
                     .header("Authorization", "Bearer " + accessToken)
                     .header("Content-Type", "application/json")
                     .header("Prefer", "return=representation")
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)))
                     .build();
-            HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode result = objectMapper.readTree(httpResponse.body());
 
             if (result.has("id")) {
@@ -140,13 +147,12 @@ public class PayPalStrategy implements PaymentStrategy {
         logger.info("查询 PayPal 支付状态：paymentId={}", paymentId);
         try {
             String accessToken = getAccessToken();
-            HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest request = HttpRequest.newBuilder().timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
                     .uri(URI.create(environment + "/v2/checkout/orders/" + paymentId))
                     .header("Authorization", "Bearer " + accessToken)
                     .GET()
                     .build();
-            HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode result = objectMapper.readTree(httpResponse.body());
             if (result.has("status")) {
                 String status = result.get("status").asText();
@@ -181,14 +187,13 @@ public class PayPalStrategy implements PaymentStrategy {
             verifyBody.put("transmission_sig", headers.get("Paypal-Transmission-Sig"));
             verifyBody.put("webhook_event", objectMapper.readValue(payload, Map.class));
 
-            HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest request = HttpRequest.newBuilder().timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
                     .uri(URI.create(environment + "/v1/notifications/verify-webhook-signature"))
                     .header("Authorization", "Bearer " + accessToken)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(verifyBody)))
                     .build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode json = objectMapper.readTree(response.body());
             return "SUCCESS".equals(json.get("verification_status").asText());
         } catch (Exception e) {
@@ -276,14 +281,13 @@ public class PayPalStrategy implements PaymentStrategy {
             Map<String, Object> refundBody = new HashMap<>();
             refundBody.put("amount", amt);
 
-            HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest request = HttpRequest.newBuilder().timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
                     .uri(URI.create(environment + "/v2/payments/captures/" + captureId + "/refund"))
                     .header("Authorization", "Bearer " + accessToken)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(refundBody)))
                     .build();
-            HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode result = objectMapper.readTree(httpResponse.body());
             String status = result.has("status") ? result.get("status").asText() : "";
             if (result.has("id") && "COMPLETED".equals(status)) {
@@ -302,13 +306,12 @@ public class PayPalStrategy implements PaymentStrategy {
      * 从 PayPal Order 中解析 capture ID（退款目标）
      */
     private String findCaptureId(String accessToken, String paypalOrderId) throws Exception {
-        HttpClient client = HttpClient.newHttpClient();
-        HttpRequest request = HttpRequest.newBuilder()
+        HttpRequest request = HttpRequest.newBuilder().timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
                 .uri(URI.create(environment + "/v2/checkout/orders/" + paypalOrderId))
                 .header("Authorization", "Bearer " + accessToken)
                 .GET()
                 .build();
-        HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         JsonNode result = objectMapper.readTree(httpResponse.body());
         if (result.has("purchase_units")) {
             JsonNode pu = result.get("purchase_units").get(0);

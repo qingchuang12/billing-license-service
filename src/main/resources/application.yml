@@ -195,8 +195,10 @@ payment:
     vendor-id: ${PADDLE_VENDOR_ID:}
     # Paddle API Key
     api-key: ${PADDLE_API_KEY:}
-    # API 地址（沙箱 https://sandbox-api.paddle.com / 生产 https://api.paddle.com）
-    environment: ${PADDLE_ENVIRONMENT:https://sandbox-api.paddle.com}
+    # API 地址：**默认生产** https://api.paddle.com（与 `PaddleStrategy.java` 的 `@Value` 默认一致）。
+    # 仓库内不留沙箱默认值（硬约束 8）：生产只配 Key 忘配 PADDLE_ENVIRONMENT 会静默打沙箱 = 收钱不发货；
+    # 沙箱联调必须显式配 PADDLE_ENVIRONMENT=https://sandbox-api.paddle.com。
+    environment: ${PADDLE_ENVIRONMENT:https://api.paddle.com}
     # Webhook 签名密钥，用于 HMAC-SHA256 验签（Paddle-Signature 头的 ts/h1）
     webhook-secret: ${PADDLE_WEBHOOK_SECRET:}
 
@@ -206,8 +208,10 @@ payment:
     client-id: ${PAYPAL_CLIENT_ID:}
     # 应用 Client Secret
     client-secret: ${PAYPAL_CLIENT_SECRET:}
-    # API 地址（沙箱 https://api-m.sandbox.paypal.com / 生产 https://api-m.paypal.com）
-    environment: ${PAYPAL_ENVIRONMENT:https://api-m.sandbox.paypal.com}
+    # API 地址：**默认生产** https://api-m.paypal.com（与 `PayPalStrategy.java` 的 `@Value` 默认一致）。
+    # 仓库内不留沙箱默认值（硬约束 8）：漏配 PAYPAL_ENVIRONMENT 会静默打沙箱 = 收钱不发货；
+    # 沙箱联调必须显式配 PAYPAL_ENVIRONMENT=https://api-m.sandbox.paypal.com。
+    environment: ${PAYPAL_ENVIRONMENT:https://api-m.paypal.com}
     # Webhook ID，回调验签必需（在 PayPal 后台创建 Webhook 后获得）
     webhook-id: ${PAYPAL_WEBHOOK_ID:}
     # 支付完成回跳地址

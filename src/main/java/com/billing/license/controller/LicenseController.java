@@ -56,9 +56,11 @@ public class LicenseController {
     public ResponseEntity<LicenseResponse> verifyLicense(
             @Parameter(description = "License 密钥", required = true) @PathVariable String licenseKey,
             HttpServletRequest request) {
-        // C4：公开端点频控——防止高频遍历 licenseKey（探测存在性 / license_event 表无界增长）
+        // C4：公开端点频控——防止高频遍历 licenseKey（探测存在性 / license_event 表无界增长）。
+        // IP 口径与 /pending、/activate 一致用 clientIpResolver：反向代理下 getRemoteAddr() 恒为代理 IP，
+        // 会让 60 次/分钟变成全站共享额度（正常客户端莫名 429，单个攻击者可打断所有在线校验）。
         try {
-            rateLimitService.checkLicenseVerify(request.getRemoteAddr());
+            rateLimitService.checkLicenseVerify(clientIpResolver.resolve(request));
         } catch (RateLimitService.RateLimitExceededException e) {
             return ResponseEntity.status(429).<LicenseResponse>build();
         }

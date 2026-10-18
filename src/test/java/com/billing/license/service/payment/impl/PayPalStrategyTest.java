@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
@@ -19,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
  */
 class PayPalStrategyTest {
 
-    private final PayPalStrategy strategy = new PayPalStrategy();
+    private final PayPalStrategy strategy = new PayPalStrategy(HttpClient.newHttpClient());
 
     @Test
     void getPaymentMethod_shouldReturnPaypal() {

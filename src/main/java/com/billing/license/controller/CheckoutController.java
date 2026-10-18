@@ -1,5 +1,6 @@
 package com.billing.license.controller;
 
+import com.billing.license.common.web.ClientIpResolver;
 import com.billing.license.dto.CheckoutRequest;
 import com.billing.license.dto.CheckoutResponse;
 import com.billing.license.dto.SelectProviderRequest;
@@ -9,6 +10,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.*;
 public class CheckoutController {
 
     private final CheckoutService checkoutService;
+    private final ClientIpResolver clientIpResolver;
 
     /**
      * 创建收银台会话
@@ -32,10 +35,13 @@ public class CheckoutController {
             description = "按币种/语言自动判定国内或国际区域，返回可选支付方式，并创建订单与收银台会话")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "创建成功"),
-            @ApiResponse(responseCode = "400", description = "参数非法 / 商品不存在 / 商品未上架 / 无可用支付方式")
+            @ApiResponse(responseCode = "400", description = "参数非法 / 商品不存在 / 商品未上架 / 无可用支付方式 / 触发限流")
     })
     @PostMapping("/create")
-    public ResponseEntity<CheckoutResponse> create(@Valid @RequestBody CheckoutRequest request) {
+    public ResponseEntity<CheckoutResponse> create(@Valid @RequestBody CheckoutRequest request,
+                                                   HttpServletRequest httpRequest) {
+        // #8：限流所需的真实来源 IP 由服务端解析（请求体 clientIp 已 @JsonIgnore，防伪造绕过）
+        request.setClientIp(clientIpResolver.resolve(httpRequest));
         return ResponseEntity.ok(checkoutService.createCheckout(request));
     }
 

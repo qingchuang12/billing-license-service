@@ -1,5 +1,6 @@
 package com.billing.license.service.payment.impl;
 
+import com.billing.license.config.PaymentHttpClientConfig;
 import com.billing.license.entity.Order;
 import com.billing.license.service.payment.strategy.*;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -42,11 +43,19 @@ public class PaddleStrategy implements PaymentStrategy {
     @Value("${payment.paddle.api-key:}")
     private String apiKey;
 
-    @Value("${payment.paddle.environment:https://sandbox-api.paddle.com}")
+    /** 默认**生产**网关；沙箱只在 `.env` 显式配 `PADDLE_ENVIRONMENT`（与 `application.yml` 的 payment.paddle.environment 默认一致）。 */
+    @Value("${payment.paddle.environment:https://api.paddle.com}")
     private String environment;
 
     @Value("${payment.paddle.webhook-secret:}")
     private String webhookSecret;
+
+    /** #5：全渠道共享的 HttpClient（带连接超时），由 {@code PaymentHttpClientConfig} 提供。 */
+    private final HttpClient httpClient;
+
+    public PaddleStrategy(HttpClient httpClient) {
+        this.httpClient = httpClient;
+    }
 
     private String buildUrl(String path) {
         String base = environment.endsWith("/") ? environment.substring(0, environment.length() - 1) : environment;
@@ -83,14 +92,14 @@ public class PaddleStrategy implements PaymentStrategy {
         try {
             Map<String, Object> body = buildCreateTransactionBody(order);
 
-            HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
+                    .timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
                     .uri(URI.create(buildUrl(PADDLE_TRANSACTIONS_URL)))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)))
                     .build();
-            HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode result = objectMapper.readTree(httpResponse.body());
 
             if (result.has("data")) {
@@ -154,13 +163,13 @@ public class PaddleStrategy implements PaymentStrategy {
     public PaymentStatus queryPayment(String paymentId) {
         logger.info("查询 Paddle 支付状态：paymentId={}", paymentId);
         try {
-            HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
+                    .timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
                     .uri(URI.create(buildUrl(PADDLE_TRANSACTIONS_URL + "/" + paymentId)))
                     .header("Authorization", "Bearer " + apiKey)
                     .GET()
                     .build();
-            HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode result = objectMapper.readTree(httpResponse.body());
             if (result.has("data")) {
                 String status = result.get("data").get("status").asText();
@@ -375,14 +384,14 @@ public class PaddleStrategy implements PaymentStrategy {
                     ? paymentId.substring("paddle_".length()) : paymentId;
             Map<String, Object> refundBody = buildRefundBody(amount);
 
-            HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
+                    .timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
                     .uri(URI.create(buildUrl("/transactions/" + txnId + "/refund")))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(refundBody)))
                     .build();
-            HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode result = objectMapper.readTree(httpResponse.body());
 
             if (result.has("data")) {

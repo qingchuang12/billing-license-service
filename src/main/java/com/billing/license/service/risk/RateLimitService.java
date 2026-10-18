@@ -141,6 +141,19 @@ public class RateLimitService {
         return checkAndCount("redeem-ip", ip, risk.getRedeemIpMax(), risk.getRedeemIpWindowMinutes());
     }
 
+    /**
+     * 公开收银台下单频控（#8 未认证资源放大修复）：按 **IP** 维度限流。
+     *
+     * <p>{@code POST /api/checkout/create} 匿名可调，且每次下单都会解析/新建客户账户并落订单 + 会话行；
+     * 原先只有邮箱维度限流，攻击者轮换邮箱即可绕过。复用兑换 IP **档位**
+     * （{@code redeemIpMax} / {@code redeemIpWindowMinutes}），**不新增配置项**；
+     * 使用独立命名空间，避免下单量挤占兑换额度。
+     */
+    public int checkCheckoutIp(String ip) {
+        BillingProperties.Risk risk = billingProperties.getRisk();
+        return checkAndCount("checkout-ip", ip, risk.getRedeemIpMax(), risk.getRedeemIpWindowMinutes());
+    }
+
     public int recordRedeemFailure(String ip) {
         BillingProperties.Risk risk = billingProperties.getRisk();
         int count = countOnly("redeem-fail", ip, risk.getRedeemFailureWindowMinutes(), risk.getRedeemFailureMax() + 1);

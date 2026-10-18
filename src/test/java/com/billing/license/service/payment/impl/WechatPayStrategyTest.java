@@ -5,6 +5,7 @@ import com.billing.license.service.payment.strategy.PaymentStatus;
 import com.billing.license.service.payment.strategy.WebhookPayload;
 import org.junit.jupiter.api.Test;
 
+import java.net.http.HttpClient;
 import java.util.Base64;
 import java.util.Map;
 
@@ -16,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class WechatPayStrategyTest {
 
-    private final WechatPayStrategy strategy = new WechatPayStrategy();
+    private final WechatPayStrategy strategy = new WechatPayStrategy(HttpClient.newHttpClient());
 
     @Test
     void getPaymentMethod_shouldReturnWechatPay() {

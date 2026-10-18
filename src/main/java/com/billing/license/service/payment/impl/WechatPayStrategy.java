@@ -1,5 +1,6 @@
 package com.billing.license.service.payment.impl;
 
+import com.billing.license.config.PaymentHttpClientConfig;
 import com.billing.license.entity.Order;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentResponse;
@@ -78,6 +79,13 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
     /** 商户证书文件路径（apiclient_cert.pem），用于提取商户证书序列号 */
     @Value("${payment.wechat.certificate-path:}")
     private String certificatePath;
+
+    /** #5：全渠道共享的 HttpClient（带连接超时），由 {@code PaymentHttpClientConfig} 提供。 */
+    private final HttpClient httpClient;
+
+    public WechatPayStrategy(HttpClient httpClient) {
+        this.httpClient = httpClient;
+    }
 
     @Value("${payment.wechat.notify-url:}")
     private String notifyUrl;
@@ -170,7 +178,6 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
         response.setPaymentMethod(PaymentMethod.WECHAT_PAY.name());
 
         try {
-            HttpClient client = HttpClient.newHttpClient();
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("appid", appId);
             requestBody.put("mchid", mchId);
@@ -194,7 +201,7 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
             String jsonBody = objectMapper.writeValueAsString(requestBody);
             String auth = buildAuthorization("POST", "/v3/pay/transactions/native", jsonBody);
 
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest request = HttpRequest.newBuilder().timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
                     .uri(URI.create(WECHAT_PAY_URL))
                     .header("Content-Type", "application/json")
                     .header("Accept", "application/json")
@@ -202,7 +209,7 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
                     .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
                     .build();
 
-            HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode result = objectMapper.readTree(httpResponse.body());
 
             if (result.has("code_url")) {
@@ -239,21 +246,20 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
 
         try {
             String outTradeNo = paymentId.replaceFirst("wechat_", "");
-            HttpClient client = HttpClient.newHttpClient();
             // C4：微信查单接口为 GET /v3/pay/transactions/out-trade-no/{out_trade_no}?mchid={mchId}
             // （无 /query 后缀，官方文档核实）；签名串须含查询参数。
             String queryPath = "/v3/pay/transactions/out-trade-no/" + outTradeNo + "?mchid=" + mchId;
             String queryUrl = String.format(WECHAT_QUERY_URL, outTradeNo);
             String auth = buildAuthorization("GET", queryPath, "");
 
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest request = HttpRequest.newBuilder().timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
                     .uri(URI.create(queryUrl + "?mchid=" + mchId))
                     .header("Accept", "application/json")
                     .header("Authorization", auth)
                     .GET()
                     .build();
 
-            HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode result = objectMapper.readTree(httpResponse.body());
 
             if (result.has("trade_state")) {
@@ -291,14 +297,14 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
         }
         try {
             String auth = buildAuthorization("GET", "/v3/certificates", "");
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest request = HttpRequest.newBuilder().timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
                     .uri(URI.create(WECHAT_CERT_URL))
                     .header("Accept", "application/json")
                     .header("Authorization", auth)
                     .GET()
                     .build();
 
-            HttpResponse<String> httpResponse = HttpClient.newHttpClient()
+            HttpResponse<String> httpResponse = httpClient
                     .send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode root = objectMapper.readTree(httpResponse.body());
 
@@ -542,15 +548,14 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
             String jsonBody = objectMapper.writeValueAsString(body);
             String auth = buildAuthorization("POST", "/v3/refund/domestic/refunds", jsonBody);
 
-            HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest request = HttpRequest.newBuilder().timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
                     .uri(URI.create("https://api.mch.weixin.qq.com/v3/refund/domestic/refunds"))
                     .header("Content-Type", "application/json")
                     .header("Accept", "application/json")
                     .header("Authorization", auth)
                     .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
                     .build();
-            HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode result = objectMapper.readTree(httpResponse.body());
 
             if (result.has("refund_id")) {

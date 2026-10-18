@@ -176,9 +176,13 @@ public class WebhookController {
     }
 
     /**
-     * 统一处理 Webhook 回调
+     * 统一处理 Webhook 回调。
+     *
+     * <p>#5（外部调用治理）：<b>验签在事务之外</b>——PayPal 的 {@code verifyWebhookSignature} 会真发一次
+     * 外部 HTTP，留在 {@code @Transactional} 内会让这条回调全程占用一根 DB 连接（Hikari 默认池 10）；
+     * 渠道抖动时 webhook 与收银台轮询两条腿可同时打满连接池 = 全站不可用。
+     * 验签通过后的入库 / 发货腿统一进 {@link #processVerifiedWebhook}，事务边界与原子性和改造前一致。
      */
-    @Transactional
     public ResponseEntity<String> processWebhook(PaymentMethod method, String payload,
                                                      String signature, Map<String, String> headers) {
         // 1. 获取对应支付策略
@@ -191,6 +195,15 @@ public class WebhookController {
             logger.error("Webhook 签名验证失败：{}", method);
             return ResponseEntity.status(401).body("Invalid signature");
         }
+        return self.processVerifiedWebhook(method, payload);
+    }
+
+    /**
+     * 验签通过后的回调处理（解析 → 幂等 → 金额校验 → 更新支付状态 → 发货/吊销），整体在一个事务内。
+     */
+    @Transactional
+    public ResponseEntity<String> processVerifiedWebhook(PaymentMethod method, String payload) {
+        var strategy = paymentServiceFactory.getStrategy(method);
 
         // 3. 解析回调数据
         WebhookPayload webhookData = strategy.parseWebhookPayload(payload);
@@ -330,7 +343,10 @@ public class WebhookController {
     public void fulfillOrder(String orderId) {
         logger.info("开始发货：orderId={}", orderId);
 
-        Order order = orderRepository.findByOrderNumber(orderId)
+        // #4（资损并发保护）：先锁订单行再判可发货状态。check-then-act 若无行锁，两个不同 eventId 的回调
+        // （如 Stripe 同时投 checkout.session.completed 与 payment_intent.succeeded）并发进入时，
+        // 双方都读到 canFulfill()=true → 同一订单签出两张证。后到者拿到锁后重读到已 PAID 即幂等跳过。
+        Order order = orderRepository.findByOrderNumberForUpdate(orderId)
             .orElseThrow(() -> new RuntimeException("Order not found: " + orderId));
 
         // H14 + B12：订单级前置校验——已支付/已退款/已取消/退款失败均不可再发货，
@@ -403,7 +419,9 @@ public class WebhookController {
             logger.warn("退款/取消回调缺订单号，无法吊销 License：status={}", status);
             return;
         }
-        Order order = orderRepository.findByOrderNumber(orderId).orElse(null);
+        // #4：与 fulfillOrder 同一订单行锁口径——本方法同样是 check-then-act（判已退款态 → 吊销 License → 置 REFUNDED），
+        // 渠道对同一退款事件重投或与另一退款回调并发时，后到者拿到锁后重读即见已退款态并跳过。
+        Order order = orderRepository.findByOrderNumberForUpdate(orderId).orElse(null);
         if (order == null) {
             logger.warn("退款/取消回调对应订单不存在：orderId={}, status={}", orderId, status);
             return;

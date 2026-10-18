@@ -6,6 +6,7 @@ import com.billing.license.service.payment.strategy.PaymentMethod;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.net.http.HttpClient;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -16,11 +17,14 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class RefundStrategyContractTest {
 
+    /** #5：策略改为注入共享 HttpClient；本类只验证「未配置渠道的退款契约」，不发真实请求。 */
+    private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+
     private final AlipayStrategy alipay = new AlipayStrategy();
-    private final WechatPayStrategy wechat = new WechatPayStrategy();
+    private final WechatPayStrategy wechat = new WechatPayStrategy(HTTP_CLIENT);
     private final StripeStrategy stripe = new StripeStrategy();
-    private final PaddleStrategy paddle = new PaddleStrategy();
-    private final PayPalStrategy paypal = new PayPalStrategy();
+    private final PaddleStrategy paddle = new PaddleStrategy(HTTP_CLIENT);
+    private final PayPalStrategy paypal = new PayPalStrategy(HTTP_CLIENT);
 
     private Order sampleOrder() {
         return Order.builder()

@@ -14,6 +14,8 @@ import com.billing.license.service.payment.strategy.PaymentStatus;
 import com.billing.license.service.risk.RateLimitService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -51,6 +53,12 @@ public class CheckoutService {
     // E1（客户标识邮箱化）：对外邮箱 → 内部 userId 解析；未注册自动建访客账户
     private final CustomerIdentityService customerIdentityService;
 
+    // #5：自注入代理，使同类内 applyCompensatedPayment 的 @Transactional 经 AOP 代理生效
+    // （裸 this 自调用不走代理）。非 final，不进 @RequiredArgsConstructor 构造函数。
+    @Autowired
+    @Lazy
+    private CheckoutService self;
+
     // R5：单实例内按订单号串行化发放，避免并发轮询重复签发 License/兑换码（资损）
     // F8：锁条目引用计数，最后一个持有者退出即摘除——只增不减会让每个被轮询过的订单号永久占位。
     private final ConcurrentHashMap<String, OrderLock> fulfillmentLocks = new ConcurrentHashMap<>();
@@ -83,6 +91,15 @@ public class CheckoutService {
             } catch (RateLimitService.RateLimitExceededException e) {
                 throw new BusinessException("EMAIL_PURCHASE_LIMIT", "同一邮箱购买过于频繁，请稍后再试");
             }
+        }
+
+        // #8（未认证资源放大）：本端点匿名可调，且每次下单都会 resolveOrCreate 客户账户（未注册即建号）
+        // + 落订单与会话行。仅邮箱维度限流时，轮换邮箱即可无限建账户、无限写行；故补 IP 维度，
+        // 且置于任何建号/写库之前——限流命中时不产生任何副作用。IP 由 Controller 服务端解析后写入。
+        try {
+            rateLimitService.checkCheckoutIp(request.getClientIp());
+        } catch (RateLimitService.RateLimitExceededException e) {
+            throw new BusinessException("CHECKOUT_IP_LIMIT", "下单过于频繁，请稍后再试");
         }
 
         // 区域判定：CNY 或 zh-CN 视为国内，否则国际
@@ -243,8 +260,13 @@ public class CheckoutService {
 
     /**
      * 查询收银台/订单状态；若已支付且已发货，直接返回 License 或兑换码
+     *
+     * <p>#5（外部调用治理）：本方法**不开事务**——它包含一次外部渠道查单（HTTP）。
+     * 原先整体包在 {@code @Transactional} 里，轮询线程会在一等就是数秒的渠道调用期间占住一根 DB 连接
+     * （Hikari 默认池 10），渠道抖动时与 webhook 一起把池打满。
+     * 写库动作收敛到 {@link #applyCompensatedPayment} 的短事务，其余读由各仓储/服务自带事务完成
+     * （发放本身已按 B13/R5 幂等，拆开不改变结果）。
      */
-    @Transactional
     public CheckoutResponse getStatus(String checkoutId) {
         log.info("查询收银台状态：checkoutId={}", checkoutId);
 
@@ -382,7 +404,10 @@ public class CheckoutService {
     /**
      * w17：主动对账补偿。仅当本地会话仍为 CREATED/PENDING 时调用一次：
      * 按订单查已落库的 Payment，解析渠道后调其 queryPaymentStatus 主动查支付状态；
-     * 渠道确认为 SUCCESS 则标记会话 PAID（发货由已有 Webhook/fulfillOrder 幂等路径兜底）。
+     * 渠道确认为 SUCCESS 则交给 {@link #applyCompensatedPayment} 的短事务置 PAID 并发货。
+     *
+     * <p>#5：查单是**外部 HTTP**，故本方法运行在事务之外（{@code getStatus} 已不开事务），
+     * 轮询线程不再在等渠道响应期间占用 DB 连接。
      */
     private void compensateFromChannel(CheckoutSession session) {
         try {
@@ -392,29 +417,46 @@ public class CheckoutService {
             }
             PaymentMethod method = payment.getMethod();
             PaymentStatus status = paymentService.queryPaymentStatus(payment.getPaymentId(), method);
-            if (PaymentStatus.SUCCESS == status) {
-                // C5：统一发货入口——会话与订单同置 PAID，复用与 fulfillOrder 等价的发放逻辑（幂等），
-                // 避免「只改会话不发货 / 订单恒 PENDING」导致 Webhook 迟到二次发放或永远拿不到 License。
-                OrderLock lock = acquireOrderLock(session.getOrderNumber());
-                try {
-                    synchronized (lock.monitor) {
-                        session.setStatus(CheckoutSession.Status.PAID);
-                        checkoutSessionRepository.save(session);
-                        Order order = orderRepository.findById(session.getOrderId()).orElse(null);
-                        if (order != null && order.canFulfill()) {
-                            order.markPaid();
-                            orderRepository.save(order);
-                            fulfillSession(session);
-                        }
-                    }
-                } finally {
-                    releaseOrderLock(session.getOrderNumber(), lock);
-                }
-                log.info("主动对账补偿：渠道确认已支付，已标记会话/订单 PAID 并发货：checkoutId={}", session.getCheckoutId());
+            if (PaymentStatus.SUCCESS != status) {
+                return;
             }
+            OrderLock lock = acquireOrderLock(session.getOrderNumber());
+            try {
+                synchronized (lock.monitor) {
+                    self.applyCompensatedPayment(session.getCheckoutId());
+                }
+            } finally {
+                releaseOrderLock(session.getOrderNumber(), lock);
+            }
+            log.info("主动对账补偿：渠道确认已支付，已标记会话/订单 PAID 并发货：checkoutId={}", session.getCheckoutId());
         } catch (Exception e) {
             // 补偿失败不应影响轮询返回；记录日志，等待 Webhook 或下次轮询重试
             log.warn("主动对账补偿失败（非致命）：checkoutId={}", session.getCheckoutId(), e);
+        }
+    }
+
+    /**
+     * C5：补偿确认「渠道已收款」后的写库腿，独立短事务（外部查单已在事务外完成，见 {@link #compensateFromChannel}）。
+     *
+     * <p>统一发货入口——会话与订单同置 PAID 并复用与 fulfillOrder 等价的发放逻辑，避免「只改会话不发货 /
+     * 订单恒 PENDING」导致 Webhook 迟到二次发放或永远拿不到 License。
+     * 幂等：会话已被 Webhook 抢先置 PAID 时直接跳过。
+     */
+    @Transactional
+    public void applyCompensatedPayment(String checkoutId) {
+        CheckoutSession session = checkoutSessionRepository.findByCheckoutId(checkoutId).orElse(null);
+        if (session == null || session.getStatus() == CheckoutSession.Status.PAID) {
+            return;
+        }
+        session.setStatus(CheckoutSession.Status.PAID);
+        checkoutSessionRepository.save(session);
+        // #4：与 fulfillOrder 用同一订单行锁，序列化「轮询补偿」与「Webhook 回调」两条发货腿。
+        // 原先只读订单（无锁）会让补偿腿在 Webhook 已提交 PAID 后仍按内存里的旧状态再发一次货。
+        Order order = orderRepository.findByOrderNumberForUpdate(session.getOrderNumber()).orElse(null);
+        if (order != null && order.canFulfill()) {
+            order.markPaid();
+            orderRepository.save(order);
+            fulfillSession(session);
         }
     }
 

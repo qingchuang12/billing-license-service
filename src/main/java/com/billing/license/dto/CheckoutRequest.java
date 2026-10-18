@@ -63,4 +63,10 @@ public class CheckoutRequest {
             example = "alipay",
             allowableValues = {"alipay", "wechat_pay", "stripe", "paddle", "paypal"})
     private String provider;
+
+    /** 客户端 IP（#8：收银台 IP 维度限流依据）。
+     *  与 {@link RedeemCodeRequest} 的 C10 同口径：禁止从请求体反序列化，由 Controller 用服务端解析值无条件覆盖。 */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Schema(hidden = true)
+    private String clientIp;
 }

@@ -16,6 +16,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -64,26 +69,41 @@ public class AdminService {
     /**
      * 订单查询（I2 收敛）：支持按状态 / 订单号 / 订单 ID 过滤，三者全部留空即全量列表。
      * 一个端点替代原 {@code listOrders} + {@code listOrdersByStatus} + OrderController 的 by-id/by-number 四个入口。
+     *
+     * <p>#9：分页 + 状态下推。无过滤时原先 {@code findAll()} 把全表拉进内存再整体序列化，
+     * 数据量增长后单次请求即打爆堆；现与 {@code /api/admin/users} 同口径分页
+     * （页大小由控制层夹到 1~200、默认 20），按下单时间倒序保证翻页稳定；
+     * 状态过滤走 {@code findByStatus} 的 SQL 条件而不是内存过滤。
+     * 按订单号 / 订单 ID 精确命中时最多一行，分页参数只影响返回切片的元数据。
      */
-    public List<OrderResponse> listOrders(Order.OrderStatus status, String orderNumber, String orderId) {
-        List<Order> orders;
+    public Page<OrderResponse> listOrders(Order.OrderStatus status, String orderNumber, String orderId,
+                                          Pageable pageable) {
+        Pageable sorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
+            Sort.by(Sort.Direction.DESC, "createdAt"));
         if (orderNumber != null && !orderNumber.isBlank()) {
-            orders = orderRepository.findByOrderNumber(orderNumber.trim())
-                .map(o -> List.of(o)).orElse(List.of());
-        } else if (orderId != null && !orderId.isBlank()) {
+            return singlePage(orderRepository.findByOrderNumber(orderNumber.trim()), sorted,
+                orderService::mapToResponse);
+        }
+        if (orderId != null && !orderId.isBlank()) {
             UUID id;
             try {
                 id = UUID.fromString(orderId.trim());
             } catch (IllegalArgumentException e) {
                 throw new BusinessException("INVALID_ORDER_ID", "非法的订单 ID: " + orderId);
             }
-            orders = orderRepository.findById(id).map(o -> List.of(o)).orElse(List.of());
-        } else if (status != null) {
-            orders = orderRepository.findByStatus(status);
-        } else {
-            orders = orderRepository.findAll();
+            return singlePage(orderRepository.findById(id), sorted, orderService::mapToResponse);
         }
-        return orders.stream().map(orderService::mapToResponse).collect(Collectors.toList());
+        Page<Order> orders = status != null
+            ? orderRepository.findByStatus(status, sorted)
+            : orderRepository.findAll(sorted);
+        return orders.map(orderService::mapToResponse);
+    }
+
+    /** #9：把「精确命中至多一行」的查询收敛成与分页查询同形的 Page 返回。 */
+    private static <T, R> Page<R> singlePage(java.util.Optional<T> found, Pageable pageable,
+                                             java.util.function.Function<T, R> mapper) {
+        List<T> content = found.map(List::of).orElse(List.of());
+        return new PageImpl<>(content.stream().map(mapper).collect(Collectors.toList()), pageable, content.size());
     }
 
     /** 按订单号取订单实体（供签发等管理动作复用） */
@@ -96,31 +116,44 @@ public class AdminService {
      * License 查询（I3 收敛）：支持按客户邮箱 / 订单号 / 状态过滤，三者全部留空即全量；
      * 返回脱敏管理视图（不回显 signedToken）。一个端点替代原
      * {@code /api/licenses/customer/{cid}} 与 {@code /api/admin/orders/{n}/licenses}。
+     *
+     * <p>#9：分页 + 状态下推。原先无过滤走 {@code findAll()} 全表入内存、有过滤也在内存里按状态筛；
+     * 现状态与主体条件一并下推到 SQL，并按签发时间倒序分页（与 {@code /api/admin/users} 同口径）。
      */
-    public List<LicenseResponse> listLicenses(String customerEmail, String orderNumber, String status) {
-        List<License> licenses;
-        if (orderNumber != null && !orderNumber.isBlank()) {
-            licenses = licenseRepository.findByOrder(getOrderByNumber(orderNumber.trim()));
-        } else if (customerEmail != null && !customerEmail.isBlank()) {
-            // E2：对外邮箱经解析器换成内部 userId 再查；未注册邮箱 → 无匹配（只读解析，不建号）
-            UUID customerId = customerIdentityService.resolveExisting(customerEmail).orElse(null);
-            licenses = (customerId == null) ? List.of() : licenseRepository.findByCustomerId(customerId);
-        } else {
-            licenses = licenseRepository.findAll();
-        }
+    public Page<LicenseResponse> listLicenses(String customerEmail, String orderNumber, String status,
+                                              Pageable pageable) {
+        License.LicenseStatus target = null;
         if (status != null && !status.isBlank()) {
-            License.LicenseStatus target;
             try {
                 target = License.LicenseStatus.valueOf(status.trim().toUpperCase());
             } catch (IllegalArgumentException e) {
                 throw new BusinessException("INVALID_LICENSE_STATUS", "非法的 License 状态值: " + status);
             }
-            licenses = licenses.stream()
-                .filter(l -> l.getStatus() == target)
-                .collect(Collectors.toList());
+        }
+        Pageable sorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
+            Sort.by(Sort.Direction.DESC, "issuedAt"));
+        Page<License> page;
+        if (orderNumber != null && !orderNumber.isBlank()) {
+            Order order = getOrderByNumber(orderNumber.trim());
+            page = target == null
+                ? licenseRepository.findByOrder(order, sorted)
+                : licenseRepository.findByOrderAndStatus(order, target, sorted);
+        } else if (customerEmail != null && !customerEmail.isBlank()) {
+            // E2：对外邮箱经解析器换成内部 userId 再查；未注册邮箱 → 无匹配（只读解析，不建号）
+            UUID customerId = customerIdentityService.resolveExisting(customerEmail).orElse(null);
+            if (customerId == null) {
+                return Page.empty(sorted);
+            }
+            page = target == null
+                ? licenseRepository.findByCustomerId(customerId, sorted)
+                : licenseRepository.findByCustomerIdAndStatus(customerId, target, sorted);
+        } else {
+            page = target == null
+                ? licenseRepository.findAll(sorted)
+                : licenseRepository.findByStatus(target, sorted);
         }
         // E3：批量解析本页 customerId → 邮箱，避免逐条查库（N+1）
-        List<UUID> customerIds = licenses.stream()
+        List<UUID> customerIds = page.getContent().stream()
             .map(License::getCustomerId)
             .filter(Objects::nonNull)
             .distinct()
@@ -129,10 +162,11 @@ public class AdminService {
             ? Map.of()
             : userRepository.findAllById(customerIds).stream()
                 .collect(Collectors.toMap(User::getId, User::getEmail));
-        return licenses.stream()
+        List<LicenseResponse> views = page.getContent().stream()
             .map(l -> LicenseResponse.adminView(l,
                 l.getCustomerId() == null ? null : emailById.get(l.getCustomerId())))
             .collect(Collectors.toList());
+        return new PageImpl<>(views, sorted, page.getTotalElements());
     }
 
     /**
@@ -166,6 +200,20 @@ public class AdminService {
         Order order = orderRepository.findByOrderNumber(orderNumber)
             .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "Order not found: " + orderNumber));
 
+        // #4（资损并发保护）：本方法是 check-then-act（判 paymentStatus → 调渠道退款 → 置 REFUNDED），
+        // 并发双击会对同一订单在渠道侧退两次款。串行化令牌取该订单的 **Payment 行**而不是订单行：
+        // 订单行的 FOR UPDATE 会与下方失败态落库的 REQUIRES_NEW 事务互锁成死等——外层持订单行锁直到提交，
+        // 而 persistRefundFailed 在另一连接里 UPDATE 同一订单行，永远等不到锁（外层又在等内层返回）。
+        // Payment 行只在本方法内被读、不被那个内层事务写，故锁它即可序列化同订单的并发退款：
+        // 后到者拿到锁后按 READ COMMITTED 重读订单，见到已退款态即抛 ALREADY_REFUNDED。
+        // 取不到令牌（存量订单无 Payment 行 / 同订单多条 Payment 记录）时退化为原有行为并告警留痕。
+        Payment payment = null;
+        try {
+            payment = paymentRepository.findByOrderIdStrForUpdate(order.getId().toString()).orElse(null);
+        } catch (Exception e) {
+            log.warn("锁定订单支付记录失败，本次退款不带并发串行化保护：orderNumber={}", orderNumber, e);
+        }
+
         // 一单只退一次：已部分退款的订单不得再退剩余（防止反复退款侵蚀）
         if (order.getPaymentStatus() == Order.PaymentStatus.REFUNDED
                 || order.getPaymentStatus() == Order.PaymentStatus.PARTIALLY_REFUNDED) {
@@ -186,31 +234,17 @@ public class AdminService {
 
         // C2 兜底：存量订单（provider 为 NULL）从已落库的 Payment.method 回补渠道，
         // 避免线上历史 PAID 订单退款依旧 100% 失败。Payment.method 由 createPayment 写入，比 Order 字段更权威。
-        if (method == null) {
-            try {
-                Payment payment = paymentRepository.findByOrderIdStr(order.getId().toString()).orElse(null);
-                if (payment != null && payment.getMethod() != null) {
-                    method = payment.getMethod();
-                    if (method != null) {
-                        log.info("存量订单渠道兜底：从 Payment.method 回补 provider={}, orderNumber={}", method, orderNumber);
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("存量订单渠道兜底查询失败：orderNumber={}", orderNumber, e);
-            }
+        if (method == null && payment != null && payment.getMethod() != null) {
+            method = payment.getMethod();
+            log.info("存量订单渠道兜底：从 Payment.method 回补 provider={}, orderNumber={}", method, orderNumber);
         }
 
         // H5 修正：渠道交易号存储于 Payment 实体（createPayment 时落库），
         // order.paymentIntentId 从未被赋值；必须以 Payment.paymentId 作为退款目标，
         // 否则 Stripe/Paddle/PayPal 因拿不到交易号而退款失败（进而被 H4 误判为 REFUND_FAILED）。
         String channelPaymentId = order.getPaymentIntentId();
-        try {
-            Payment payment = paymentRepository.findByOrderIdStr(order.getId().toString()).orElse(null);
-            if (payment != null && payment.getPaymentId() != null) {
-                channelPaymentId = payment.getPaymentId();
-            }
-        } catch (Exception e) {
-            log.warn("查询支付记录失败，退而使用 order.paymentIntentId：orderNumber={}", orderNumber, e);
+        if (payment != null && payment.getPaymentId() != null) {
+            channelPaymentId = payment.getPaymentId();
         }
 
         boolean channelRefunded = false;

@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 /**
@@ -47,6 +48,20 @@ public class CustomerIdentityService {
     private final PasswordEncoder passwordEncoder;
 
     /**
+     * 访客账户的占位口令哈希（#8 CPU 放大修复）：进程内首用时生成一次并复用。
+     *
+     * <p>原实现每建一个访客账户就调一次 {@code BCrypt(cost=12)}（数百毫秒），而该口令永远不会被用于登录
+     * （访客认领走 {@code /api/account/password/reset} 直接覆盖哈希）——攻击者轮换邮箱即可线性消耗 CPU。
+     * 访客账户本就不可口令登录，共用同一随机值哈希不改变该性质。
+     */
+    private final AtomicReference<String> guestPasswordHash = new AtomicReference<>();
+
+    private String placeholderPasswordHash() {
+        return guestPasswordHash.updateAndGet(
+            current -> current != null ? current : passwordEncoder.encode(UUID.randomUUID().toString()));
+    }
+
+    /**
      * 将对外邮箱解析为内部 userId；未注册则自动创建访客账户。
      *
      * @param rawEmail 原始邮箱（可含空白/大小写差异）
@@ -71,7 +86,7 @@ public class CustomerIdentityService {
         // 未注册 → 建访客账户：随机密码不可登录（仅作归属载体），emailVerified=false 供后续认领
         User guest = User.builder()
             .email(email)
-            .passwordHash(passwordEncoder.encode(UUID.randomUUID().toString()))
+            .passwordHash(placeholderPasswordHash())
             .status(User.UserStatus.ACTIVE)
             .emailVerified(false)
             .tokenVersion(0)

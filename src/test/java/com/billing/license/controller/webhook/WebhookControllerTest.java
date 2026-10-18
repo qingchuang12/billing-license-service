@@ -147,6 +147,8 @@ class WebhookControllerTest {
         Order order = Order.builder().orderNumber("ORD-1").machineCode("M1")
             .totalAmount(new BigDecimal("99.00")).currency(Currency.CNY).email("u@e.com").build();
         when(orderRepository.findByOrderNumber("ORD-1")).thenReturn(Optional.of(order));
+        // #4：发货腿改为「锁订单行再判状态」，fulfillOrder 走 findByOrderNumberForUpdate
+        when(orderRepository.findByOrderNumberForUpdate("ORD-1")).thenReturn(Optional.of(order));
         when(amountValidator.validateAmount(any(Order.class), any())).thenReturn(true);
         Payment payment = new Payment();
         // B2：updatePaymentStatus 现为 4 参（末位传业务订单号供回退定位）
@@ -194,6 +196,8 @@ class WebhookControllerTest {
         Order order = Order.builder().orderNumber("ORD-1").machineCode("M1")
             .totalAmount(new BigDecimal("99.00")).currency(Currency.CNY).email("u@e.com").build();
         when(orderRepository.findByOrderNumber("ORD-1")).thenReturn(Optional.of(order));
+        // #4：发货腿改为「锁订单行再判状态」，fulfillOrder 走 findByOrderNumberForUpdate
+        when(orderRepository.findByOrderNumberForUpdate("ORD-1")).thenReturn(Optional.of(order));
         when(amountValidator.validateAmount(any(Order.class), any())).thenReturn(true);
         // 关键：定位失败返回 null（模拟 id 错配）
         when(paymentService.updatePaymentStatus(any(), any(), any(), any())).thenReturn(null);
@@ -231,6 +235,8 @@ class WebhookControllerTest {
 
         Order order = Order.builder().orderNumber("ORD-9").email("u@e.com").build();
         when(orderRepository.findByOrderNumber("ORD-9")).thenReturn(Optional.of(order));
+        // #4：退款吊销同样改为锁订单行
+        when(orderRepository.findByOrderNumberForUpdate("ORD-9")).thenReturn(Optional.of(order));
         com.billing.license.entity.License lic = com.billing.license.entity.License.builder()
             .licenseKey("K-9").status(com.billing.license.entity.License.LicenseStatus.ACTIVE).build();
         when(licenseRepository.findByOrder(order)).thenReturn(java.util.List.of(lic));
@@ -255,6 +261,8 @@ class WebhookControllerTest {
         Order order = Order.builder().orderNumber("ORD-1").machineCode("M1")
             .totalAmount(new BigDecimal("99.00")).currency(Currency.CNY).build();
         when(orderRepository.findByOrderNumber("ORD-1")).thenReturn(Optional.of(order));
+        // #4：发货腿改为「锁订单行再判状态」，fulfillOrder 走 findByOrderNumberForUpdate
+        when(orderRepository.findByOrderNumberForUpdate("ORD-1")).thenReturn(Optional.of(order));
         when(amountValidator.validateAmount(any(Order.class), any())).thenReturn(false);
 
         ResponseEntity<String> resp = controller.processWebhook(

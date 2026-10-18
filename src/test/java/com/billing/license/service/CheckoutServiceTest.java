@@ -74,6 +74,9 @@ class CheckoutServiceTest {
             paymentRepository,
             rateLimitService,
             customerIdentityService);
+        // #5：getStatus 把「确认已支付后的写库腿」交给 self.applyCompensatedPayment 的短事务；
+        // 单测没有容器代理，self 直接指回同一实例。
+        org.springframework.test.util.ReflectionTestUtils.setField(checkoutService, "self", checkoutService);
 
         product = Product.builder().id(UUID.randomUUID()).sku("pro")
             .name("Pro").price(new BigDecimal("99.00"))

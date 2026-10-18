@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -22,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class PaddleStrategyTest {
 
-    private final PaddleStrategy strategy = new PaddleStrategy();
+    private final PaddleStrategy strategy = new PaddleStrategy(HttpClient.newHttpClient());
 
     private static String bytesToHex(byte[] bytes) {
         StringBuilder sb = new StringBuilder(bytes.length * 2);

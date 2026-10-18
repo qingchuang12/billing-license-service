@@ -2,6 +2,8 @@ package com.billing.license.repository;
 
 import com.billing.license.entity.License;
 import com.billing.license.entity.Order;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -15,6 +17,15 @@ import java.util.UUID;
 public interface LicenseRepository extends JpaRepository<License, UUID> {
     Optional<License> findByLicenseKey(String licenseKey);
     List<License> findByCustomerId(UUID customerId);
+
+    // #9（管理端分页 + 状态下推）：以下分页变体供 /api/admin/licenses 使用，
+    // 状态条件进 SQL 而不是先取全量再在内存筛。
+    Page<License> findByCustomerId(UUID customerId, Pageable pageable);
+    Page<License> findByCustomerIdAndStatus(UUID customerId, License.LicenseStatus status, Pageable pageable);
+    Page<License> findByOrder(Order order, Pageable pageable);
+    Page<License> findByOrderAndStatus(Order order, License.LicenseStatus status, Pageable pageable);
+    Page<License> findByStatus(License.LicenseStatus status, Pageable pageable);
+
     // 用户自助查询：本人名下 License，签发时间倒序（最新的在前）
     List<License> findByCustomerIdOrderByIssuedAtDesc(UUID customerId);
     List<License> findByOrder(Order order);

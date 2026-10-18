@@ -21,6 +21,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -71,20 +72,25 @@ public class AdminController {
 
     @Operation(summary = "订单查询",
             description = "按状态 / 订单号 / 订单 ID 过滤；全部留空返回全部订单。"
-                    + "（I2：合并原「列表 + 按状态 + by-id + by-number」四个入口）")
+                    + "（I2：合并原「列表 + 按状态 + by-id + by-number」四个入口）"
+                    + "（#9：分页返回，按下单时间倒序）")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "查询成功"),
             @ApiResponse(responseCode = "400", description = "非法状态值 / 非法订单 ID")
     })
     @Audit(action = "LIST_ORDERS", target = "#orderNumber")
     @GetMapping("/orders")
-    public ResponseEntity<List<OrderResponse>> listOrders(
+    public ResponseEntity<Page<OrderResponse>> listOrders(
             @Parameter(description = "订单状态：PENDING/CONFIRMED/PROCESSING/COMPLETED/CANCELLED/REFUNDED/REFUND_FAILED/PAID")
             @RequestParam(required = false) String status,
             @Parameter(description = "业务订单号（精确匹配，优先于 status）")
             @RequestParam(required = false) String orderNumber,
             @Parameter(description = "订单 UUID（精确匹配，优先于 status）")
-            @RequestParam(required = false) String orderId) {
+            @RequestParam(required = false) String orderId,
+            @Parameter(description = "页码（从 0 开始）")
+            @RequestParam(required = false, defaultValue = "0") int page,
+            @Parameter(description = "每页大小（1~200，默认 20）")
+            @RequestParam(required = false, defaultValue = "20") int size) {
         Order.OrderStatus orderStatus = null;
         if (status != null && !status.isBlank()) {
             try {
@@ -94,7 +100,9 @@ public class AdminController {
                 throw new BusinessException("INVALID_ORDER_STATUS", "非法的订单状态值: " + status);
             }
         }
-        return ResponseEntity.ok(adminService.listOrders(orderStatus, orderNumber, orderId));
+        // Q6 同口径：页大小夹到 1~200，避免一次拉全表（#9）
+        Pageable pageable = PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, MAX_PAGE_SIZE)));
+        return ResponseEntity.ok(adminService.listOrders(orderStatus, orderNumber, orderId, pageable));
     }
 
     /**
@@ -150,20 +158,26 @@ public class AdminController {
 
     @Operation(summary = "License 查询（管理端）",
             description = "按客户邮箱 / 订单号 / 状态过滤，全部留空返回全部；返回脱敏视图（不含 signedToken，含失效件）。"
-                    + "（I3：合并原「按客户查询」与「订单下 License 列表」两个入口）")
+                    + "（I3：合并原「按客户查询」与「订单下 License 列表」两个入口）"
+                    + "（#9：分页返回，按签发时间倒序）")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "查询成功"),
             @ApiResponse(responseCode = "400", description = "订单不存在 / 非法状态值")
     })
     @Audit(action = "LIST_LICENSES", target = "#orderNumber")
     @GetMapping("/licenses")
-    public ResponseEntity<List<LicenseResponse>> listLicenses(
+    public ResponseEntity<Page<LicenseResponse>> listLicenses(
             @Parameter(description = "客户邮箱（对外客户标识）") @RequestParam(required = false) String customerEmail,
             @Parameter(description = "业务订单号（精确匹配，优先于 customerEmail）")
             @RequestParam(required = false) String orderNumber,
             @Parameter(description = "License 状态：ACTIVE/EXPIRED/REVOKED/REISSUED")
-            @RequestParam(required = false) String status) {
-        return ResponseEntity.ok(adminService.listLicenses(customerEmail, orderNumber, status));
+            @RequestParam(required = false) String status,
+            @Parameter(description = "页码（从 0 开始）")
+            @RequestParam(required = false, defaultValue = "0") int page,
+            @Parameter(description = "每页大小（1~200，默认 20）")
+            @RequestParam(required = false, defaultValue = "20") int size) {
+        Pageable pageable = PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, MAX_PAGE_SIZE)));
+        return ResponseEntity.ok(adminService.listLicenses(customerEmail, orderNumber, status, pageable));
     }
 
     /**

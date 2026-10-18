@@ -94,7 +94,7 @@ class AdminServiceRefundTest {
         when(strategy.refundPayment(any(), any(), any())).thenReturn(false);
         when(paymentServiceFactory.getStrategy(PaymentMethod.STRIPE)).thenReturn(strategy);
         when(licenseRepository.findByOrder(order)).thenReturn(List.of());
-        when(paymentRepository.findByOrderIdStr(order.getId().toString())).thenReturn(Optional.empty());
+        when(paymentRepository.findByOrderIdStrForUpdate(order.getId().toString())).thenReturn(Optional.empty());
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
 
         BusinessException ex = assertThrows(BusinessException.class,
@@ -116,7 +116,7 @@ class AdminServiceRefundTest {
         when(licenseRepository.findByOrder(order)).thenReturn(List.of());
         // H5 修正：交易号来自 Payment 实体，而不是从未赋值的 order.paymentIntentId
         Payment payment = Payment.builder().paymentId("ch_real_abc123").build();
-        when(paymentRepository.findByOrderIdStr(order.getId().toString())).thenReturn(Optional.of(payment));
+        when(paymentRepository.findByOrderIdStrForUpdate(order.getId().toString())).thenReturn(Optional.of(payment));
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
 
         assertThrows(BusinessException.class, () -> adminService.refundOrder("ORD-REF-1", "用户申请"));
@@ -136,7 +136,7 @@ class AdminServiceRefundTest {
         License license = new License();
         license.setStatus(License.LicenseStatus.ACTIVE);
         when(licenseRepository.findByOrder(order)).thenReturn(List.of(license));
-        when(paymentRepository.findByOrderIdStr(order.getId().toString())).thenReturn(Optional.empty());
+        when(paymentRepository.findByOrderIdStrForUpdate(order.getId().toString())).thenReturn(Optional.empty());
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
         when(orderService.mapToResponse(any())).thenReturn(mock(OrderResponse.class));
 
@@ -165,7 +165,7 @@ class AdminServiceRefundTest {
         when(licenseRepository.findByOrder(order)).thenReturn(List.of());
         // 原支付记录：退款流水的 transactionId 应关联其 paymentId 以便追溯
         Payment original = Payment.builder().paymentId("ch_real_abc123").build();
-        when(paymentRepository.findByOrderIdStr(order.getId().toString())).thenReturn(Optional.of(original));
+        when(paymentRepository.findByOrderIdStrForUpdate(order.getId().toString())).thenReturn(Optional.of(original));
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
         when(orderService.mapToResponse(any())).thenReturn(mock(OrderResponse.class));
 
@@ -193,7 +193,7 @@ class AdminServiceRefundTest {
         when(strategy.refundPayment(any(), any(), any())).thenReturn(false);
         when(paymentServiceFactory.getStrategy(PaymentMethod.STRIPE)).thenReturn(strategy);
         when(licenseRepository.findByOrder(order)).thenReturn(List.of());
-        when(paymentRepository.findByOrderIdStr(order.getId().toString())).thenReturn(Optional.empty());
+        when(paymentRepository.findByOrderIdStrForUpdate(order.getId().toString())).thenReturn(Optional.empty());
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
 
         assertThrows(BusinessException.class, () -> adminService.refundOrder("ORD-REF-1", "用户申请"));
@@ -215,7 +215,7 @@ class AdminServiceRefundTest {
         License license = new License();
         license.setStatus(License.LicenseStatus.ACTIVE);
         when(licenseRepository.findByOrder(order)).thenReturn(List.of(license));
-        when(paymentRepository.findByOrderIdStr(order.getId().toString())).thenReturn(Optional.empty());
+        when(paymentRepository.findByOrderIdStrForUpdate(order.getId().toString())).thenReturn(Optional.empty());
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
         when(orderService.mapToResponse(any())).thenReturn(mock(OrderResponse.class));
 
@@ -244,7 +244,7 @@ class AdminServiceRefundTest {
         when(strategy.refundPayment(any(), any(), eq(new BigDecimal("10.00")))).thenReturn(true);
         when(paymentServiceFactory.getStrategy(PaymentMethod.PADDLE)).thenReturn(strategy);
         when(licenseRepository.findByOrder(order)).thenReturn(List.of());
-        when(paymentRepository.findByOrderIdStr(order.getId().toString())).thenReturn(Optional.empty());
+        when(paymentRepository.findByOrderIdStrForUpdate(order.getId().toString())).thenReturn(Optional.empty());
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
         when(orderService.mapToResponse(any())).thenReturn(mock(OrderResponse.class));
 
@@ -270,7 +270,7 @@ class AdminServiceRefundTest {
         PaymentStrategy strategy = mock(PaymentStrategy.class);
         when(strategy.refundPayment(any(), any(), any())).thenReturn(false);
         when(paymentServiceFactory.getStrategy(PaymentMethod.PADDLE)).thenReturn(strategy);
-        when(paymentRepository.findByOrderIdStr(order.getId().toString())).thenReturn(Optional.empty());
+        when(paymentRepository.findByOrderIdStrForUpdate(order.getId().toString())).thenReturn(Optional.empty());
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
 
         BusinessException ex = assertThrows(BusinessException.class,
@@ -320,7 +320,7 @@ class AdminServiceRefundTest {
         when(strategy.refundPayment(any(), any(), eq(new BigDecimal("10.00")))).thenReturn(true);
         when(paymentServiceFactory.getStrategy(PaymentMethod.ALIPAY)).thenReturn(strategy);
         when(licenseRepository.findByOrder(order)).thenReturn(List.of());
-        when(paymentRepository.findByOrderIdStr(order.getId().toString())).thenReturn(Optional.empty());
+        when(paymentRepository.findByOrderIdStrForUpdate(order.getId().toString())).thenReturn(Optional.empty());
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
         when(orderService.mapToResponse(any())).thenReturn(mock(OrderResponse.class));
 
@@ -335,7 +335,7 @@ class AdminServiceRefundTest {
         Order order = paidOrder(null); // 模拟存量订单：从未落库 provider
         when(orderRepository.findByOrderNumber("ORD-REF-1")).thenReturn(Optional.of(order));
         Payment payment = Payment.builder().paymentId("ch_real_abc123").method(PaymentMethod.STRIPE).build();
-        when(paymentRepository.findByOrderIdStr(order.getId().toString())).thenReturn(Optional.of(payment));
+        when(paymentRepository.findByOrderIdStrForUpdate(order.getId().toString())).thenReturn(Optional.of(payment));
 
         PaymentStrategy strategy = mock(PaymentStrategy.class);
         when(strategy.refundPayment(any(), any(), any())).thenReturn(true);

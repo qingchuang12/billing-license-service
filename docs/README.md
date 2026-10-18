@@ -3,7 +3,7 @@
 统一的计费与许可证管理服务，基于 **Java 21 + Spring Boot 4.1.1**（JPA/Hibernate + PostgreSQL + Flyway + 5 家支付渠道 + KMS）构建，为桌面端 exe 工具提供 license 签发、兑换、换机与计费/退款/账务查看后端。
 
 > **上线执行手册见 [`上线准备工作.md`](./上线准备工作.md)**（阻断项清单 / 密钥生成实测命令 / 渠道设置 / 上线当天清单）。
-> 已知风险与待实测项见 [`上线准备工作.md`](./上线准备工作.md) §九「风险登记」与 §七 验收清单（含 B7 渠道部分退款、B8 Paddle 续费 payload、E 段管理台实机走查）；授权域「明确不做」与红线定案见 [`授权设计方案.md`](./授权设计方案.md) §十八，管理台 / MFA / 退款范围边界见 [`架构与业务流程设计.md`](./架构与业务流程设计.md) 末节「附：范围边界定案」。活动 plan [`plan-7.0.md`](./plan-7.0.md) **只承载未完成项**（上线闸门 T1–T4 均需外部资源）。
+> 已知风险与待实测项见 [`上线准备工作.md`](./上线准备工作.md) §九「风险登记」与 §七 验收清单（含 B7 渠道部分退款、B8 Paddle 续费 payload、E 段管理台实机走查）；授权域「明确不做」与红线定案见 [`授权设计方案.md`](./授权设计方案.md) §十八，管理台 / MFA / 退款范围边界见 [`架构与业务流程设计.md`](./架构与业务流程设计.md) 末节「附：范围边界定案」。活动 plan [`plan-8.0.md`](./plan-8.0.md) **只承载未完成项**（2026-10-17 全量审计整改：8 项【可直接做】含资损并发 2 与性能/索引 5、4 项【需你决策】、2 项【需你处理】）；上线闸门 T1–T4 属外部资源事项，登记在 [`上线准备工作.md`](./上线准备工作.md) §七-D。
 
 ## 功能特性
 
@@ -115,7 +115,7 @@ docker compose logs -f app
 
 | 分组 | 方法与路径 | 鉴权 |
 |---|---|---|
-| 收银台 | `POST /api/checkout/create`（可选 `provider`，一步下单） | 公开 |
+| 收银台 | `POST /api/checkout/create`（可选 `provider`，一步下单） | 公开·**IP + 邮箱双维度限流**（#8：IP 由服务端解析，请求体 `clientIp` 已 `@JsonIgnore`） |
 | | `POST /api/checkout/{checkoutId}/select-provider` | 公开 |
 | | `GET /api/checkout/{checkoutId}/status` | 公开 |
 | 商品目录 | `GET /api/products?product=<产品码>` | 公开（`product` 缺省/空白＝返回全部在售；见下「收银台」段） |
@@ -126,10 +126,10 @@ docker compose logs -f app
 | 兑换码 | `POST /api/redeem/redeem` | 公开 |
 | 支付回调 | `POST /api/webhooks/{alipay \| wechat \| stripe \| paddle \| paypal}` | 公开（各渠道自行验签） |
 | 机器台账 | `GET /api/licenses/machine/{machineCode}/first-seen` | 公开只读（返回 `seen` / `firstSeenAt`，供客户端试用防重置：删档重装不能白嫖试用，C8） |
-| 订单 | `GET /api/admin/orders?status=&orderNumber=&orderId=` | 管理员 JWT |
+| 订单 | `GET /api/admin/orders?status=&orderNumber=&orderId=&page=&size=` | 管理员 JWT（#9 起分页：`page` 从 0 起、`size` 默认 20 上限 200，按下单时间倒序，返回 `Page`） |
 | | `POST /api/admin/orders/{orderNumber}/issue` | 管理员 JWT |
 | | `POST /api/admin/orders/{orderNumber}/refund` | 管理员 JWT |
-| License | `GET /api/admin/licenses?customerEmail=&orderNumber=&status=` | 管理员 JWT |
+| License | `GET /api/admin/licenses?customerEmail=&orderNumber=&status=&page=&size=` | 管理员 JWT（#9 起分页：`page` 从 0 起、`size` 默认 20 上限 200，按签发时间倒序，返回 `Page`） |
 | | `GET /api/admin/licenses/{licenseKey}` | 管理员 JWT |
 | | `POST /api/admin/licenses/{licenseKey}/revoke` | 管理员 JWT |
 | | `POST /api/admin/licenses/{licenseKey}/reissue` | 管理员 JWT（`force=true` 可越重发上限；`newMachineId` 可空） |
@@ -393,8 +393,8 @@ curl "http://localhost:8000/api/admin/orders?orderNumber=ORD-20260914-0001" \
 curl "http://localhost:8000/api/admin/orders?status=PAID" \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 
-# 全部订单
-curl "http://localhost:8000/api/admin/orders" \
+# 全部订单（#9 起为分页视图：data.content 是本页条目，按 createdAt 倒序；默认 size=20、上限 200）
+curl "http://localhost:8000/api/admin/orders?page=0&size=100" \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -421,7 +421,8 @@ curl http://localhost:8000/api/licenses/verify/{licenseKey}
 curl "http://localhost:8000/api/licenses/pending?machineId=ABCD-1234-EFGH-5678"
 
 # 查询 License（I3：一个端点替代「按客户查询」与「订单下 License 列表」，含失效件）
-curl "http://localhost:8000/api/admin/licenses?customerEmail=buyer@example.com" -H "Authorization: Bearer $ADMIN_TOKEN"
+#    #9 起为分页视图（数据在 Page.content，按 issuedAt 倒序；size 默认 20、上限 200），状态过滤已下推 SQL
+curl "http://localhost:8000/api/admin/licenses?customerEmail=buyer@example.com&size=200" -H "Authorization: Bearer $ADMIN_TOKEN"
 curl "http://localhost:8000/api/admin/licenses?orderNumber=ORD-20260914-0001" -H "Authorization: Bearer $ADMIN_TOKEN"
 curl "http://localhost:8000/api/admin/licenses?status=REISSUED" -H "Authorization: Bearer $ADMIN_TOKEN"
 
