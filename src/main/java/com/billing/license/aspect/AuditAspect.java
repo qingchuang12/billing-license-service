@@ -1,6 +1,7 @@
 package com.billing.license.aspect;
 
 import com.billing.license.annotation.Audit;
+import com.billing.license.common.web.ClientIpResolver;
 import com.billing.license.entity.AuditLog;
 import com.billing.license.service.AuditLogService;
 import lombok.extern.slf4j.Slf4j;
@@ -30,11 +31,13 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 public class AuditAspect {
 
     private final AuditLogService auditLogService;
+    private final ClientIpResolver clientIpResolver;
     private final ParameterNameDiscoverer parameterNameDiscoverer = new DefaultParameterNameDiscoverer();
     private final ExpressionParser spelParser = new SpelExpressionParser();
 
-    public AuditAspect(AuditLogService auditLogService) {
+    public AuditAspect(AuditLogService auditLogService, ClientIpResolver clientIpResolver) {
         this.auditLogService = auditLogService;
+        this.clientIpResolver = clientIpResolver;
     }
 
     @Around("@annotation(audit)")
@@ -84,8 +87,9 @@ public class AuditAspect {
 
     private String currentIp() {
         ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-        return attrs != null && attrs.getRequest().getRemoteAddr() != null
-                ? attrs.getRequest().getRemoteAddr() : null;
+        // #17：与限流同口径解析来源 IP。反代后 getRemoteAddr() 恒为代理地址，审计里的 IP 列会失去排查价值；
+        // 未信任反代（billing.trust-x-forwarded-for=false）时 ClientIpResolver 自身即回落 remoteAddr，行为不劣化。
+        return attrs != null ? clientIpResolver.resolve(attrs.getRequest()) : null;
     }
 
     private String currentUserAgent() {

@@ -206,7 +206,7 @@ class CheckoutServiceTest {
         when(paymentServiceFactory.getStrategy(PaymentMethod.ALIPAY)).thenReturn(mock(com.billing.license.service.payment.strategy.PaymentStrategy.class));
         PaymentResponse pr = new PaymentResponse();
         pr.setPayUrl("https://pay.example.com/x");
-        when(paymentService.createPayment(any(Order.class), eq(PaymentMethod.ALIPAY))).thenReturn(pr);
+        when(paymentService.requestPayment(any(Order.class), eq(PaymentMethod.ALIPAY))).thenReturn(pr);
         when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
 
         SelectProviderRequest sel = SelectProviderRequest.builder().provider("alipay").build();
@@ -256,7 +256,7 @@ class CheckoutServiceTest {
         when(paymentServiceFactory.getStrategy(PaymentMethod.ALIPAY)).thenReturn(mock(com.billing.license.service.payment.strategy.PaymentStrategy.class));
         PaymentResponse pr = new PaymentResponse();
         pr.setPayUrl("https://pay.example.com/x");
-        when(paymentService.createPayment(any(Order.class), eq(PaymentMethod.ALIPAY))).thenReturn(pr);
+        when(paymentService.requestPayment(any(Order.class), eq(PaymentMethod.ALIPAY))).thenReturn(pr);
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
 
         checkoutService.selectProvider("chk_1", SelectProviderRequest.builder().provider("alipay").build());

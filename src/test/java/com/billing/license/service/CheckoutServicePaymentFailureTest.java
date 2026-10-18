@@ -52,6 +52,9 @@ class CheckoutServicePaymentFailureTest {
                 mock(RedeemCodeService.class), mock(LicenseRepository.class),
                 mock(RedeemCodeRepository.class), mock(PaymentRepository.class),
                 mock(RateLimitService.class), mock(CustomerIdentityService.class));
+        // #16：selectProvider 拆成「事务外调渠道 + self.recordPaymentChoice 短事务落库」，
+        // 单测无容器代理，self 指回同一实例。
+        org.springframework.test.util.ReflectionTestUtils.setField(checkoutService, "self", checkoutService);
     }
 
     @Test
@@ -68,7 +71,7 @@ class CheckoutServicePaymentFailureTest {
         PaymentResponse failed = new PaymentResponse();
         failed.setStatus(PaymentStatus.FAILED.name());
         failed.setErrorMessage("支付宝未配置");
-        when(paymentService.createPayment(any(Order.class), eq(PaymentMethod.ALIPAY))).thenReturn(failed);
+        when(paymentService.requestPayment(any(Order.class), eq(PaymentMethod.ALIPAY))).thenReturn(failed);
         when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
 
         BusinessException ex = assertThrows(BusinessException.class,
@@ -89,7 +92,7 @@ class CheckoutServicePaymentFailureTest {
 
         PaymentResponse ok = new PaymentResponse();
         ok.setPayUrl("https://pay.example.com/x");
-        when(paymentService.createPayment(any(Order.class), eq(PaymentMethod.ALIPAY))).thenReturn(ok);
+        when(paymentService.requestPayment(any(Order.class), eq(PaymentMethod.ALIPAY))).thenReturn(ok);
         when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
 
         assertDoesNotThrow(() ->

@@ -73,8 +73,16 @@ public class CheckoutService {
      * 创建收银台会话
      * 根据币种/语言自动判断国内或国际区域，返回可选支付方式列表；
      * 同时创建订单与收银台会话。
+     *
+     * <p>#16（承 #5：渠道外部调用一律在事务之外）：本方法**不开事务**——一步下单（请求带 provider）
+     * 末尾会直接走 {@link #selectProvider}，那是一条真实的渠道下单 HTTP；原先本方法的
+     * {@code @Transactional} 把「建单 + 渠道调用」圈进同一事务，一次请求全程占住一根 DB 连接。
+     * 建单与建会话收敛进 {@link #persistOrderAndSession} 短事务，渠道调用发生在其之外。
+     *
+     * <p>有意为之的一处语义变化：一步下单且渠道创建失败时，订单与收银台会话**保留**（改造前随外层事务
+     * 一并回滚），与两步下单一致——前端可拿同一 checkoutId 续选其它渠道；本次失败仍按 H6 抛
+     * {@code PAYMENT_CREATE_FAILED}。
      */
-    @Transactional
     public CheckoutResponse createCheckout(CheckoutRequest request) {
         log.info("创建收银台：product={}, currency={}, locale={}", request.getProductId(), request.getCurrency(), request.getLocale());
 
@@ -118,6 +126,39 @@ public class CheckoutService {
 
         // E4（客户标识邮箱化）：不再匿名随机 UUID 兜底——对外邮箱解析为内部 userId，
         // 未注册邮箱自动建访客账户（方案 A：邮箱对外、UUID 内部）。
+        CheckoutSession session = self.persistOrderAndSession(request, domestic, orderAmount, orderCurrency);
+        String checkoutId = session.getCheckoutId();
+
+        // I7（2026-09-14）一步下单：请求带 provider 时直接创建支付并返回二维码/跳转链接，
+        // 免去前端「create → select-provider」两次往返；不带则维持两步（先返回可用支付方式列表）。
+        // #16：建单事务已提交，这里的渠道调用不再被任何事务包着。
+        if (request.getProvider() != null && !request.getProvider().isBlank()) {
+            SelectProviderRequest selectRequest = new SelectProviderRequest();
+            selectRequest.setProvider(request.getProvider().trim());
+            CheckoutResponse paid = selectProvider(checkoutId, selectRequest);
+            paid.setPaymentMethods(methods.stream().map(Enum::name).collect(Collectors.toList()));
+            return paid;
+        }
+
+        return CheckoutResponse.builder()
+            .checkoutId(checkoutId)
+            .orderNumber(session.getOrderNumber())
+            .status(session.getStatus().name())
+            .paymentMethods(methods.stream().map(Enum::name).collect(Collectors.toList()))
+            .payUrl("")  // 未传 provider：选择支付方式后再生成
+            .expiresAt(session.getExpiresAt() != null ? session.getExpiresAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() : null)
+            .build();
+    }
+
+    /**
+     * #16：建单 + 建会话的短事务（客户标识解析与访客建号也在其中），与渠道外部调用解耦。
+     */
+    @Transactional
+    public CheckoutSession persistOrderAndSession(CheckoutRequest request, boolean domestic,
+                                                  BigDecimal orderAmount, Currency orderCurrency) {
+        Product product = productRepository.findBySku(request.getProductId())
+            .orElseThrow(() -> new BusinessException("PRODUCT_NOT_FOUND", "Product not found: " + request.getProductId()));
+
         Order order = Order.builder()
             .orderNumber(generateOrderNumber())
             .customerId(customerIdentityService.resolveOrCreate(request.getCustomerEmail()))
@@ -159,40 +200,35 @@ public class CheckoutService {
             .expiresAt(LocalDateTime.now().plusHours(2))
             .build();
         checkoutSessionRepository.save(session);
-
-        // I7（2026-09-14）一步下单：请求带 provider 时直接创建支付并返回二维码/跳转链接，
-        // 免去前端「create → select-provider」两次往返；不带则维持两步（先返回可用支付方式列表）。
-        // 注：同类内部调用，复用外层 createCheckout 的既有事务。
-        if (request.getProvider() != null && !request.getProvider().isBlank()) {
-            SelectProviderRequest selectRequest = new SelectProviderRequest();
-            selectRequest.setProvider(request.getProvider().trim());
-            CheckoutResponse paid = selectProvider(checkoutId, selectRequest);
-            paid.setPaymentMethods(methods.stream().map(Enum::name).collect(Collectors.toList()));
-            return paid;
-        }
-
-        return CheckoutResponse.builder()
-            .checkoutId(checkoutId)
-            .orderNumber(order.getOrderNumber())
-            .status(session.getStatus().name())
-            .paymentMethods(methods.stream().map(Enum::name).collect(Collectors.toList()))
-            .payUrl("")  // 未传 provider：选择支付方式后再生成
-            .expiresAt(session.getExpiresAt() != null ? session.getExpiresAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() : null)
-            .build();
+        return session;
     }
 
     /**
      * 选择支付方式并创建真实支付会话（返回二维码或跳转链接）
+     *
+     * <p>#16（承 #5：渠道外部调用一律在事务之外）：本方法**不开事务**。中间那步
+     * {@link com.billing.license.service.payment.PaymentService#requestPayment} 是真实的渠道下单 HTTP，
+     * 原先整段包在 {@code @Transactional} 内，一次选渠道会在等渠道响应期间占住一根 DB 连接
+     * （Hikari 默认池 10）；一步下单（{@code createCheckout} 带 provider）更是把建单与渠道调用圈进同一事务。
+     * 现拆三段：事务外只读会话/订单 → 事务外调渠道 → 写库收敛进 {@link #recordPaymentChoice} 短事务。
+     *
+     * <p>旧语义逐条保持不变：
+     * <ul>
+     *   <li>B4 幂等前置：会话已支付、或同渠道已建过支付入口 → 复用既有入口，绝不再建一个真实收银台；</li>
+     *   <li>H6 失败显式反馈：渠道返回 FAILED 时在**任何写库之前**抛 {@code PAYMENT_CREATE_FAILED}，
+     *       故订单渠道、会话与 Payment 行均不落地（改造前由外层事务回滚达成，现由抛出时机达成）；</li>
+     *   <li>H5：仅成功时把所选渠道写进订单，供管理端退款定位渠道。</li>
+     * </ul>
      */
-    @Transactional
     public CheckoutResponse selectProvider(String checkoutId, SelectProviderRequest request) {
         log.info("选择支付方式：checkoutId={}, provider={}", checkoutId, request.getProvider());
 
         CheckoutSession session = checkoutSessionRepository.findByCheckoutId(checkoutId)
             .orElseThrow(() -> new BusinessException("CHECKOUT_NOT_FOUND", "Checkout session not found: " + checkoutId));
 
-        Order order = orderRepository.findById(session.getOrderId())
-            .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "Order not found: " + session.getOrderId()));
+        UUID orderId = session.getOrderId();
+        Order order = orderRepository.findById(orderId)
+            .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "Order not found: " + orderId));
 
         PaymentMethod method = resolveMethod(request.getProvider());
 
@@ -211,16 +247,11 @@ public class CheckoutService {
         }
         // 3) 其余情况（首次选择 / 切换到不同渠道）走正常创建流程。
 
-        PaymentResponse paymentResponse = paymentService.createPayment(order, method);
-
-        // H5 修复：落库订单所选支付渠道，供管理端退款 resolveMethod(order.getPaymentProvider()) 使用。
-        // 全工程此前无任何 setPaymentProvider 调用点 → 退款恒走 REFUND_FAILED。
-        // 仅当渠道支付创建成功（未抛 PAYMENT_CREATE_FAILED）后才落库，避免脏状态。
-        order.setPaymentProvider(method);
-        orderRepository.save(order);
+        PaymentResponse paymentResponse = paymentService.requestPayment(order, method);
 
         // H6：支付创建失败（渠道未配置/网络异常/参数错误等）必须向前端显式反馈，
         // 禁止静默返回空 payUrl 让前端陷入"已下单却无支付入口"的困惑状态。
+        // 抛出点在任何写库之前：订单渠道、会话与 Payment 行都不落地。
         if (PaymentStatus.FAILED.name().equals(paymentResponse.getStatus())) {
             String err = (paymentResponse.getErrorMessage() != null && !paymentResponse.getErrorMessage().isEmpty())
                     ? paymentResponse.getErrorMessage()
@@ -228,16 +259,40 @@ public class CheckoutService {
             throw new BusinessException("PAYMENT_CREATE_FAILED", err);
         }
 
-        // 更新收银台会话
+        session = self.recordPaymentChoice(order.getId(), checkoutId, method, paymentResponse);
+        return buildPaymentChoiceResponse(session, method, paymentResponse);
+    }
+
+    /**
+     * #16：渠道下单成功后的写库腿，独立短事务——订单所选渠道（H5）+ Payment 记录 + 收银台会话三处同进同退。
+     */
+    @Transactional
+    public CheckoutSession recordPaymentChoice(UUID orderId, String checkoutId, PaymentMethod method,
+                                               PaymentResponse paymentResponse) {
+        Order order = orderRepository.findById(orderId)
+            .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "Order not found: " + orderId));
+        // H5 修复：落库订单所选支付渠道，供管理端退款 resolveMethod(order.getPaymentProvider()) 使用。
+        order.setPaymentProvider(method);
+        orderRepository.save(order);
+
+        paymentService.recordPayment(order, method, paymentResponse);
+
+        CheckoutSession session = checkoutSessionRepository.findByCheckoutId(checkoutId)
+            .orElseThrow(() -> new BusinessException("CHECKOUT_NOT_FOUND", "Checkout session not found: " + checkoutId));
         session.setProvider(method);
         session.setStatus(CheckoutSession.Status.PENDING);
         session.setProviderSessionId(paymentResponse.getPaymentId());
         if (paymentResponse.getPayUrl() != null) session.setPayUrl(paymentResponse.getPayUrl());
         if (paymentResponse.getRedirectUrl() != null && session.getPayUrl() == null) session.setPayUrl(paymentResponse.getRedirectUrl());
         checkoutSessionRepository.save(session);
+        return session;
+    }
 
+    /** 选择渠道成功后的响应：支付入口按「跳转 → 重定向 → 二维码」优先级取用。 */
+    private CheckoutResponse buildPaymentChoiceResponse(CheckoutSession session, PaymentMethod method,
+                                                        PaymentResponse paymentResponse) {
         CheckoutResponse.CheckoutResponseBuilder resp = CheckoutResponse.builder()
-            .checkoutId(checkoutId)
+            .checkoutId(session.getCheckoutId())
             .orderNumber(session.getOrderNumber())
             .status(session.getStatus().name())
             .provider(method.name());

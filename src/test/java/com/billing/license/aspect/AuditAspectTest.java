@@ -1,6 +1,7 @@
 package com.billing.license.aspect;
 
 import com.billing.license.annotation.Audit;
+import com.billing.license.common.web.ClientIpResolver;
 import com.billing.license.entity.AuditLog;
 import com.billing.license.service.AuditLogService;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -59,7 +60,7 @@ class AuditAspectTest {
     @Test
     void success_recordsPersistWithResolvedTarget() throws Throwable {
         AuditLogService svc = mock(AuditLogService.class);
-        AuditAspect aspect = new AuditAspect(svc);
+        AuditAspect aspect = new AuditAspect(svc, new ClientIpResolver(false));
         ProceedingJoinPoint pjp = pjpFor("doX", new Class<?>[]{String.class}, new Object[]{"ORDER-1"}, "ok");
 
         Object ret = aspect.around(pjp, annotationFor("doX", String.class));
@@ -79,7 +80,7 @@ class AuditAspectTest {
     @Test
     void failure_recordsFailAndRethrows() throws Throwable {
         AuditLogService svc = mock(AuditLogService.class);
-        AuditAspect aspect = new AuditAspect(svc);
+        AuditAspect aspect = new AuditAspect(svc, new ClientIpResolver(false));
         ProceedingJoinPoint pjp = pjpFor("failX", new Class<?>[]{}, new Object[]{},
                 new IllegalStateException("boom"));
 

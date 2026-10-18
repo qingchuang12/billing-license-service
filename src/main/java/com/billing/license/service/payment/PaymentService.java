@@ -25,7 +25,7 @@ public class PaymentService {
     
     private static final Logger logger = LoggerFactory.getLogger(PaymentService.class);
     
-    // i2：共享 ObjectMapper 单例，避免每次调用 createPayment 都 new 一个（浪费且可能重复配置）
+    // i2：共享 ObjectMapper 单例，避免每次落支付记录都 new 一个（浪费且可能重复配置）
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
@@ -39,15 +39,22 @@ public class PaymentService {
     private com.billing.license.repository.OrderRepository orderRepository;
     
     /**
-     * 创建支付订单
+     * 向支付渠道发起下单（#16：外部调用与落库拆开，调用方得以把渠道 HTTP 留在事务之外）。
+     *
+     * <p>本方法**不开事务**，只调策略；返回的 {@link PaymentResponse} 由调用方判断成功与否后
+     * 再交给 {@link #recordPayment} 落库——渠道创建失败时不应留下支付记录。
+     */
+    public PaymentResponse requestPayment(Order order, PaymentMethod method) {
+        logger.info("向渠道发起支付创建：orderId={}, method={}", order.getOrderNo(), method);
+        return paymentServiceFactory.getStrategy(method).createPayment(order);
+    }
+
+    /**
+     * 落库支付记录（#16）。由调用方在**成功拿到渠道响应后**于其事务内调用；
+     * 状态由响应推导，失败态不落库（旧行为由外层事务回滚保证，现由调用时机保证）。
      */
     @Transactional
-    public PaymentResponse createPayment(Order order, PaymentMethod method) {
-        logger.info("创建支付订单：orderId={}, method={}", order.getOrderNo(), method);
-        
-        // 使用对应策略创建支付
-        PaymentResponse response = paymentServiceFactory.getStrategy(method).createPayment(order);
-        
+    public Payment recordPayment(Order order, PaymentMethod method, PaymentResponse response) {
         // 保存支付记录
         Payment payment = new Payment();
         // 将 UUID 转换为 String 存储（因为 Order.id 是 UUID 类型）
@@ -60,7 +67,7 @@ public class PaymentService {
         payment.setStatus(toStatus(response.getStatus()));
         payment.setChannel(method);
         payment.setCreatedAt(LocalDateTime.now());
-        
+
         if (response.getExtraParams() != null) {
             // 存储额外参数为 JSON
             try {
@@ -69,10 +76,8 @@ public class PaymentService {
                 logger.warn("序列化支付元数据失败", e);
             }
         }
-        
-        paymentRepository.save(payment);
-        
-        return response;
+
+        return paymentRepository.save(payment);
     }
     
     /**

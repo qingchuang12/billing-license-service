@@ -10,8 +10,7 @@
 
 ### ①【可直接做】AI 现在即可落地，范围明确无待决策
 
-- [ ] **#16** `selectProvider` 腿仍在事务内发外部 HTTP（承自 #5，同因未一并改动）：`CheckoutService#selectProvider`（`CheckoutService.java:170` 一带的 `@Transactional`）内调 `paymentService.createPayment(...)` → 各策略向渠道真实下单（支付宝/微信/Paddle/PayPal 均为外部请求；Stripe 走 SDK）。#5 已把**验签**（`WebhookController#processWebhook`）与**查单**（`CheckoutService#getStatus` → `compensateFromChannel`）挪到事务外，本腿未动。后果与 #5 同源：渠道下单卡住即同时占住请求线程与一根 DB 连接。修法照 #5 已落的先例做三段式：`selectProvider` 不开事务 → 事务外读会话/订单与调渠道 → 结果落库收敛进一个 `@Transactional` 短方法（经 `self` 代理调用，`CheckoutService` 已因 #5 持有 `self` 字段）。⚠️ 保持既有语义不动：渠道创建失败必须仍落 `FAILED` 会话/抛 `PAYMENT_CREATE_FAILED`（`CheckoutServicePaymentFailureTest` 钉住）、同渠道重复选择仍幂等返回既有支付入口（B4 `buildResumeResponse`）。
-- [ ] **#17** 审计留痕里的 IP 仍是直连地址：`AuditAspect.java:87-88` 用 `attrs.getRequest().getRemoteAddr()` 记审计操作者 IP。#7 已把**限流**口径统一为 `ClientIpResolver`，但审计侧没改 → 反向代理部署后 `audit_logs` 的 IP 列恒为代理 IP，「谁在什么地址退的款」查不到真值（与 §五「真实 IP」的排查预期不符）。修法：`AuditAspect` 注入 `ClientIpResolver` 并改用它解析（口径与限流一致，`BILLING_TRUST_XFF=false` 时仍取 remoteAddr，行为不劣化）。
+- [ ] **#19** `selectProvider` 的 B4 幂等前置仍是**无锁 check-then-act**（#16 落地后遗留的同源缺口，非新引入）：`CheckoutService#selectProvider` 先在事务外读会话判「已支付 / 同渠道已有 providerSessionId」，再调渠道创建支付、最后 `self.recordPaymentChoice` 写库。两个并发请求（同一 `checkoutId` 连点、或前端重试）都能读到 `CREATED` 而**各建一个真实收银台**——用户若两个都付即双收，需走退款收口。改造前后窗口宽度相同（原判读此前也未加锁），但 #16 把外部调用挪出事务后不该再拖长它，值得补齐。修法（沿用本仓既有先例，不动契约）：按 `checkoutId` 复用 `CheckoutService#fulfillmentLocks` 那套引用计数锁（R5/F8）把「判 + 调渠道 + 写库」整段串行化；后到者进入即命中 B4 幂等分支复用既有支付入口。⚠️ 与「暂不做」的 Redis 分布式锁不冲突：本仓定案单实例部署，进程内锁即为现行口径；横向扩容时与限流一并改造。
 
 ### ②【需你决策】存在取舍，附选项与推荐
 
@@ -64,7 +63,7 @@
 13. `licenses.machine_code` 是设备绑定的唯一真相，不得回落 `orders.machine_code`（回落会重新引入「解绑清不掉生效绑定」的死锁）。
 14. 一切可能资损的「先查后改」路径（发货、退款、兑换码核销）必须有 DB 级并发保护（行锁或唯一约束），不得只靠状态判断。
 15. **退款串行化令牌必须是该订单的 `payments` 行，不得改回订单行**：`AdminService#refundOrder` 的渠道失败态由 `persistRefundFailed` 在 `REQUIRES_NEW` 内层事务里 UPDATE 同一订单行；外层若持订单行 `FOR UPDATE`，内层永远等不到该锁而外层又在等内层返回 → 无语句超时则**永久挂起**并占死一根连接。发货两腿（`fulfillOrder` / `revokeOnChannelRefund` / `applyCompensatedPayment`）无此内层事务，故仍用订单行锁。
-16. 渠道外部调用一律「有超时、在事务外」：`HttpClient` 只能取 `PaymentHttpClientConfig`（connectTimeout 5s）且每个 `HttpRequest` 必须带 `PaymentHttpClientConfig.REQUEST_TIMEOUT`（10s）；不得再在策略里 `HttpClient.newHttpClient()`，也不得把外部调用移回 `@Transactional` 方法体内（`selectProvider` 腿见 #16）。
+16. 渠道外部调用一律「有超时、在事务外」：`HttpClient` 只能取 `PaymentHttpClientConfig`（connectTimeout 5s）且每个 `HttpRequest` 必须带 `PaymentHttpClientConfig.REQUEST_TIMEOUT`（10s）；不得再在策略里 `HttpClient.newHttpClient()`，也不得把外部调用移回 `@Transactional` 方法体内。收银台侧的既定形态是三段式（`createCheckout` / `selectProvider` / `getStatus` 三者**都不开事务**，写库各自收敛进 `persistOrderAndSession` / `recordPaymentChoice` / `applyCompensatedPayment` 短事务，经 `self` 代理调用）；`PaymentService` 相应拆成 `requestPayment`（事务外调渠道）+ `recordPayment`（落库），**不得**再合并回一个 `createPayment`——那会把渠道 HTTP 与 Payment 行写库重新捆进同一事务，并让「渠道失败不落 Payment 行」退化为靠回滚兜底。
 
 ## 暂不做（勿回头扩范围）
 
@@ -72,7 +71,8 @@
 
 ## 验证命令
 
-- 全量测试：`mvn -o test`（2026-10-18 实跑：`Tests run: 592, Failures: 0, Errors: 0, Skipped: 0`、`BUILD SUCCESS`；本轮 #2/#4/#5/#6/#7/#8/#9 落地后复跑，此前一轮暴露 7 处测试桩与新增锁查询/分页不符，已同步：`WebhookControllerTest` 补 `findByOrderNumberForUpdate` 桩、`AdminServiceRefundTest` 改用 `findByOrderIdStrForUpdate` 桩、`CheckoutServiceTest` 注入 `self`）
+- 全量测试：`mvn -o test`（2026-10-18 两次实跑均 `Tests run: 592, Failures: 0, Errors: 0, Skipped: 0` / `BUILD SUCCESS`：① 批次落地后一次、#16/#17 落地后一次。期间同步的测试桩：`WebhookControllerTest` 补 `findByOrderNumberForUpdate`、`AdminServiceRefundTest` 改用 `findByOrderIdStrForUpdate`、`CheckoutServiceTest` 与 `CheckoutServicePaymentFailureTest` 注入 `self` 并把桩从 `createPayment` 改到 `requestPayment`、`AuditAspectTest` 构造入参加 `ClientIpResolver`）
+- 事务边界核对（#5 / #16）：`Select-String -Path src/main/java/com/billing/license/service/CheckoutService.java -Pattern '@Transactional' -Context 0,1` 后逐条核对——`createCheckout` / `selectProvider` / `getStatus` 三个入口**不应**带 `@Transactional`，写库腿 `persistOrderAndSession` / `recordPaymentChoice` / `applyCompensatedPayment` 应带；`PaymentService#requestPayment` 不应带、`recordPayment` 应带（2026-10-18 实跑符合）
 - ⚠️ 迁移脚本**不在**单测覆盖内（测试用 H2 + `spring.flyway.enabled=false`）→ V12 真库冒烟见 ③ #18
 - 真库启动冒烟（V12 前最后一次，2026-10-16）：`mvn -o spring-boot:run` 后 `curl -fsS http://127.0.0.1:8000/actuator/health`（实跑：Flyway `Successfully validated 11 migrations` + `Current version of schema "public": 11`、`Initialized JPA EntityManagerFactory`（`ddl-auto: validate` 无报错）、`Tomcat started on port 8000`、`Started ... in 22.084 seconds`、health 与 readiness / liveness 均 `UP`；跑完已停进程、8000 无监听）
 - 端点数第三方复核：`curl -fsS http://127.0.0.1:8000/v3/api-docs` 后数 `paths` 与操作数（2026-10-16 实跑：路径 59 / 操作 59；#9 只改响应形态与查询参数，端点数不变）
