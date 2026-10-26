@@ -51,6 +51,10 @@ public class UserProfileResponse {
             example = "false")
     private boolean mustChangePassword;
 
+    @Schema(description = "是否已开启二次验证（MFA）；管理端据此决定是否展示引导横幅与敏感动作二次确认",
+            example = "false")
+    private boolean mfaEnabled;
+
     public static UserProfileResponse from(User user) {
         return UserProfileResponse.builder()
             .id(user.getId())
@@ -61,6 +65,7 @@ public class UserProfileResponse {
             .createdAt(user.getCreatedAt())
             .lastLoginAt(user.getLastLoginAt())
             .mustChangePassword(user.isMustChangePassword())
+            .mfaEnabled(user.isMfaEnabled())
             .build();
     }
 }

@@ -16,7 +16,7 @@ import java.util.UUID;
  * 订阅的生命周期由渠道（MoR）托管，本表仅做「对账与 License 联动」：
  * - 首充：由 Webhook 发货（fulfillOrder）签发 License 后，本表建立订阅与 License 的绑定；
  * - 续费（invoice.paid / transaction.billed）：延长已绑定 License 的过期时间；
- * - 取消（subscription.canceled / customer.subscription.deleted）：作废已绑定 License。
+ * - 取消（subscription.canceled / customer.subscription.deleted）：停止续费，权益保留到已付周期结束。
  */
 @Data
 @Entity

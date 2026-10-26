@@ -1,6 +1,7 @@
 package com.billing.license.service.payment.impl;
 
 import com.billing.license.dto.PaymentChannelStatus;
+import com.billing.license.entity.Product;
 import com.billing.license.exception.ChannelDisabledException;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentStrategy;
@@ -139,5 +140,41 @@ class PaymentServiceFactoryTest {
 
         assertEquals(Set.of(PaymentMethod.STRIPE, PaymentMethod.PAYPAL),
                 new HashSet<>(f.getSupportedMethods()));
+    }
+
+    @Test
+    void capabilityFilter_shouldExcludeChannelsThatCannotSellCycle() {
+        PaymentServiceFactory f = factory("alipay,stripe",
+                strategy(PaymentMethod.ALIPAY, true, NONE),
+                strategy(PaymentMethod.STRIPE, true, NONE));
+
+        assertEquals(List.of(PaymentMethod.ALIPAY),
+                f.getEnabledMethods(true, Product.BillingCycle.LIFETIME),
+                "国内渠道可卖一次性买断");
+        assertTrue(f.getEnabledMethods(true, Product.BillingCycle.MONTHLY).isEmpty(),
+                "国内渠道没有订阅能力，不能卖月付套餐");
+        assertEquals(List.of(PaymentMethod.STRIPE),
+                f.getEnabledMethods(false, Product.BillingCycle.MONTHLY),
+                "国际订阅能力渠道可卖月付套餐");
+        assertEquals(List.of(PaymentMethod.ALIPAY, PaymentMethod.STRIPE),
+                f.getEnabledMethods(Product.BillingCycle.LIFETIME));
+    }
+
+    @Test
+    void channelStatuses_shouldExposeSellingCapabilities() {
+        PaymentServiceFactory f = factory("alipay,stripe",
+                strategy(PaymentMethod.ALIPAY, true, NONE),
+                strategy(PaymentMethod.STRIPE, true, NONE));
+
+        PaymentChannelStatus alipay = f.getChannelStatuses().stream()
+                .filter(s -> "ALIPAY".equals(s.method())).findFirst().orElseThrow();
+        assertFalse(alipay.supportsRecurring());
+        assertEquals(List.of("ONE_TIME", "LIFETIME"), alipay.supportedBillingCycles());
+        assertEquals(List.of("QRCODE", "REDIRECT"), alipay.paymentProducts());
+
+        PaymentChannelStatus stripe = f.getChannelStatuses().stream()
+                .filter(s -> "STRIPE".equals(s.method())).findFirst().orElseThrow();
+        assertTrue(stripe.supportsRecurring());
+        assertEquals(List.of("REDIRECT"), stripe.paymentProducts());
     }
 }

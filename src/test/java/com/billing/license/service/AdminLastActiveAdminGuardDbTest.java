@@ -37,7 +37,7 @@ class AdminLastActiveAdminGuardDbTest {
 
     private User activeAdmin;
     private User otherActiveAdmin;
-    /** 真实存在的操作者（P2 step-up 护栏会按操作者 ID 现查 MFA 开关，查无此人会先报 USER_NOT_FOUND） */
+    /** 真实存在的操作者：服务端按操作者 ID 现查用户，查无此人会先报 USER_NOT_FOUND */
     private User operatorUser;
 
     @BeforeEach
@@ -85,7 +85,7 @@ class AdminLastActiveAdminGuardDbTest {
         assertEquals(3, userRepository.countByRole(User.UserRole.ADMIN), "夹具前提：ADMIN 角色共 3 个");
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> adminUserService.changeStatus(operator(), activeAdmin.getId(), User.UserStatus.DISABLED, null));
+            () -> adminUserService.changeStatus(operator(), activeAdmin.getId(), User.UserStatus.DISABLED));
         assertEquals("LAST_ADMIN_PROTECTED", ex.getErrorCode());
 
         User after = userRepository.findById(activeAdmin.getId()).orElseThrow();
@@ -100,7 +100,7 @@ class AdminLastActiveAdminGuardDbTest {
         buildOneActivePlusDisabledAdmins(2);
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> adminUserService.changeRole(operator(), activeAdmin.getId(), User.UserRole.USER, null));
+            () -> adminUserService.changeRole(operator(), activeAdmin.getId(), User.UserRole.USER));
         assertEquals("LAST_ADMIN_PROTECTED", ex.getErrorCode());
 
         User after = userRepository.findById(activeAdmin.getId()).orElseThrow();
@@ -113,7 +113,7 @@ class AdminLastActiveAdminGuardDbTest {
     void cannotDisableSoleAdmin() {
         buildOneActivePlusDisabledAdmins(0);
         assertThrows(BusinessException.class,
-            () -> adminUserService.changeStatus(operator(), activeAdmin.getId(), User.UserStatus.DISABLED, null));
+            () -> adminUserService.changeStatus(operator(), activeAdmin.getId(), User.UserStatus.DISABLED));
     }
 
     // ==================== 2. 反向：2 个 ACTIVE ADMIN 时允许动其中一个 ====================
@@ -125,7 +125,7 @@ class AdminLastActiveAdminGuardDbTest {
         otherActiveAdmin = save("qa-guard-a2@example.com", User.UserRole.ADMIN, User.UserStatus.ACTIVE);
         assertEquals(2, activeAdminCount());
 
-        adminUserService.changeStatus(operator(), activeAdmin.getId(), User.UserStatus.DISABLED, null);
+        adminUserService.changeStatus(operator(), activeAdmin.getId(), User.UserStatus.DISABLED);
 
         User after = userRepository.findById(activeAdmin.getId()).orElseThrow();
         assertEquals(User.UserStatus.DISABLED, after.getStatus());
@@ -139,16 +139,16 @@ class AdminLastActiveAdminGuardDbTest {
         activeAdmin = save("qa-guard-b1@example.com", User.UserRole.ADMIN, User.UserStatus.ACTIVE);
         otherActiveAdmin = save("qa-guard-b2@example.com", User.UserRole.ADMIN, User.UserStatus.ACTIVE);
 
-        adminUserService.changeRole(operator(), activeAdmin.getId(), User.UserRole.USER, null);
+        adminUserService.changeRole(operator(), activeAdmin.getId(), User.UserRole.USER);
         assertEquals(User.UserRole.USER,
             userRepository.findById(activeAdmin.getId()).orElseThrow().getRole());
         assertEquals(1, activeAdminCount());
 
         // 此时只剩 1 名存活管理员，再动它必须被拒
         assertThrows(BusinessException.class,
-            () -> adminUserService.changeRole(operator(), otherActiveAdmin.getId(), User.UserRole.USER, null));
+            () -> adminUserService.changeRole(operator(), otherActiveAdmin.getId(), User.UserRole.USER));
         assertThrows(BusinessException.class,
-            () -> adminUserService.changeStatus(operator(), otherActiveAdmin.getId(), User.UserStatus.DISABLED, null));
+            () -> adminUserService.changeStatus(operator(), otherActiveAdmin.getId(), User.UserStatus.DISABLED));
         assertEquals(1, activeAdminCount());
     }
 
@@ -160,7 +160,7 @@ class AdminLastActiveAdminGuardDbTest {
         buildOneActivePlusDisabledAdmins(1);
         User plain = save("qa-guard-plain@example.com", User.UserRole.USER, User.UserStatus.ACTIVE);
 
-        adminUserService.changeRole(operator(), plain.getId(), User.UserRole.ADMIN, null);
+        adminUserService.changeRole(operator(), plain.getId(), User.UserRole.ADMIN);
 
         assertEquals(User.UserRole.ADMIN, userRepository.findById(plain.getId()).orElseThrow().getRole());
         assertEquals(2, activeAdminCount());
@@ -172,7 +172,7 @@ class AdminLastActiveAdminGuardDbTest {
         buildOneActivePlusDisabledAdmins(1);
         User plain = save("qa-guard-plain2@example.com", User.UserRole.USER, User.UserStatus.ACTIVE);
 
-        adminUserService.changeStatus(operator(), plain.getId(), User.UserStatus.DISABLED, null);
+        adminUserService.changeStatus(operator(), plain.getId(), User.UserStatus.DISABLED);
 
         assertEquals(User.UserStatus.DISABLED, userRepository.findById(plain.getId()).orElseThrow().getStatus());
         assertEquals(1, activeAdminCount());
@@ -186,7 +186,7 @@ class AdminLastActiveAdminGuardDbTest {
 
         BusinessException ex = assertThrows(BusinessException.class,
             () -> adminUserService.changeStatus(activeAdmin.getId(), activeAdmin.getId(),
-                User.UserStatus.DISABLED, null));
+                User.UserStatus.DISABLED));
         assertEquals("SELF_OPERATION_NOT_ALLOWED", ex.getErrorCode());
         assertEquals(User.UserStatus.ACTIVE,
             userRepository.findById(activeAdmin.getId()).orElseThrow().getStatus());
@@ -207,6 +207,6 @@ class AdminLastActiveAdminGuardDbTest {
             "夹具必须让旧口径得出 >1，才能真正击穿旧实现");
 
         assertThrows(BusinessException.class,
-            () -> adminUserService.changeStatus(operator(), activeAdmin.getId(), User.UserStatus.DISABLED, null));
+            () -> adminUserService.changeStatus(operator(), activeAdmin.getId(), User.UserStatus.DISABLED));
     }
 }

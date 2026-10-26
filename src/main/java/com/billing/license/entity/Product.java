@@ -82,19 +82,12 @@ public class Product {
     /**
      * 产品档位/等级（PRO 基础版 / PRO_PLUS 高级版）。
      * 与 {@link #billingCycle} 组合表达三种付费模式：
-     * 买断 = tier×ONE_TIME/LIFETIME；订阅 = tier×MONTHLY/YEARLY；高级版 = PRO_PLUS。
+     * 买断 = tier×ONE_TIME/LIFETIME；订阅 = tier×MONTHLY/HALF_YEAR/QUARTERLY/YEARLY；高级版 = PRO_PLUS。
      */
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     @Builder.Default
     private PlanTier tier = PlanTier.PRO;
-
-    /**
-     * 权益特性清单（JSON 数组字符串，如 ["OFFLINE","MULTI_DEVICE","PRIORITY_SUPPORT"]）。
-     * 用于区分 Pro 与 Pro Plus 的权益差异，并写入 License payload 供客户端离线校验。
-     */
-    @Column(columnDefinition = "TEXT")
-    private String features;
 
     @Column(nullable = false)
     @Builder.Default
@@ -114,10 +107,29 @@ public class Product {
      */
     @Column(name = "max_major_version")
     private Integer maxMajorVersion;
+
+    /**
+     * Stripe 订阅价目 ID（{@code price_} 前缀）：订阅类周期走 Stripe 时的渠道侧价目。
+     * 为空时 Stripe 按计费周期内联创建 recurring price，不依赖后台预建价目。
+     */
+    @Column(name = "stripe_price_id")
+    private String stripePriceId;
+
+    /**
+     * Paddle 订阅价目 ID（{@code pri_} 前缀）：订阅类周期走 Paddle 时的渠道侧价目。
+     * Paddle 只认 catalog price id（不认内联价目），订阅周期下缺失即拒单。
+     */
+    @Column(name = "paddle_price_id")
+    private String paddlePriceId;
     
     @Column(nullable = false)
     @Builder.Default
     private Boolean active = true;
+
+    /** 收银台是否展示「推荐」标记（原静态白名单字段，改由后台产品配置维护） */
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean recommended = false;
     
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -139,9 +151,15 @@ public class Product {
     public enum BillingCycle {
         ONE_TIME,
         MONTHLY,
+        HALF_YEAR,
         QUARTERLY,
         YEARLY,
-        LIFETIME
+        LIFETIME;
+
+        /** 是否订阅类周期（由渠道托管自动续费）；一次性买断为 ONE_TIME / LIFETIME。 */
+        public boolean isRecurring() {
+            return this == MONTHLY || this == HALF_YEAR || this == QUARTERLY || this == YEARLY;
+        }
     }
 
     /**

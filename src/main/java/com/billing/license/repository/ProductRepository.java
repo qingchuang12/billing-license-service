@@ -14,4 +14,5 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     boolean existsBySku(String sku);
     List<Product> findByActiveTrue();
     List<Product> findByActiveTrueAndProductCodeIgnoreCase(String productCode);
+    long countByProductCodeIgnoreCase(String productCode);
 }

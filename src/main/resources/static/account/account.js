@@ -23,12 +23,17 @@
     token: '',
     email: '',
     sendCodeReadyAt: 0,
+    regCodeReadyAt: 0,
     // plan-4.1：订单区退款入口所需的缓存（语言切换时按缓存重渲染，保住插值文案）
     orders: [],
     refundOrder: null,
     // plan-7.0：许可证区解绑入口所需的缓存（同上）
     licenses: [],
     unbindLicense: null,
+    // 订阅缓存：取消弹层据此显示产品与周期；语言切换时重渲染
+    subscriptions: [],
+    // 取消订阅弹层当前操作的订阅 id（A2 自助取消）
+    cancelSubId: null,
     // plan-7.0 账户基础功能 / Q3：管理员代重置后须先改密，此时隐藏资产区块只留改密入口
     mustChangePassword: false,
     // 两阶段登录（plan-7.0 / M3）：密码已过、待第二因子时持有的一次性票据。
@@ -57,7 +62,17 @@
       'auth.passwordLabel': '密码',
       'auth.login': '登录',
       'auth.loginBusy': '登录中…',
-      'auth.toReset': '未注册 / 忘记密码？用邮箱验证码设置密码',
+      'auth.toReset': '忘记密码？用邮箱验证码重新设置',
+      'auth.toRegister': '还没有账号？注册一个',
+      'auth.regPwdHint': '8–72 位，须同时包含字母与数字。',
+      'auth.regConfirmLabel': '确认密码',
+      'reg.desc': '用邮箱注册一个账号，即可在这里查看名下的许可证、订阅与订单。注册成功后自动登录。',
+      'reg.submit': '注册并登录',
+      'reg.busy': '注册中…',
+      'reg.mismatch': '两次输入的密码不一致。',
+      'reg.pwdPolicy': '密码须为 8–72 位，且同时包含字母与数字。',
+      'reg.ok': '注册成功，已登录。',
+      'reg.codeSent': '验证码已发送，请查收邮箱。',
       'auth.codeLabel': '邮箱验证码',
       'auth.sendCode': '发送验证码',
       'auth.sendCodeBusy': '发送中…',
@@ -120,8 +135,19 @@
       'sub.channel': '渠道',
       'sub.status': '状态',
       'sub.period': '当前周期',
+      'sub.nextCharge': '下次扣费',
       'sub.cancelNote': '到期不再续订',
+      'sub.cancelNoteLong': '取消是「本周期结束即停」，已付到期的权益会保留到那天，不会当场失效。',
+      'sub.cancelAction': '取消订阅',
+      'sub.action': '操作',
       'sub.error': '订阅加载失败',
+      'cancelSub.title': '取消订阅',
+      'cancelSub.desc': '将取消订阅：{product}（{period}）。',
+      'cancelSub.note': '取消后本周期不会再自动扣费，当前已付到期的权益保留到周期结束那天。已取消的订阅无法恢复，如需继续使用请重新购买。',
+      'cancelSub.cancel': '暂不取消',
+      'cancelSub.confirm': '确认取消',
+      'cancelSub.busy': '提交中…',
+      'cancelSub.ok': '已提交取消，本周期结束后停用。',
       'order.title': '我的订单',
       'order.desc': '购买与兑换产生的订单记录。',
       'order.number': '订单号',
@@ -180,6 +206,16 @@
       'auth.login': 'Sign in',
       'auth.loginBusy': 'Signing in…',
       'auth.toReset': 'Forgot password? Set a new one with an email code',
+      'auth.toRegister': 'No account yet? Register one',
+      'auth.regPwdHint': '8–72 characters with both letters and digits.',
+      'auth.regConfirmLabel': 'Confirm password',
+      'reg.desc': 'Register with your email to view your licenses, subscriptions and orders here. You will be signed in automatically.',
+      'reg.submit': 'Register & Sign In',
+      'reg.busy': 'Registering…',
+      'reg.mismatch': 'Passwords do not match.',
+      'reg.pwdPolicy': 'Password must be 8–72 characters with both letters and digits.',
+      'reg.ok': 'Registered and signed in.',
+      'reg.codeSent': 'Verification code sent. Please check your inbox.',
       'auth.codeLabel': 'Email verification code',
       'auth.sendCode': 'Send code',
       'auth.sendCodeBusy': 'Sending…',
@@ -245,8 +281,19 @@
       'sub.channel': 'Channel',
       'sub.status': 'Status',
       'sub.period': 'Current period',
+      'sub.nextCharge': 'Next charge',
       'sub.cancelNote': 'cancels at period end',
+      'sub.cancelNoteLong': 'Cancelling stops auto-renewal; paid benefits remain until the period ends, not immediately.',
+      'sub.cancelAction': 'Cancel subscription',
+      'sub.action': 'Action',
       'sub.error': 'Failed to load subscriptions',
+      'cancelSub.title': 'Cancel Subscription',
+      'cancelSub.desc': 'You are about to cancel: {product} ({period}).',
+      'cancelSub.note': 'Auto-renewal stops for the current period; paid benefits remain until it ends. Cancellations cannot be undone — purchase again if you need the service.',
+      'cancelSub.cancel': 'Keep It',
+      'cancelSub.confirm': 'Cancel Subscription',
+      'cancelSub.busy': 'Submitting…',
+      'cancelSub.ok': 'Cancelled. The subscription ends when the current period ends.',
       'order.title': 'My Orders',
       'order.desc': 'Orders created by purchase or redemption.',
       'order.number': 'Order No.',
@@ -449,6 +496,7 @@
     state.mfaMethods = null;
     // 清掉上一个账号的订单缓存，避免换账号后语言切换重渲染出他人数据
     state.orders = [];
+    state.subscriptions = [];
     try {
       localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(EMAIL_KEY);
@@ -749,6 +797,99 @@
     }
   }
 
+  /* ======================= 4.5 注册（A2） ======================= */
+
+  /** 密码策略前端预检：与后端 PasswordPolicy 对齐（8–72 位，含字母与数字）。 */
+  var PASSWORD_RE = /^(?=.*[A-Za-z])(?=.*\d).{8,72}$/;
+
+  /** 发送注册验证码（公开端点，用途 REGISTER；与找回表单共用 60s 冷却节奏但不共享计时器）。 */
+  function handleRegSendCode() {
+    var btn = $('regSendBtn');
+    setFormError('regCodeError', '');
+    var email = $('regEmail').value.trim();
+    if (!email) return setFormError('regCodeError', t('err.required'));
+    if (!EMAIL_RE.test(email)) return setFormError('regCodeError', t('err.invalidEmail'));
+    var now = Date.now();
+    if (now < state.regCodeReadyAt) return;
+
+    setBusy(btn, t('auth.sendCodeBusy'));
+    apiPost('/api/account/verification-code', { email: email, purpose: 'REGISTER' }).then(function () {
+      state.regCodeReadyAt = now + SEND_CODE_COOLDOWN_MS;
+      unsetBusy(btn);
+      startRegCountdown(btn);
+      setFormError('regCodeError', '');
+      announce(t('reg.codeSent'));
+    }, function (err) {
+      unsetBusy(btn);
+      setFormError('regCodeError', errText(err, 'err.generic'));
+    });
+  }
+
+  function startRegCountdown(btn) {
+    var tick = function () {
+      var remain = Math.ceil((state.regCodeReadyAt - Date.now()) / 1000);
+      if (remain <= 0) {
+        btn.disabled = false;
+        btn.textContent = t('auth.sendCode');
+        return;
+      }
+      btn.textContent = t('auth.sendCodeCountdown', { s: remain });
+      setTimeout(tick, 1000);
+    };
+    tick();
+  }
+
+  /** 注册：成功即返回令牌（与登录同构的 AuthResponse），走同一收尾建立会话。 */
+  function handleRegister(event) {
+    event.preventDefault();
+    var btn = $('regBtn');
+    setFormError('regError', '');
+    var email = $('regEmail').value.trim();
+    var code = $('regCode').value.trim();
+    var password = $('regPassword').value;
+    var confirm2 = $('regPasswordConfirm').value;
+    if (!email || !code || !password || !confirm2) return setFormError('regError', t('err.required'));
+    if (!EMAIL_RE.test(email)) return setFormError('regError', t('err.invalidEmail'));
+    if (!PASSWORD_RE.test(password)) return setFormError('regError', t('reg.pwdPolicy'));
+    if (password !== confirm2) return setFormError('regError', t('reg.mismatch'));
+
+    setBusy(btn, t('reg.busy'));
+    apiPost('/api/account/register', { email: email, emailCode: code, password: password })
+      .then(function (data) {
+        unsetBusy(btn);
+        announce(t('reg.ok'));
+        finishAccountLogin(data, 'regError');
+      }, function (err) {
+        unsetBusy(btn);
+        setFormError('regError', errText(err, 'err.generic'));
+      });
+  }
+
+  /** 登录 ↔ 注册 ↔ 找回三张表单互斥切换；注册态清空密码与验证码输入。 */
+  function showRegisterForm() {
+    $('loginForm').hidden = true;
+    $('resetForm').hidden = true;
+    $('mfaLoginForm').hidden = true;
+    $('registerForm').hidden = false;
+    setFormError('formError', '');
+    setFormError('resetError', '');
+    setFormError('codeError', '');
+    $('regPassword').value = '';
+    $('regPasswordConfirm').value = '';
+    $('regCode').value = '';
+    setFormError('regError', '');
+    setFormError('regCodeError', '');
+    $('regEmail').focus();
+  }
+
+  function backToLoginFromRegister() {
+    $('registerForm').hidden = true;
+    $('loginForm').hidden = false;
+    setFormError('regError', '');
+    setFormError('regCodeError', '');
+    $('loginPassword').focus();
+  }
+
   /* ======================= 5.1 修改密码（plan-7.0 / P1 + Q3） ======================= */
 
   /** 资产区命中 PASSWORD_CHANGE_REQUIRED 时同样进入强制改密（如旧页面缓存的会话）。 */
@@ -875,11 +1016,19 @@
     var rows = (list || []).map(function (item) {
       var period = fmtDate(item.currentPeriodStart) + ' ~ ' + fmtDate(item.currentPeriodEnd);
       var cancelNote = item.cancelAtPeriodEnd ? '（' + t('sub.cancelNote') + '）' : '';
+      // 仅「生效中且未挂取消标记」的订阅给取消入口；已取消/已过期的行不再重复提供
+      var canCancel = item.status === 'ACTIVE' && !item.cancelAtPeriodEnd;
+      var actionCell = canCancel
+        ? '<button type="button" class="unbind-btn" data-cancel="' + escapeHtml(item.id)
+          + '" data-i18n="sub.cancelAction">' + escapeHtml(t('sub.cancelAction')) + '</button>'
+        : '<span class="muted">—</span>';
       return '<tr>'
         + '<td>' + escapeHtml(item.productName || item.productSku || t('common.none')) + '</td>'
         + '<td>' + escapeHtml(item.provider || t('common.none')) + '</td>'
         + '<td>' + badge(item.status) + '</td>'
         + '<td class="mono">' + period + cancelNote + '</td>'
+        + '<td class="mono">' + fmtDate(item.currentPeriodEnd) + '</td>'
+        + '<td>' + actionCell + '</td>'
         + '</tr>';
     }).join('');
     showEmpty('subBody', 'subEmpty', rows);
@@ -931,7 +1080,8 @@
     });
 
     apiGet('/api/account/subscriptions').then(function (list) {
-      renderSubscriptions(list);
+      state.subscriptions = list || [];
+      renderSubscriptions(state.subscriptions);
     }, function (err) {
       if (err && err.status === 401) return onSessionExpired();
       if (err && err.code === 'PASSWORD_CHANGE_REQUIRED') return enterForcedChange();
@@ -1054,6 +1204,44 @@
       });
   }
 
+  /* ======================= 6.5 订阅自助取消（A2）：期末生效，弹层明示后果 ======================= */
+
+  /** 打开确认弹层：明示将取消哪份订阅与当前周期，避免误点。 */
+  function openCancelSub(subscriptionId) {
+    if (!subscriptionId) return;
+    state.cancelSubId = subscriptionId;
+    var sub = (state.subscriptions || []).filter(function (s) { return String(s.id) === String(subscriptionId); })[0];
+    var product = sub ? (sub.productName || sub.productSku || '') : '';
+    var period = sub ? (fmtDate(sub.currentPeriodStart) + ' ~ ' + fmtDate(sub.currentPeriodEnd)) : '';
+    $('cancelSubDesc').textContent = t('cancelSub.desc', { product: product, period: period });
+    setFormError('cancelSubError', '');
+    $('cancelSubModal').hidden = false;
+  }
+
+  function closeCancelSub() {
+    $('cancelSubModal').hidden = true;
+    state.cancelSubId = null;
+    unsetBusy($('cancelSubConfirmBtn'));
+  }
+
+  function confirmCancelSub() {
+    var id = state.cancelSubId;
+    if (!id) return;
+    var btn = $('cancelSubConfirmBtn');
+    setFormError('cancelSubError', '');
+    setBusy(btn, t('cancelSub.busy'));
+    apiPost('/api/account/subscriptions/' + encodeURIComponent(id) + '/cancel', {})
+      .then(function () {
+        closeCancelSub();
+        announce(t('cancelSub.ok'));
+        // 重拉列表：挂上「到期不再续订」标记并撤掉取消按钮
+        loadAll();
+      }, function (err) {
+        unsetBusy(btn);
+        setFormError('cancelSubError', errText(err, 'err.generic'));
+      });
+  }
+
   /* ======================= 7. 事件绑定与启动 ======================= */
 
   function bindEvents() {
@@ -1098,6 +1286,11 @@
         openUnbind(unbindBtn.getAttribute('data-unbind'));
         return;
       }
+      var cancelSubBtn = event.target.closest('[data-cancel]');
+      if (cancelSubBtn) {
+        openCancelSub(cancelSubBtn.getAttribute('data-cancel'));
+        return;
+      }
       var btn = event.target.closest('[data-copy]');
       if (!btn) return;
       copyText(btn.getAttribute('data-copy'), btn);
@@ -1113,10 +1306,22 @@
     $('unbindBackdrop').addEventListener('click', closeUnbind);
     $('unbindConfirmBtn').addEventListener('click', confirmUnbind);
 
+    // 取消订阅弹层（A2 自助取消）
+    $('cancelSubCancelBtn').addEventListener('click', closeCancelSub);
+    $('cancelSubBackdrop').addEventListener('click', closeCancelSub);
+    $('cancelSubConfirmBtn').addEventListener('click', confirmCancelSub);
+
+    // 注册表单（A2）：发送验证码 / 提交 / 返回登录
+    $('registerForm').addEventListener('submit', handleRegister);
+    $('regSendBtn').addEventListener('click', handleRegSendCode);
+    $('showRegisterBtn').addEventListener('click', showRegisterForm);
+    $('regBackBtn').addEventListener('click', backToLoginFromRegister);
+
     document.addEventListener('keydown', function (event) {
       if (event.key !== 'Escape') return;
       if (!$('refundModal').hidden) closeRefund();
       if (!$('unbindModal').hidden) closeUnbind();
+      if (!$('cancelSubModal').hidden) closeCancelSub();
     });
   }
 

@@ -3,13 +3,14 @@
 统一的计费与许可证管理服务，基于 **Java 21 + Spring Boot 4.1.1**（JPA/Hibernate + PostgreSQL + Flyway + 5 家支付渠道 + KMS）构建，为桌面端 exe 工具提供 license 签发、兑换、换机与计费/退款/账务查看后端。
 
 > **上线执行手册见 [`上线准备工作.md`](./上线准备工作.md)**（阻断项清单 / 密钥生成实测命令 / 渠道设置 / 上线当天清单）。
-> 已知风险与待实测项见 [`上线准备工作.md`](./上线准备工作.md) §九「风险登记」与 §七 验收清单（含 B7 渠道部分退款、B8 Paddle 续费 payload、E 段管理台实机走查）；授权域「明确不做」与红线定案见 [`授权设计方案.md`](./授权设计方案.md) §十八，管理台 / MFA / 退款范围边界见 [`架构与业务流程设计.md`](./架构与业务流程设计.md) 末节「附：范围边界定案」。活动 plan [`plan-8.0.md`](./plan-8.0.md) **只承载未完成项**（2026-10-17 全量审计整改：8 项【可直接做】含资损并发 2 与性能/索引 5、4 项【需你决策】、2 项【需你处理】）；上线闸门 T1–T4 属外部资源事项，登记在 [`上线准备工作.md`](./上线准备工作.md) §七-D。
+> **产品接入见 [`产品快速接入手册.md`](./产品快速接入手册.md)**（产品档案 + 套餐配置 → 收银台下单 → 回调发货 → License 领取/激活 → 续费/退款边界）。
+> 已知风险与待实测项见 [`上线准备工作.md`](./上线准备工作.md) §九「风险登记」与 §七 验收清单（含 B7 渠道部分退款、B8 Paddle 续费 payload、E 段管理台实机走查）；授权域「明确不做」与红线定案见 [`授权设计方案.md`](./授权设计方案.md) §十八，管理台 / MFA / 退款范围边界见 [`架构与业务流程设计.md`](./架构与业务流程设计.md) 末节「附：范围边界定案」。活动 plan [`plan-8.0.md`](./plan-8.0.md) **只承载未完成项**（2026-10-17 全量审计整改 + 产品接入收口；渠道侧真订阅与首充丢失补偿为待决策项）；上线闸门 T1–T4 属外部资源事项，登记在 [`上线准备工作.md`](./上线准备工作.md) §七-D。
 
 ## 功能特性
 
-- **三档收费体系**：Pro 买断（一次性付费）/ Pro Plus 高级版（一次性付费，权益更高）/ 订阅制（托管 Paddle / Stripe Billing，自动续期与取消联动 License）。
+- **三档收费体系**：Pro 买断（一次性付费）/ Pro Plus 高级版（一次性付费，权益更高）/ 订阅制（月付、半年、年付等周期，License 有效期随渠道订阅事件联动）。⚠ 收银台下单侧当前一律创建**一次性收款**，自动续费依赖渠道（Paddle / Stripe）已建订阅的回调；接入边界见 [`产品快速接入手册.md`](./产品快速接入手册.md)。
 - **双币种定价**：每个 SKU 维护 CNY 与 USD 两档价格，下单按区域（国内/国际）取对应金额与币种。
-- **支付集成（5 家渠道）**：支付宝、微信支付（国内）；Stripe、Paddle、PayPal（国际）。支持创建支付、Webhook 回调发货、查询状态、**管理员全额退款**与**用户端自助退款**（按 License 剩余有效期折算，可能构成部分退款）。
+- **支付集成（5 家渠道）**：支付宝、微信支付（国内）；Stripe、Paddle、PayPal（国际）。支持创建支付、Webhook 回调发货、查询状态、**管理员全额退款**与**用户端自助退款**（按 License 剩余有效期折算，可能构成部分退款）。**渠道能力矩阵**：国内渠道只支持一次性买断周期，订阅周期（月付/半年/季付/年付）仅 Stripe / Paddle 可售；收银台下单与目录展示都按该矩阵过滤。
 - **许可证签发与校验**：基于 JWS 的签名许可证，payload 含 `lic/cid/sku/plan/feat/mid/oid/iat/exp`，客户端可离线校验机器码绑定与档位权益。
 - **兑换码系统**：密码学安全随机（`SecureRandom`）生成、兑换、管理端批量生成与吊销。
 - **多算法支持**：Ed25519（JWS `EdDSA`，默认）、ECDSA（`ES256`）、RSA（`RS256`）；可用集合（纯本地 `LocalKmsService` 支持）：`EdDSA` / `ES256` / `RS256`（详见 `application.yml` 的 `billing.signature-algorithm` 注释）。
@@ -109,7 +110,7 @@ docker compose logs -f app
 > 历史注记：`X-Admin-API-Key`（`AdminController` 自校验）与 `X-API-Key`（`ApiKeyAuthFilter` 机读通道）均已删除（A12）。公开端点依赖签名 License + 限流保护。
 > **权限域严格隔离**：用户令牌（`ROLE_USER`）不能访问 `/api/admin/**`；管理动作依赖「当前管理员用户」上下文，actor 取自 `SecurityContext` 的 `userId`（审计日志可追溯操作人）。
 
-### 端点总览（共 59 个：公开 19 + 半认证 2 + 用户令牌 8 + 管理端 30）
+### 端点总览（共 65 个：公开 19 + 半认证 2 + 用户令牌 8 + 管理端 36）
 
 > 下表逐条列全。数字以代码为准（各 `@RestController` 的方法映射），新增端点时必须同步本表与 [`接口调用时序图.md`](./接口调用时序图.md) §1.6。
 
@@ -118,8 +119,8 @@ docker compose logs -f app
 | 收银台 | `POST /api/checkout/create`（可选 `provider`，一步下单） | 公开·**IP + 邮箱双维度限流**（#8：IP 由服务端解析，请求体 `clientIp` 已 `@JsonIgnore`） |
 | | `POST /api/checkout/{checkoutId}/select-provider` | 公开 |
 | | `GET /api/checkout/{checkoutId}/status` | 公开 |
-| 商品目录 | `GET /api/products?product=<产品码>` | 公开（`product` 缺省/空白＝返回全部在售；见下「收银台」段） |
-| License | `GET /api/licenses/verify/{licenseKey}` | 公开（失效件返回 400，查失效件用管理端接口） |
+| 商品目录 | `GET /api/products?product=<产品码>` | 公开（接口驱动：`product` 缺省/空白＝返回全部在售套餐；权益来自产品档案；`recurring` 标识是否订阅类周期；`providers` 返回可售渠道（按渠道能力矩阵过滤，空数组＝当前部署无渠道可售）；顺序＝推荐位优先、其余按 SKU 升序；见下「收银台」段） |
+| License | `GET /api/licenses/verify/{licenseKey}` | 公开（成功返回详情 + `nextCheckAfterMs`（默认 15 天）并更新 `lastVerifiedAt`；失效返回 400：`LICENSE_NOT_FOUND` / `LICENSE_EXPIRED` / `LICENSE_INVALID`；限流 429 空 body；客户端须按 [`产品快速接入手册.md`](./产品快速接入手册.md) §5.5 定期复核） |
 | | `GET /api/licenses/pending?machineId=` | 公开·**双维度限流**（机器码 + 真实来源 IP）；支付后按机器码领取未绑定授权，见下「待激活领取」段 |
 | | `POST /api/licenses/activate` | 公开·**可选鉴权**：凭证为兑换码（`RC-` 前缀）时匿名可调；为许可证密钥时**必须登录且归属本人**（判定在服务端，见下「凭证激活」） |
 | | `POST /api/licenses/report-binding` | 公开（客户端兑换/激活后**启动时自动上报机器码**完成补绑；凭 `signedToken` 验签，**无需登录**） |
@@ -137,7 +138,15 @@ docker compose logs -f app
 | 兑换码 | `POST /api/admin/redeem-codes/generate?productSku=&count=` | 管理员 JWT |
 | | `GET /api/admin/redeem-codes?productSku=&status=` | 管理员 JWT |
 | | `POST /api/admin/redeem-codes/revoke/{code}` | 管理员 JWT |
-| 运维 | `GET /api/admin/payment-channels` | 管理员 JWT（各渠道启用与缺失配置项自查，不回显密钥） |
+| 运维 | `GET /api/admin/payment-channels` | 管理员 JWT（各渠道启用与缺失配置项自查，不回显密钥；返回 `supportedBillingCycles` / `supportsRecurring` / `paymentProducts` 能力矩阵） |
+| 产品档案 | `GET /api/admin/product-profiles?keyword=` | 管理员 JWT（按产品码定义名称/描述/权益，附挂载套餐数） |
+| | `POST /api/admin/product-profiles` | 管理员 JWT（新增产品档案；产品码创建后锁定） |
+| | `PATCH /api/admin/product-profiles/{profileId}` | 管理员 JWT（编辑名称/描述/权益；权益对该产品下全部套餐生效） |
+| 产品配置 | `GET /api/admin/products?keyword=&active=` | 管理员 JWT（套餐列表，含已下架；关键字匹配 SKU/套餐名/产品码） |
+| | `GET /api/admin/products/meta` | 管理员 JWT（周期/档位枚举 + `billing.feature-labels` 权益标签 + `channels` 渠道能力矩阵） |
+| | `POST /api/admin/products` | 管理员 JWT（新增套餐；必须挂到已存在的产品档案，双币价必填） |
+| | `PATCH /api/admin/products/{productId}` | 管理员 JWT（编辑套餐；SKU 不可改，可改所属档案/周期/价格/推荐位） |
+| | `PATCH /api/admin/products/{productId}/active` | 管理员 JWT（上架/下架；下架只影响新订单） |
 | 用户管理 | `GET /api/admin/users?email=&role=&status=&page=&size=` | 管理员 JWT（列表，page 从 0 起、size 默认 20 上限 200） |
 | | `GET /api/admin/users/{userId}` | 管理员 JWT（详情：脱敏资料 + 名下许可证/订单计数；许可证明细复用 `GET /api/admin/licenses?customerEmail=`） |
 | | `PATCH /api/admin/users/{userId}/role` | 管理员 JWT（USER ↔ ADMIN；`tokenVersion+1` 即时失效；护栏：禁自操作、禁降级最后一个可登录管理员） |
@@ -154,8 +163,6 @@ docker compose logs -f app
 | | `POST /api/admin/mfa/enroll` | 管理员 JWT（须当前密码，生成密钥） |
 | | `POST /api/admin/mfa/activate` | 管理员 JWT（认证器动态码激活） |
 | | `POST /api/admin/mfa/unbind` | 管理员 JWT（须密码 + 动态码/邮箱码） |
-| | `POST /api/admin/mfa/step-up/challenge` | 管理员 JWT（敏感动作二次确认：发邮箱兜底码） |
-| | `POST /api/admin/mfa/step-up/verify` | 管理员 JWT（换短时效（默认 120s，`account.mfa.step-up-ttl-seconds`）、单次使用、与动作绑定的 `X-Step-Up-Token`） |
 | 账号 | `POST /api/account/verification-code` | 公开 |
 | | `POST /api/account/register` | 公开 |
 | | `POST /api/account/login` | 公开 |
@@ -202,6 +209,7 @@ curl -X POST http://localhost:8000/api/account/login \
 # → data: {"accessToken":"eyJhbGciOi...","expiresIn":604800,"user":{...}}
 
 # ④ 当前用户 / ⑤ 登出 / ⑥ 改密（均需登录）
+# GET /api/account/me → data: {... "mustChangePassword":false, "mfaEnabled":false ...}（管理台据 mfaEnabled 决定是否展示 MFA 引导横幅）
 curl http://localhost:8000/api/account/me -H "Authorization: Bearer <token>"
 curl -X POST http://localhost:8000/api/account/logout -H "Authorization: Bearer <token>"
 curl -X POST http://localhost:8000/api/account/password/change -H "Authorization: Bearer <token>" \
@@ -323,7 +331,7 @@ curl -X POST http://localhost:8000/api/account/mfa/verify \
 }
 ```
 
-失败时 `success=false`、`code` 为业务错误码、`message` 为可读描述、`traceId` 与响应头 `X-Trace-Id` 一致。常见业务错误码：`PRODUCT_NOT_FOUND`、`PRODUCT_INACTIVE`、`PRICE_NOT_CONFIGURED`、`NO_PAYMENT_METHOD`、`PAYMENT_CREATE_FAILED`、`EMAIL_PURCHASE_LIMIT`、`CHECKOUT_IP_LIMIT`（#8：下单 IP 维度频控）、`CREDENTIAL_NOT_FOUND`、`LICENSE_NOT_FOUND`、`LICENSE_INVALID`、`LICENSE_EXPIRED`、`LICENSE_REVOKED`、`LICENSE_REISSUE_LIMIT`、`INVALID_COUNT`、`COUNT_EXCEED_LIMIT`、`INVALID_ORDER_STATUS`、`REFUND_FAILED`、`UNSUPPORTED_CURRENCY`。`/v3/api-docs` 的响应 schema 已同步该壳（H-C3），可直接据此生成客户端 SDK。
+失败时 `success=false`、`code` 为业务错误码、`message` 为可读描述、`traceId` 与响应头 `X-Trace-Id` 一致。常见业务错误码：`PRODUCT_NOT_FOUND`、`PRODUCT_INACTIVE`、`PRICE_NOT_CONFIGURED`、`NO_PAYMENT_METHOD`、`PROVIDER_NOT_SUPPORTED_FOR_PLAN`、`PAYMENT_CREATE_FAILED`、`EMAIL_PURCHASE_LIMIT`、`CHECKOUT_IP_LIMIT`（#8：下单 IP 维度频控）、`CREDENTIAL_NOT_FOUND`、`LICENSE_NOT_FOUND`、`LICENSE_INVALID`、`LICENSE_EXPIRED`、`LICENSE_REVOKED`、`LICENSE_REISSUE_LIMIT`、`INVALID_COUNT`、`COUNT_EXCEED_LIMIT`、`INVALID_ORDER_STATUS`、`REFUND_FAILED`、`UNSUPPORTED_CURRENCY`。`/v3/api-docs` 的响应 schema 已同步该壳（H-C3），可直接据此生成客户端 SDK。
 
 ### 状态枚举（以代码为准）
 
@@ -599,23 +607,38 @@ curl "http://localhost:8000/api/admin/users/export?role=USER"   -H "Authorizatio
 > 已登录改密与邮箱验证码自助重置会清除该标记；管理员代重置会置位它。
 > 管理员自己被代重置时同样受限——前端会把人引导到账号页（`/account/`）先改密。
 
-> **敏感动作二次确认（P2 step-up）**：操作者**已开启 MFA** 时，代重置 / 改角色 / 启停三类请求
-> 必须携带 `X-Step-Up-Token` 头——先调 `/api/admin/mfa/step-up/verify`（动态码或邮箱兜底码，
-> 邮箱兜底可先调 `/api/admin/mfa/step-up/challenge` 发码）换取**短时效（默认 120s）、单次使用、
-> 与动作绑定**的确认令牌。缺令牌报 `MFA_STEP_UP_REQUIRED`，无效 / 已用 / 动作不符报
-> `MFA_STEP_UP_INVALID`。未开启 MFA 的操作者不受影响（MFA 默认关，B8）。
-> **绝不能用普通访问 JWT 充当该确认**（7 天有效、可重放，等于没确认）。
->
-> ```bash
-> # ① 换取确认令牌
-> curl -X POST "http://localhost:8000/api/admin/mfa/step-up/verify" >   -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" >   -d '{"action":"ADMIN_RESET_USER_PASSWORD","code":"123456"}'
-> # ② 携带确认令牌执行敏感动作
-> curl -X POST "http://localhost:8000/api/admin/users/{userId}/password/reset" >   -H "Authorization: Bearer $ADMIN_TOKEN" -H "X-Step-Up-Token: <stepUpToken>" >   -H "Content-Type: application/json" -d '{"newPassword":"NewPassw0rd"}'
-> ```
+> **MFA 口径（2026-10-25 起）**：二次验证只在**登录**时要求；管理端数据修改（用户账号、产品档案、套餐）不再二次索要动态码，前端仅做一次确认弹窗。原 `X-Step-Up-Token` 机制与 `/api/admin/mfa/step-up/**` 两个端点已移除。
 
 > **账号安全通知（P1）**：已登录改密（SELF_CHANGE）、邮箱验证码自助重置（SELF_RESET）、
 > 管理员代重置（ADMIN_RESET）成功后，向账号邮箱发送**不含任何密码**的安全提醒（`@Async` 旁路，
 > SMTP 未配置时静默跳过、失败不回滚变更）。
+
+### 管理端产品配置（产品档案 + 套餐）
+
+> **两层模型**：产品档案按 `product_code` 定义名称 / 描述 / **权益**；套餐（`products` 行）定义支付周期、双币价、授权天数与上下架。同一产品下的月付 / 半年 / 年付 / 永久套餐**共享产品权益**。
+> 产品码与 SKU 创建后锁定；不提供物理删除（订单 / License / 兑换码均以外键引用产品），停售走「下架」。
+> 收银台目录完全由 `GET /api/products` 驱动，后台新增并上架的套餐会自动出现在收银台（无前端白名单）。
+
+```bash
+# ① 新增产品档案（权益在产品级定义一次）
+curl -X POST "http://localhost:8000/api/admin/product-profiles" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"productCode":"ai-tools","name":"AI-Tools 专业版","nameEn":"AI-Tools Pro","features":["OFFLINE","MULTI_DEVICE"]}'
+
+# ② 新增套餐（必须挂到已存在的产品档案；周期支持 MONTHLY / HALF_YEAR / QUARTERLY / YEARLY / ONE_TIME / LIFETIME）
+curl -X POST "http://localhost:8000/api/admin/products" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"sku":"pro-half-year","productCode":"ai-tools","name":"Pro 半年付","nameEn":"Pro Half-year","priceCny":299.00,"priceUsd":39.00,"billingCycle":"HALF_YEAR","tier":"PRO","licenseDurationDays":180,"updateUntilDays":null,"maxMajorVersion":null,"recommended":false}'
+
+# ③ 编辑产品档案权益（对该产品下全部套餐立即生效）
+curl -X PATCH "http://localhost:8000/api/admin/product-profiles/{profileId}" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"productCode":"ai-tools","name":"AI-Tools 专业版","features":["OFFLINE","MULTI_DEVICE","CLOUD_SYNC"]}'
+
+# ④ 套餐上下架（只影响新订单）
+curl -X PATCH "http://localhost:8000/api/admin/products/{productId}/active?active=false" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
 
 ### 管理端退款
 
@@ -740,7 +763,7 @@ billing-license-service/
 ├── src/main/resources/
 │   ├── application.yml       # 主配置（含 management/actuator、payment；KMS 为纯本地文件方案；鉴权无独立配置块，角色由 users.role 决定）
 │   ├── application-docker.yml
-│   └── db/migration/         # Flyway 迁移脚本 V1–V11（下一个可用版本号 V12；已入库文件受 checksum 保护，不得改内容）
+│   └── db/migration/         # Flyway 迁移脚本 V1–V13（下一个可用版本号 V14；已入库文件受 checksum 保护，不得改内容）
 ├── src/test/                 # 单元测试 + 集成测试（含 @SpringBootTest 上下文闸门、OpenAPI 文档可用性）
 ├── scripts/{db,deploy,ops}/  # 运维脚本（package/run/healthcheck/show_migrations…）
 └── pom.xml                   # Maven 配置（Java 21 + Spring Boot 4.1.1）
@@ -813,7 +836,7 @@ Payload 包含：
 - `cid`: 客户 ID
 - `sku`: 产品 SKU
 - `plan`: 档位（PRO / PRO_PLUS，用于客户端权益区分）
-- `feat`: 权益清单（解析自 `Product.features`）
+- `feat`: 权益清单（解析自产品档案 `product_profiles.features`，按产品的 `product_code` 读取）
 - `mid`: 机器码（客户端离线绑定校验）
 - `oid`: 订单 ID
 - `iat`: 签发时间

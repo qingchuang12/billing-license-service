@@ -51,24 +51,13 @@ class AdminUserServiceTest {
     @Mock private LicenseRepository licenseRepository;
     @Mock private OrderRepository orderRepository;
     @Mock private EmailNotificationService emailNotificationService;
-    @Mock private com.billing.license.security.AdminStepUpService stepUpService;
     @Mock private PasswordEncoder passwordEncoder;
 
     private final AccountProperties properties = new AccountProperties();
 
     private AdminUserService service() {
         return new AdminUserService(userRepository, licenseRepository, orderRepository,
-            passwordEncoder, emailNotificationService, stepUpService, properties);
-    }
-
-    /** 用真实 AdminStepUpService（真实 JWT 行为）验证 step-up 护栏本身，而非 mock 的调用序列。 */
-    private AdminUserService serviceWithRealStepUp() {
-        AccountProperties props = new AccountProperties();
-        props.getMfa().setKey("mfa-master-key-for-unit-tests-0123456789abcdef");
-        return new AdminUserService(userRepository, licenseRepository, orderRepository,
-            passwordEncoder, emailNotificationService,
-            new com.billing.license.security.AdminStepUpService(props, new com.billing.license.security.MfaKeyDeriver(props)),
-            props);
+            passwordEncoder, emailNotificationService, properties);
     }
 
     private User user(UUID id, User.UserRole role, User.UserStatus status, int tokenVersion) {
@@ -76,23 +65,6 @@ class AdminUserServiceTest {
             .id(id).email("u@example.com").passwordHash("x")
             .role(role).status(status).tokenVersion(tokenVersion)
             .build();
-    }
-
-    /**
-     * P2 step-up 护栏会按<b>操作者</b> ID 现查 MFA 开关（不查就放行）。默认桩：任意 ID
-     * 一律返回「未开启 MFA 的普通用户」，具体用例再对目标 ID 覆盖更精确的返回——
-     * 后写的 stub 优先，既有用例无需逐一补操作者桩。
-     */
-    @BeforeEach
-    void stubOperatorLookupDefaultsToNonMfaUser() {
-        when(userRepository.findById(any(UUID.class))).thenAnswer(inv ->
-            Optional.of(user(inv.getArgument(0, UUID.class), User.UserRole.USER, User.UserStatus.ACTIVE, 0)));
-    }
-
-    private User mfaOperator(UUID id) {
-        User operator = user(id, User.UserRole.ADMIN, User.UserStatus.ACTIVE, 0);
-        operator.setMfaEnabled(true);
-        return operator;
     }
 
     @Test
@@ -104,7 +76,7 @@ class AdminUserServiceTest {
         when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
         when(userRepository.countByRoleAndStatus(User.UserRole.ADMIN, User.UserStatus.ACTIVE)).thenReturn(2L);
 
-        AdminUserView view = service.changeRole(operator, targetId, User.UserRole.ADMIN, null);
+        AdminUserView view = service.changeRole(operator, targetId, User.UserRole.ADMIN);
 
         assertEquals("ADMIN", view.getRole());
         assertEquals(User.UserRole.ADMIN, target.getRole());
@@ -121,7 +93,7 @@ class AdminUserServiceTest {
         when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
         when(userRepository.countByRoleAndStatus(User.UserRole.ADMIN, User.UserStatus.ACTIVE)).thenReturn(2L);
 
-        service.changeRole(operator, targetId, User.UserRole.USER, null);
+        service.changeRole(operator, targetId, User.UserRole.USER);
 
         assertEquals(User.UserRole.USER, target.getRole());
         assertEquals(4, target.getTokenVersion());
@@ -138,7 +110,7 @@ class AdminUserServiceTest {
         when(userRepository.countByRoleAndStatus(User.UserRole.ADMIN, User.UserStatus.ACTIVE)).thenReturn(1L);
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.changeRole(operator, targetId, User.UserRole.USER, null));
+            () -> service.changeRole(operator, targetId, User.UserRole.USER));
         assertEquals("LAST_ADMIN_PROTECTED", ex.getErrorCode());
         verify(userRepository, never()).save(any());
         verify(userRepository, never()).countByRole(User.UserRole.ADMIN);
@@ -154,7 +126,7 @@ class AdminUserServiceTest {
         when(userRepository.findById(operator)).thenReturn(Optional.of(target));
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.changeRole(operator, operator, User.UserRole.ADMIN, null));
+            () -> service.changeRole(operator, operator, User.UserRole.ADMIN));
         assertEquals("SELF_OPERATION_NOT_ALLOWED", ex.getErrorCode());
         verify(userRepository, never()).save(any());
     }
@@ -167,7 +139,7 @@ class AdminUserServiceTest {
         when(userRepository.findById(targetId)).thenReturn(Optional.empty());
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.changeRole(operator, targetId, User.UserRole.ADMIN, null));
+            () -> service.changeRole(operator, targetId, User.UserRole.ADMIN));
         assertEquals("USER_NOT_FOUND", ex.getErrorCode());
     }
 
@@ -179,7 +151,7 @@ class AdminUserServiceTest {
         User target = user(targetId, User.UserRole.ADMIN, User.UserStatus.ACTIVE, 5);
         when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
 
-        AdminUserView view = service.changeRole(operator, targetId, User.UserRole.ADMIN, null);
+        AdminUserView view = service.changeRole(operator, targetId, User.UserRole.ADMIN);
 
         assertEquals("ADMIN", view.getRole());
         assertEquals(5, target.getTokenVersion());
@@ -194,7 +166,7 @@ class AdminUserServiceTest {
         User target = user(targetId, User.UserRole.USER, User.UserStatus.ACTIVE, 0);
         when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
 
-        service.changeStatus(operator, targetId, User.UserStatus.DISABLED, null);
+        service.changeStatus(operator, targetId, User.UserStatus.DISABLED);
 
         assertEquals(User.UserStatus.DISABLED, target.getStatus());
         assertEquals(1, target.getTokenVersion());
@@ -217,7 +189,7 @@ class AdminUserServiceTest {
         when(userRepository.countByRole(User.UserRole.ADMIN)).thenReturn(3L);
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.changeStatus(operator, targetId, User.UserStatus.DISABLED, null));
+            () -> service.changeStatus(operator, targetId, User.UserStatus.DISABLED));
         assertEquals("LAST_ADMIN_PROTECTED", ex.getErrorCode());
         verify(userRepository, never()).save(any());
         verify(userRepository, never()).countByRole(User.UserRole.ADMIN);
@@ -231,7 +203,7 @@ class AdminUserServiceTest {
         when(userRepository.findById(operator)).thenReturn(Optional.of(target));
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.changeStatus(operator, operator, User.UserStatus.DISABLED, null));
+            () -> service.changeStatus(operator, operator, User.UserStatus.DISABLED));
         assertEquals("SELF_OPERATION_NOT_ALLOWED", ex.getErrorCode());
         verify(userRepository, never()).save(any());
     }
@@ -248,7 +220,7 @@ class AdminUserServiceTest {
         when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
         when(passwordEncoder.encode("NewPassw0rd")).thenReturn("NEW_HASH");
 
-        service.resetPassword(operator, targetId, "NewPassw0rd", null);
+        service.resetPassword(operator, targetId, "NewPassw0rd");
 
         assertEquals("NEW_HASH", target.getPasswordHash());
         assertEquals(3, target.getTokenVersion(), "旧会话须立即失效");
@@ -264,7 +236,7 @@ class AdminUserServiceTest {
         when(userRepository.findById(operator)).thenReturn(Optional.of(target));
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.resetPassword(operator, operator, "NewPassw0rd", null));
+            () -> service.resetPassword(operator, operator, "NewPassw0rd"));
         assertEquals("SELF_OPERATION_NOT_ALLOWED", ex.getErrorCode());
         verify(userRepository, never()).save(any());
         verify(passwordEncoder, never()).encode(anyString());
@@ -279,7 +251,7 @@ class AdminUserServiceTest {
         when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.resetPassword(operator, targetId, "short", null));
+            () -> service.resetPassword(operator, targetId, "short"));
         assertEquals("PASSWORD_POLICY_VIOLATION", ex.getErrorCode());
         verify(passwordEncoder, never()).encode(anyString());
         verify(userRepository, never()).save(any());
@@ -294,7 +266,7 @@ class AdminUserServiceTest {
         when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.resetPassword(operator, targetId, "PasswordOnly", null));
+            () -> service.resetPassword(operator, targetId, "PasswordOnly"));
         assertEquals("PASSWORD_POLICY_VIOLATION", ex.getErrorCode());
         verify(userRepository, never()).save(any());
     }
@@ -307,7 +279,7 @@ class AdminUserServiceTest {
         when(userRepository.findById(targetId)).thenReturn(Optional.empty());
 
         BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.resetPassword(operator, targetId, "NewPassw0rd", null));
+            () -> service.resetPassword(operator, targetId, "NewPassw0rd"));
         assertEquals("USER_NOT_FOUND", ex.getErrorCode());
     }
 
@@ -321,7 +293,7 @@ class AdminUserServiceTest {
         when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
         when(passwordEncoder.encode("NewPassw0rd")).thenReturn("NEW_HASH");
 
-        service.resetPassword(operator, targetId, "NewPassw0rd", null);
+        service.resetPassword(operator, targetId, "NewPassw0rd");
 
         verify(emailNotificationService).sendPasswordChangedEmail("u@example.com", "ADMIN_RESET", null);
     }
@@ -336,7 +308,7 @@ class AdminUserServiceTest {
         when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
 
         assertThrows(BusinessException.class,
-            () -> service.resetPassword(operator, targetId, "short", null));
+            () -> service.resetPassword(operator, targetId, "short"));
 
         verify(emailNotificationService, never()).sendPasswordChangedEmail(anyString(), anyString(), any());
     }
@@ -372,74 +344,6 @@ class AdminUserServiceTest {
         BusinessException ex = assertThrows(BusinessException.class,
             () -> service.getUserDetail(targetId));
         assertEquals("USER_NOT_FOUND", ex.getErrorCode());
-    }
-
-    // ==================== 敏感动作二次确认（P2 step-up） ====================
-
-    /** 操作者已开启 MFA：缺令牌必须在动作发生前被拒（不得已写哈希/改状态再补查）。 */
-    @Test
-    void resetPassword_mfaOperator_withoutToken_shouldRequireStepUp() {
-        AdminUserService service = serviceWithRealStepUp();
-        UUID operatorId = UUID.randomUUID();
-        UUID targetId = UUID.randomUUID();
-        when(userRepository.findById(operatorId)).thenReturn(Optional.of(mfaOperator(operatorId)));
-        when(userRepository.findById(targetId)).thenReturn(Optional.of(
-            user(targetId, User.UserRole.USER, User.UserStatus.ACTIVE, 0)));
-
-        BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.resetPassword(operatorId, targetId, "NewPassw0rd", null));
-        assertEquals("MFA_STEP_UP_REQUIRED", ex.getErrorCode());
-        verify(userRepository, never()).save(any());
-        verify(passwordEncoder, never()).encode(anyString());
-    }
-
-    /** 操作者已开启 MFA：令牌有效（单测以 mock 消费成功表示）→ 动作放行。 */
-    @Test
-    void resetPassword_mfaOperator_withToken_shouldConsumeAndProceed() {
-        AdminUserService service = service();
-        UUID operatorId = UUID.randomUUID();
-        UUID targetId = UUID.randomUUID();
-        when(userRepository.findById(operatorId)).thenReturn(Optional.of(mfaOperator(operatorId)));
-        when(userRepository.findById(targetId)).thenReturn(Optional.of(
-            user(targetId, User.UserRole.USER, User.UserStatus.ACTIVE, 2)));
-        when(passwordEncoder.encode("NewPassw0rd")).thenReturn("NEW_HASH");
-
-        service.resetPassword(operatorId, targetId, "NewPassw0rd", "step-up-token");
-
-        verify(stepUpService).consume(operatorId, 0, "ADMIN_RESET_USER_PASSWORD", "step-up-token");
-        verify(userRepository).save(any(User.class));
-    }
-
-    /** 未开启 MFA 的操作者：没有第二因子可验证，不要求 step-up（B8 默认口径）。 */
-    @Test
-    void resetPassword_nonMfaOperator_shouldSkipStepUp() {
-        AdminUserService service = service();
-        UUID operatorId = UUID.randomUUID();
-        UUID targetId = UUID.randomUUID();
-        when(userRepository.findById(targetId)).thenReturn(Optional.of(
-            user(targetId, User.UserRole.USER, User.UserStatus.ACTIVE, 0)));
-        when(passwordEncoder.encode("NewPassw0rd")).thenReturn("NEW_HASH");
-
-        service.resetPassword(operatorId, targetId, "NewPassw0rd", null);
-
-        verify(stepUpService, never()).consume(any(), org.mockito.ArgumentMatchers.anyInt(),
-            anyString(), anyString());
-    }
-
-    /** 改角色同样受 step-up 保护，且动作绑定正确（改角色的确认不能挪用给别处）。 */
-    @Test
-    void changeRole_mfaOperator_withoutToken_shouldRequireStepUp() {
-        AdminUserService service = serviceWithRealStepUp();
-        UUID operatorId = UUID.randomUUID();
-        UUID targetId = UUID.randomUUID();
-        when(userRepository.findById(operatorId)).thenReturn(Optional.of(mfaOperator(operatorId)));
-        when(userRepository.findById(targetId)).thenReturn(Optional.of(
-            user(targetId, User.UserRole.USER, User.UserStatus.ACTIVE, 0)));
-
-        BusinessException ex = assertThrows(BusinessException.class,
-            () -> service.changeRole(operatorId, targetId, User.UserRole.ADMIN, null));
-        assertEquals("MFA_STEP_UP_REQUIRED", ex.getErrorCode());
-        verify(userRepository, never()).save(any());
     }
 
     // ==================== 列表查询 ====================

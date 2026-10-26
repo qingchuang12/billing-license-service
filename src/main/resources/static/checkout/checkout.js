@@ -42,37 +42,13 @@
   var SESSION_STORAGE_KEY = 'yaning-checkout-session';
 
   /* ------------------------------------------------------------------
-     产品展示元数据（K8 决策 B + K16）
-     仅承载「尚未后端化」的展示位：双语 unit + 推荐位 + SKU 白名单
-     （name/desc/权益显示名已改由后端下发，见 DISPLAY 下方合并逻辑与 renderPlanCards）。
-     价格（priceCny/priceUsd）与档位/周期校验一律来自 GET /api/products（K16 端点）。
-     SKU 必须与 V4__product_tiers_and_seed.sql 一致；错配会在 create 时 400（PRODUCT_NOT_FOUND）。
-     - pro-buyout            Pro 买断        tier=PRO       lifetime
-     - pro-plus-buyout       Pro Plus 高级版 tier=PRO_PLUS  lifetime
-     - pro-subscription      订阅 Pro        tier=PRO       monthly
-     - pro-plus-subscription 订阅 Pro Plus   tier=PRO_PLUS  monthly
+     产品目录完全由 GET /api/products（K16）驱动：
+     SKU / 名称 / 描述 / 双价 / 档位 / 周期 / 权益 / 推荐位均来自后台产品配置，
+     页面不再维护 SKU 白名单；新增套餐只要上架即自动出现在收银台。
+     价格与档位/周期校验一律以接口返回为准。
      ------------------------------------------------------------------ */
   // 构建标记：用于排查「浏览器标签页缓存了旧脚本」的支持场景（F12 控制台可见）
-  console.info('[checkout] build 2026-09-29-1 · 目录请求支持 ?product= 产品码过滤（过滤后为空回退全量），productId 仅作 SKU 预选');
-
-  var DISPLAY = {
-    'pro-buyout': {
-      tier: 'PRO', cycle: 'lifetime', recommended: false,
-      unit: { zh: '一次性付款', en: 'one-time payment' }
-    },
-    'pro-plus-buyout': {
-      tier: 'PRO_PLUS', cycle: 'lifetime', recommended: true,
-      unit: { zh: '一次性付款', en: 'one-time payment' }
-    },
-    'pro-subscription': {
-      tier: 'PRO', cycle: 'monthly', recommended: false,
-      unit: { zh: '每月自动续费，可随时取消', en: 'billed monthly, cancel anytime' }
-    },
-    'pro-plus-subscription': {
-      tier: 'PRO_PLUS', cycle: 'monthly', recommended: false,
-      unit: { zh: '每月自动续费，可随时取消', en: 'billed monthly, cancel anytime' }
-    }
-  };
+  console.info('[checkout] build 2026-10-25-2 · 目录完全由 /api/products 驱动（无 SKU 白名单）');
 
   /** 档位徽标文案 */
   var TIER_LABELS = {
@@ -89,10 +65,29 @@
   function normalizeCycle(v) {
     var s = String(v || '').toUpperCase();
     if (s === 'MONTHLY') return 'monthly';
+    if (s === 'HALF_YEAR') return 'halfYear';
     if (s === 'LIFETIME' || s === 'ONE_TIME') return 'lifetime';
     if (s === 'YEARLY') return 'yearly';
     if (s === 'QUARTERLY') return 'quarterly';
     return 'lifetime';
+  }
+
+  /** 周期对应的付款说明（双语展示位随周期派生，不再由前端白名单硬编码） */
+  function unitForCycle(cycle) {
+    if (cycle === 'monthly') return { zh: '每月自动续费，可随时取消', en: 'billed monthly, cancel anytime' };
+    if (cycle === 'halfYear') return { zh: '每半年自动续费，可随时取消', en: 'billed every 6 months, cancel anytime' };
+    if (cycle === 'quarterly') return { zh: '每季度自动续费，可随时取消', en: 'billed quarterly, cancel anytime' };
+    if (cycle === 'yearly') return { zh: '每年自动续费，可随时取消', en: 'billed yearly, cancel anytime' };
+    return { zh: '一次性付款', en: 'one-time payment' };
+  }
+
+  /** 价格后缀（月/半年/季/年）；一次性与永久不加后缀 */
+  function priceSuffix(cycle) {
+    if (cycle === 'monthly') return t('plan.priceSuffix.monthly');
+    if (cycle === 'halfYear') return t('plan.priceSuffix.halfYear');
+    if (cycle === 'quarterly') return t('plan.priceSuffix.quarterly');
+    if (cycle === 'yearly') return t('plan.priceSuffix.yearly');
+    return '';
   }
 
   // 权益显示名已配置化：后端 /api/products 直接下发 featureViews（{key,labelZh,labelEn}），
@@ -102,7 +97,7 @@
    * 产品目录取值入口（K8 决策 B + K16 + V10 产品维度）。
    * 拉取 GET /api/products（带产品码时走 ?product= 过滤，值经 URL 编码），
    * 按 SKU 合并「展示元数据 + 权威价格」；
-   * 任一 SKU 不在 DISPLAY 清单、或双价皆缺，即抛弃，避免脏数据上屏。
+   * 双价皆缺的 SKU 直接抛弃，避免脏数据上屏。
    * @param {string} [productCode] 产品码（如 ai-tools）；空 = 全量目录
    * @returns {Promise<Array>}
    */
@@ -121,28 +116,33 @@
     });
   }
 
-  /** 目录 DTO 列表 → 页面档位行（DISPLAY 白名单合并 + 双价校验；空目录视为接口异常） */
+  /** 目录 DTO 列表 → 页面档位行（接口驱动；双价皆缺的脏数据不上屏；空目录视为接口异常） */
   function mergeCatalog(list) {
     var rows = Array.isArray(list) ? list : [];
     var merged = [];
     rows.forEach(function (dto) {
       var sku = dto && dto.sku;
-      var d = sku && DISPLAY[sku];
-      if (!d) return;
+      if (!sku) return;
       var cny = toNumber(dto.priceCny);
       var usd = toNumber(dto.priceUsd);
       if (cny == null && usd == null) return;
+      var cycle = normalizeCycle(dto.billingCycle);
+      var nameZh = dto.name != null ? dto.name : sku;
+      var descZh = dto.description != null ? dto.description : '';
       merged.push({
         sku: sku,
-        tier: dto.tier || d.tier,
-        cycle: normalizeCycle(dto.billingCycle) || d.cycle,
+        tier: dto.tier || 'PRO',
+        cycle: cycle,
+        recurring: !!dto.recurring,
         priceCny: cny,
         priceUsd: usd,
-        recommended: d.recommended,
-        name: { zh: dto.name, en: (dto.nameEn != null ? dto.nameEn : dto.name) },
-        desc: { zh: dto.description, en: (dto.descriptionEn != null ? dto.descriptionEn : dto.description) },
-        unit: d.unit,
-        featureViews: (dto && dto.featureViews) || []
+        recommended: !!dto.recommended,
+        // 渠道能力矩阵：只保留「支持该套餐周期」的已启用渠道，供按区域展示与置灰
+        providers: Array.isArray(dto.providers) ? dto.providers : [],
+        name: { zh: nameZh, en: (dto.nameEn != null ? dto.nameEn : nameZh) },
+        desc: { zh: descZh, en: (dto.descriptionEn != null ? dto.descriptionEn : descZh) },
+        unit: unitForCycle(cycle),
+        featureViews: dto.featureViews || []
       });
     });
     if (!merged.length) {
@@ -193,6 +193,22 @@
   };
 
   /**
+   * 当前界面语言对应的结算区域（与后端 createCheckout 的区域判定同口径：zh→国内，其余→国际）。
+   */
+  function currentRegion() {
+    return lang === 'zh' ? 'CHINA' : 'GLOBAL';
+  }
+
+  /** 该套餐在当前区域可用的渠道（渠道能力矩阵由 /api/products 的 providers 下发）。 */
+  function providersForRegion(product) {
+    if (!product || !Array.isArray(product.providers)) return [];
+    var region = currentRegion();
+    return product.providers.filter(function (pv) {
+      return pv && pv.region === region;
+    });
+  }
+
+  /**
    * 轮询策略：前若干次固定 3 秒，其后指数退避（上限 15 秒）；
    * 另有总次数上限、总时长上限、连续失败上限三重保护，避免打爆服务端。
    */
@@ -239,7 +255,12 @@
       'plan.legend': '选择授权档位',
       'plan.currencyNote': '价格随界面语言切换：中文界面以人民币（CNY）结算，英文界面以美元（USD）结算。',
       'plan.recommended': '推荐',
+      'plan.unavailable': '当前区域暂不可售',
+      'plan.providers': '可用支付方式',
       'plan.priceSuffix.monthly': '/月',
+      'plan.priceSuffix.halfYear': '/半年',
+      'plan.priceSuffix.quarterly': '/季',
+      'plan.priceSuffix.yearly': '/年',
 
       'form.emailLabel': '电子邮箱',
       'form.emailHint': '授权凭证与订单通知将发送到此邮箱。',
@@ -373,7 +394,12 @@
       'plan.legend': 'Choose a plan',
       'plan.currencyNote': 'Pricing follows your interface language: CNY for Chinese, USD for English.',
       'plan.recommended': 'Recommended',
+      'plan.unavailable': 'Not available in this region',
+      'plan.providers': 'Payment methods',
       'plan.priceSuffix.monthly': '/mo',
+      'plan.priceSuffix.halfYear': '/6 mo',
+      'plan.priceSuffix.quarterly': '/qtr',
+      'plan.priceSuffix.yearly': '/yr',
 
       'form.emailLabel': 'Email address',
       'form.emailHint': 'Your license credential and order updates are sent here.',
@@ -755,6 +781,10 @@
      ====================================================================== */
   function applyLang(nextLang) {
     lang = nextLang;
+    // 语言切换会改变结算区域：已选套餐在新区域可能没有可售渠道，先清掉选择，避免提交时才报错
+    if (state.product && !providersForRegion(state.product).length) {
+      state.product = null;
+    }
     var dict = I18N[lang] || I18N.zh;
 
     $$('[data-i18n]').forEach(function (el) {
@@ -811,9 +841,15 @@
 
     list.innerHTML = products.map(function (product) {
       var selected = state.product && state.product.sku === product.sku;
+      var providers = providersForRegion(product);
+      var unavailable = providers.length === 0;
+      var providerNames = providers.map(function (pv) {
+        var meta = PAYMENT_METHODS[pv.method];
+        return meta ? pickText(meta.label) : pv.method;
+      }).join(' · ');
       var tierLabel = pickText(TIER_LABELS[product.tier] || { zh: product.tier, en: product.tier });
       var p = pickPrice(product);
-      var price = p.symbol + formatMoney(p.value) + (product.cycle === 'monthly' ? t('plan.priceSuffix.monthly') : '');
+      var price = p.symbol + formatMoney(p.value) + priceSuffix(product.cycle);
       var benefits = product.featureViews.map(function (fv) {
         var label = (lang === 'zh' || !fv.labelEn) ? fv.labelZh : fv.labelEn;
         if (!label) label = fv.key;
@@ -822,9 +858,10 @@
 
       return '' +
         '<li>' +
-          '<label class="plan-card' + (selected ? ' is-selected' : '') + '" data-sku="' + esc(product.sku) + '">' +
+          '<label class="plan-card' + (selected ? ' is-selected' : '') +
+            (unavailable ? ' is-unavailable' : '') + '" data-sku="' + esc(product.sku) + '">' +
             '<input class="plan-card__input" type="radio" name="plan" value="' + esc(product.sku) + '"' +
-              (selected ? ' checked' : '') + '>' +
+              (selected ? ' checked' : '') + (unavailable ? ' disabled' : '') + '>' +
             '<span class="plan-card__body">' +
               '<span class="plan-card__head">' +
                 '<span class="plan-card__name">' + esc(pickText(product.name)) + '</span>' +
@@ -834,6 +871,9 @@
               '<span class="plan-card__amount">' + esc(price) + '</span>' +
               '<span class="plan-card__unit">' + esc(pickText(product.unit)) + '</span>' +
               '<span class="plan-card__desc">' + esc(pickText(product.desc)) + '</span>' +
+              '<span class="plan-card__providers">' +
+                esc(unavailable ? t('plan.unavailable') : t('plan.providers') + ' · ' + providerNames) +
+              '</span>' +
               '<ul class="plan-card__benefits">' + benefits + '</ul>' +
             '</span>' +
           '</label>' +
@@ -848,7 +888,10 @@
   }
 
   function selectPlan(sku) {
-    state.product = products.filter(function (item) { return item.sku === sku; })[0] || null;
+    var product = products.filter(function (item) { return item.sku === sku; })[0] || null;
+    // 当前区域没有任何可用渠道的套餐不允许被选中（对应后端 NO_PAYMENT_METHOD）
+    if (product && !providersForRegion(product).length) return;
+    state.product = product;
     $$('.plan-card', $('#planList')).forEach(function (card) {
       card.classList.toggle('is-selected', card.getAttribute('data-sku') === sku);
     });
@@ -868,7 +911,7 @@
     var map = {
       sumPlan: state.product ? pickText(state.product.name) : t('summary.notSelected'),
       sumAmount: state.product
-        ? (function () { var p = pickPrice(state.product); return p.symbol + formatMoney(p.value) + (state.product.cycle === 'monthly' ? t('plan.priceSuffix.monthly') : ''); })()
+        ? (function () { var p = pickPrice(state.product); return p.symbol + formatMoney(p.value) + priceSuffix(state.product.cycle); })()
         : '—',
       sumEmail: state.email || '—',
       sumMachine: state.machineId || t('summary.notBound'),
@@ -1720,7 +1763,8 @@
   function hydrateFromSession(snapshot) {
     // URL 参数（C9）优先级高于本地快照：用户是点了某个档位按钮才进来的，不该被上次的会话覆盖
     if (snapshot.productId && !state.product) {
-      state.product = products.filter(function (item) { return item.sku === snapshot.productId; })[0] || null;
+      var restored = products.filter(function (item) { return item.sku === snapshot.productId; })[0] || null;
+      state.product = (restored && providersForRegion(restored).length) ? restored : null;
     }
     if (snapshot.email) state.email = snapshot.email;
     if (snapshot.machineId) state.machineId = snapshot.machineId;
@@ -1759,8 +1803,10 @@
       products = Array.isArray(list) ? list : [];
       var presetSku = String(params.productId || '').trim();
       if (presetSku) {
-        // 预选匹配不到（如旧客户端把产品码传进 productId）即静默不预选，保持原行为
-        state.product = products.filter(function (item) { return item.sku === presetSku; })[0] || null;
+        // 预选匹配不到（如旧客户端把产品码传进 productId）即静默不预选，保持原行为；
+        // 当前区域无可用渠道的套餐也不预选（否则提交时才报 NO_PAYMENT_METHOD）
+        var preset = products.filter(function (item) { return item.sku === presetSku; })[0] || null;
+        state.product = (preset && providersForRegion(preset).length) ? preset : null;
       }
       applyLang(lang);
       renderMachineBox();

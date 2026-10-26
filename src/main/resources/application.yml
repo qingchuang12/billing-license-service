@@ -24,6 +24,13 @@ spring:
     hibernate:
       # H3：生产环境 schema 由 Flyway 全权管理，Hibernate 仅做校验，禁止自动改表（避免与迁移脚本漂移）
       ddl-auto: validate
+    # #12（2026-10-25）：显式关闭 OSIV（Spring Boot 默认 true）。
+    # 开着时每个请求全程占一条 DB 连接（含发邮件、渠道 HTTP 期间），小池下最先被打满；
+    # 且会把「事务外读懒集合」掩盖成正常运行，N+1 与懒加载边界长期不可见。
+    # 关掉后凡在事务外碰懒关系一律 LazyInitializationException，边界立即显性化——
+    # 读取路径的事务边界已在 AdminService / RedeemCodeService 逐个补齐，
+    # 收银台与自助退款这两条「渠道调用必须在事务外」的链路改由 join fetch 预加载（见 OrderRepository）。
+    open-in-view: false
     show-sql: false
     properties:
       hibernate:

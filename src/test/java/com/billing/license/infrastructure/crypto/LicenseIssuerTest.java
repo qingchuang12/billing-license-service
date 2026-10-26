@@ -2,7 +2,9 @@ package com.billing.license.infrastructure.crypto;
 
 import com.billing.license.entity.License;
 import com.billing.license.entity.Product;
+import com.billing.license.entity.ProductProfile;
 import com.billing.license.infrastructure.kms.KmsService;
+import com.billing.license.repository.ProductProfileRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -14,18 +16,22 @@ import java.security.Signature;
 import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * LicenseIssuer 单元测试 —— 覆盖 A3（更新门槛字段）、A4（features 非法 JSON）、A5（kid 验签预留）。
- * 使用内存 Ed25519 KmsService 桩，纯单元测试、不启动 Spring 上下文。
+ * 使用内存 Ed25519 KmsService 桩与产品档案仓储桩，纯单元测试、不启动 Spring 上下文。
  */
 class LicenseIssuerTest {
 
     private LicenseIssuer issuer;
     private KmsService kms;
+    private ProductProfileRepository productProfileRepository;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -52,7 +58,8 @@ class LicenseIssuerTest {
             public byte[] getPublicKey() { return kp.getPublic().getEncoded(); }
             public String getAlgorithm() { return "Ed25519"; }
         };
-        issuer = new LicenseIssuer(kms);
+        productProfileRepository = mock(ProductProfileRepository.class);
+        issuer = new LicenseIssuer(kms, productProfileRepository);
         ReflectionTestUtils.setField(issuer, "licenseKid", "license-key-1");
     }
 
@@ -69,12 +76,15 @@ class LicenseIssuerTest {
     }
 
     private Product product(Integer updateUntilDays, Integer maxMajorVersion, String features) {
+        when(productProfileRepository.findByProductCodeIgnoreCase("ai-tools"))
+            .thenReturn(Optional.of(ProductProfile.builder()
+                .productCode("ai-tools").name("Pro").features(features).build()));
         return Product.builder()
             .id(UUID.randomUUID()).sku("pro-buyout").name("Pro 买断")
+            .productCode("ai-tools")
             .licenseDurationDays(365)
             .updateUntilDays(updateUntilDays)
             .maxMajorVersion(maxMajorVersion)
-            .features(features)
             .build();
     }
 
@@ -147,7 +157,7 @@ class LicenseIssuerTest {
             public byte[] getPublicKey() { return kms.getPublicKey(); }
             public String getAlgorithm() { return kms.getAlgorithm(); }
         };
-        LicenseIssuer kidIssuer = new LicenseIssuer(recordingKms);
+        LicenseIssuer kidIssuer = new LicenseIssuer(recordingKms, productProfileRepository);
         ReflectionTestUtils.setField(kidIssuer, "licenseKid", "license-key-1");
 
         String token = kidIssuer.issueLicense(license(product(null, null, null)));
@@ -169,7 +179,7 @@ class LicenseIssuerTest {
             public byte[] getPublicKey() { return kms.getPublicKey(); }
             public String getAlgorithm() { return kms.getAlgorithm(); }
         };
-        LicenseIssuer kidIssuer = new LicenseIssuer(recordingKms);
+        LicenseIssuer kidIssuer = new LicenseIssuer(recordingKms, productProfileRepository);
         ReflectionTestUtils.setField(kidIssuer, "licenseKid", "license-key-1");
 
         // 手工构造：header 段非合法 Base64/JSON，但对 signingInput 重新签名（保证签名本身有效）

@@ -3,8 +3,6 @@ package com.billing.license.controller;
 import com.billing.license.entity.User;
 import com.billing.license.repository.UserRepository;
 import com.billing.license.security.JwtTokenService;
-import com.billing.license.security.MfaSecretCipher;
-import com.billing.license.security.TotpService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -52,8 +50,6 @@ class AdminUserControllerTest {
     @Autowired private UserRepository userRepository;
     @Autowired private JwtTokenService jwtTokenService;
     @Autowired private PasswordEncoder passwordEncoder;
-    @Autowired private MfaSecretCipher mfaSecretCipher;
-    @Autowired private TotpService totpService;
 
     private MockMvc mockMvc;
     private User admin;
@@ -210,26 +206,25 @@ class AdminUserControllerTest {
     }
 
     /**
-     * P2 step-up 集成：操作者已开启 MFA 时，敏感动作不带 X-Step-Up-Token 必须被拒
-     * （服务端约束，前端弹窗只是引导）。走真实过滤器链与真实 AdminStepUpService。
+     * 新口径（MFA 仅用于登录）：管理员即使已开启 MFA，数据修改也不再索要动态码；
+     * 前端只做一次确认弹窗。这里固化为「不带 X-Step-Up-Token 也能成功」。
      */
     @Test
-    void resetPassword_mfaAdmin_withoutStepUpToken_shouldRequireStepUp() throws Exception {
+    void resetPassword_mfaAdmin_withoutStepUpToken_shouldSucceed() throws Exception {
         User mfaAdmin = userRepository.save(User.builder()
             .email("mfa-admin@example.com").passwordHash(passwordEncoder.encode("Passw0rd1"))
             .role(User.UserRole.ADMIN).status(User.UserStatus.ACTIVE).build());
         mfaAdmin.setMfaEnabled(true);
-        mfaAdmin.setMfaSecretCipher(mfaSecretCipher.encrypt(totpService.generateSecret()));
         userRepository.save(mfaAdmin);
 
         mockMvc.perform(post("/api/admin/users/" + normalUser.getId() + "/password/reset")
                 .header("Authorization", "Bearer " + tokenFor(mfaAdmin))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"newPassword\":\"" + NEW_PASSWORD + "\"}"))
-            .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.code").value("MFA_STEP_UP_REQUIRED"));
+            .andExpect(status().isOk());
 
         User after = userRepository.findById(normalUser.getId()).orElseThrow();
-        assertEquals(0, after.getTokenVersion(), "被拒后目标用户不得有任何变更");
+        assertTrue(after.isMustChangePassword());
+        assertTrue(after.getTokenVersion() > 0, "重置后旧会话须失效");
     }
 }

@@ -12,6 +12,9 @@ import java.util.List;
  * @param configured    关键配置是否齐全
  * @param missingConfig 缺失的配置项名列表；配置齐全时为空列表
  * @param note          附加说明（如「已启用但配置不全」）
+ * @param supportedBillingCycles 该渠道可结算的计费周期
+ * @param supportsRecurring 该渠道是否具备订阅（自动续费）能力
+ * @param paymentProducts 该渠道提供的支付产品形态（QRCODE / REDIRECT）
  */
 @Schema(description = "单个支付渠道的启用与配置状态；不返回任何密钥值，仅暴露缺失配置项名")
 public record PaymentChannelStatus(
@@ -30,6 +33,17 @@ public record PaymentChannelStatus(
         List<String> missingConfig,
 
         @Schema(description = "附加说明；仅返回配置项名，不回显密钥值", example = "已启用但配置不全")
-        String note
+        String note,
+
+        @Schema(description = "该渠道可结算的计费周期",
+                example = "[\"ONE_TIME\", \"LIFETIME\"]")
+        List<String> supportedBillingCycles,
+
+        @Schema(description = "该渠道是否具备订阅（自动续费）能力", example = "false")
+        boolean supportsRecurring,
+
+        @Schema(description = "该渠道提供的支付产品形态（QRCODE=扫码，REDIRECT=跳转）",
+                example = "[\"QRCODE\", \"REDIRECT\"]")
+        List<String> paymentProducts
 ) {
 }

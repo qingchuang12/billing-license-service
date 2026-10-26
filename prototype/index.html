@@ -1,0 +1,1817 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Web 原型 · 交互优化提案 — billing-license-service</title>
+<style>
+/* ==========================================================================
+   原型壳 + 站点设计令牌（与 static/checkout/checkout.css 同源）
+   ========================================================================== */
+:root {
+  --brand-50:#F4F7F8; --brand-100:#E6EDEF; --brand-200:#CBD8DC; --brand-300:#A9BDC3;
+  --brand-400:#84979E; --brand-500:#647880; --brand-600:#55676E; --brand-700:#4C5B61;
+  --brand-800:#3A474D; --brand-900:#263134;
+  --ink-1:#111A1D; --ink-2:#3D4A4F; --ink-3:#5F6D72;
+  --line:#E4E9EB; --line-strong:#CBD5D9; --bg:#FFFFFF; --bg-soft:#F7F9FA;
+  --success:#3E9C7A; --warning:#C9943A; --danger:#B4544A; --danger-bg:#FBEFEE;
+  --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --radius-sm:6px; --radius:8px; --radius-lg:12px; --radius-xl:16px;
+  --shadow-sm:0 1px 2px rgba(17,26,29,.06); --shadow:0 4px 12px rgba(17,26,29,.06);
+  --shadow-md:0 10px 28px rgba(17,26,29,.09); --shadow-lg:0 24px 60px rgba(17,26,29,.12);
+  --ease:cubic-bezier(.22,.61,.36,1);
+}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:#E9EDEE;color:var(--ink-2);font-family:var(--font-sans);font-size:15px;line-height:1.7}
+button{font-family:inherit}
+[hidden]{display:none!important}
+.mono{font-family:var(--font-mono);font-size:12px}
+.linklike{border:0;background:none;padding:0;color:var(--brand-700);font-size:13px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.linklike:hover{color:var(--brand-900)}
+
+/* ------------------------------- 原型壳 ------------------------------- */
+.proto{min-height:100vh;display:flex;flex-direction:column}
+.proto__bar{position:sticky;top:0;z-index:60;display:flex;align-items:center;gap:14px;height:56px;padding:0 20px;background:#fff;border-bottom:1px solid var(--line)}
+.proto__brand{font-weight:700;color:var(--ink-1);font-size:15px;white-space:nowrap}
+.proto__meta{color:var(--ink-3);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.proto__actions{margin-left:auto;display:flex;gap:8px}
+.proto__btn{padding:7px 14px;border:1px solid var(--line-strong);background:#fff;border-radius:var(--radius);font-size:12.5px;color:var(--ink-2);cursor:pointer;transition:border-color .16s var(--ease)}
+.proto__btn:hover{border-color:var(--brand-400);color:var(--ink-1)}
+.proto__body{flex:1;display:grid;grid-template-columns:332px minmax(0,1fr)}
+.proto__side{background:#FBFCFC;border-right:1px solid var(--line);padding:16px 14px 48px;position:sticky;top:56px;height:calc(100vh - 56px);overflow-y:auto}
+.side-block{margin-bottom:20px}
+.side-title{font-size:11px;letter-spacing:.1em;color:var(--ink-3);margin:0 0 10px;font-weight:700}
+.nav-group{margin-bottom:14px}
+.nav-group__title{font-size:11px;color:var(--brand-600);font-weight:700;margin:0 0 6px}
+.nav-item{display:flex;gap:10px;width:100%;text-align:left;padding:8px 10px;border:1px solid transparent;border-radius:10px;background:transparent;cursor:pointer;margin-bottom:2px}
+.nav-item:hover{background:var(--brand-50)}
+.nav-item.is-active{background:#fff;border-color:var(--brand-200);box-shadow:var(--shadow-sm)}
+.nav-item__num{flex:none;width:20px;height:20px;border-radius:6px;background:var(--brand-100);color:var(--brand-700);font-size:11px;font-weight:700;display:grid;place-items:center;margin-top:2px}
+.nav-item.is-active .nav-item__num{background:var(--brand-700);color:#fff}
+.nav-item__name{display:block;font-size:13px;font-weight:600;color:var(--ink-1)}
+.nav-item__desc{display:block;font-size:11px;color:var(--ink-3);line-height:1.5}
+.opt{background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:8px}
+.opt:hover{border-color:var(--brand-300)}
+.opt__head{display:flex;align-items:baseline;gap:7px}
+.opt__id{font-size:10.5px;font-weight:800;color:var(--danger)}
+.opt__title{font-size:12.5px;font-weight:700;color:var(--ink-1)}
+.opt__row{margin-top:3px;font-size:11px;line-height:1.65;color:var(--ink-3)}
+.opt__row b{color:var(--ink-2);font-weight:700}
+.side-note{font-size:11px;color:var(--ink-3);line-height:1.7;background:var(--bg-soft);border:1px dashed var(--line-strong);border-radius:10px;padding:10px 12px}
+.proto__stage{padding:24px 28px 60px;overflow-y:auto;max-height:calc(100vh - 56px)}
+.browser{max-width:1160px;margin:0 auto;background:#fff;border-radius:14px;box-shadow:var(--shadow-md);overflow:hidden;border:1px solid var(--line)}
+.browser__chrome{display:flex;align-items:center;gap:8px;padding:10px 14px;background:#F2F4F5;border-bottom:1px solid var(--line)}
+.bdot{width:10px;height:10px;border-radius:50%}
+.bdot--r{background:#E0655B}.bdot--y{background:#E5B94E}.bdot--g{background:#5FBF7A}
+.browser__url{flex:1;margin-left:6px;background:#fff;border:1px solid var(--line);border-radius:999px;padding:5px 14px;font-size:11.5px;color:var(--ink-3);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.browser__view{position:relative;min-height:680px;background:var(--bg)}
+.stage-legend{max-width:1160px;margin:14px auto 0;font-size:11.5px;color:var(--ink-3);line-height:1.7}
+
+/* ------------------------------- 站点通用 ------------------------------- */
+.screen{display:none}
+.screen.is-active{display:block}
+.container{width:100%;max-width:1080px;margin-inline:auto;padding-inline:24px}
+.site-header{border-bottom:1px solid var(--line);background:var(--bg)}
+.site-header__inner{display:flex;align-items:center;justify-content:space-between;gap:16px;height:64px}
+.brand{display:flex;align-items:center;gap:10px;color:var(--ink-1);font-weight:600;font-size:17px;text-decoration:none}
+.site-header__actions{display:flex;align-items:center;gap:12px}
+.lang-switch{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:var(--bg-soft);border:1px solid var(--line-strong);border-radius:var(--radius);color:var(--ink-2);font-size:13px;cursor:pointer}
+.lang-switch__sep{color:var(--ink-3)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:11px 18px;border:1px solid transparent;border-radius:var(--radius);font-size:15px;font-weight:600;line-height:1.2;cursor:pointer;transition:background-color .16s var(--ease),border-color .16s var(--ease),color .16s var(--ease)}
+.btn--primary{background:var(--brand-700);color:#fff}
+.btn--primary:hover{background:var(--brand-800);color:#fff}
+.btn--danger{background:var(--danger);color:#fff}
+.btn--danger:hover{background:#9C453C;color:#fff}
+.btn--ghost{background:var(--bg);color:var(--ink-2);border-color:var(--line-strong)}
+.btn--ghost:hover{border-color:var(--brand-400);color:var(--ink-1)}
+.btn--sm{padding:8px 12px;font-size:13px}
+.btn:disabled{opacity:.65;cursor:progress}
+.site-footer{margin-top:40px;padding:24px 0;border-top:1px solid var(--line);background:var(--bg-soft)}
+.site-footer__bottom{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;color:var(--ink-3);font-size:13px}
+.panel{padding:24px;background:var(--bg);border:1px solid var(--line);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm)}
+.panel+.panel{margin-top:16px}
+.panel__title{font-size:18px;color:var(--ink-1);margin:0}
+.panel__desc{margin-top:8px;color:var(--ink-3);font-size:14px}
+.panel__actions{margin-top:24px;display:flex;gap:10px;flex-wrap:wrap}
+.field{margin-top:20px}
+.field__label{display:block;margin-bottom:6px;color:var(--ink-1);font-size:14px;font-weight:600}
+.field__input{width:100%;padding:11px 14px;background:var(--bg);border:1px solid var(--line-strong);border-radius:var(--radius);color:var(--ink-1);font-family:inherit;font-size:15px;line-height:1.5;transition:border-color .16s var(--ease),box-shadow .16s var(--ease)}
+.field__input::placeholder{color:var(--brand-300)}
+.field__input:hover{border-color:var(--brand-400)}
+.field__input:focus-visible{outline:none;border-color:var(--brand-700);box-shadow:0 0 0 3px var(--brand-100)}
+.field__input[aria-invalid="true"]{border-color:var(--danger)}
+.field__hint{margin-top:6px;color:var(--ink-3);font-size:13px}
+.field__error{margin-top:6px;color:var(--danger);font-size:13px}
+.form-note{margin-top:18px;color:var(--ink-3);font-size:13px}
+.form-error{margin-top:10px;color:var(--danger);font-size:13px}
+.form-actions{display:flex;gap:8px;margin-top:18px;flex-wrap:wrap}
+.field--check{margin-top:12px}
+.check-label{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);cursor:pointer}
+.spinner{width:14px;height:14px;border:2px solid var(--brand-200);border-top-color:var(--brand-700);border-radius:50%;animation:ck-spin .8s linear infinite;display:inline-block}
+@keyframes ck-spin{to{transform:rotate(360deg)}}
+
+/* 步骤条 */
+.steps{display:flex;flex-wrap:wrap;gap:10px 22px;margin:26px 0 22px;padding:0;list-style:none}
+.steps__item{display:flex;align-items:center;gap:8px;color:var(--ink-3);font-size:13px}
+.steps__num{display:grid;place-items:center;width:24px;height:24px;border:1px solid var(--line-strong);border-radius:50%;background:var(--bg);color:var(--ink-3);font-size:12px;font-weight:600}
+.steps__item.is-active{color:var(--brand-800);font-weight:600}
+.steps__item.is-active .steps__num{background:var(--brand-700);border-color:var(--brand-700);color:#fff}
+.steps__item.is-done{color:var(--success)}
+.steps__item.is-done .steps__num{background:var(--success);border-color:var(--success);color:#fff}
+
+/* 收银台 */
+.checkout{padding-block:36px 80px}
+.checkout__inner{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:28px;align-items:start}
+.checkout__eyebrow{margin-bottom:10px;color:var(--brand-600);font-size:13px;font-weight:600;letter-spacing:.08em}
+.checkout__title{font-size:30px;color:var(--ink-1);margin:0}
+.checkout__sub{margin-top:10px;max-width:60ch;color:var(--ink-3);font-size:15px}
+.plan-field{margin:0;padding:0;border:0}
+.plan-legend{padding:0;margin:0 0 12px;color:var(--ink-1);font-size:15px;font-weight:600}
+.plan-group-title{margin:18px 0 10px;font-size:13px;font-weight:700;color:var(--ink-1);display:flex;align-items:center;gap:10px}
+.plan-group-title::after{content:"";flex:1;height:1px;background:var(--line)}
+.plan-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(228px,1fr));gap:12px;margin:0;padding:0;list-style:none}
+.plan-field__note{margin-top:12px;color:var(--ink-3);font-size:13px}
+.plan-card{position:relative;display:block;height:100%;padding:16px;background:var(--bg);border:1px solid var(--line-strong);border-radius:var(--radius-lg);cursor:pointer;transition:border-color .16s var(--ease),background-color .16s var(--ease),box-shadow .16s var(--ease)}
+.plan-card:hover{border-color:var(--brand-400);box-shadow:var(--shadow)}
+.plan-card__input{position:absolute;width:1px;height:1px;margin:0;opacity:0}
+.plan-card__input:focus-visible + .plan-card__body{outline:2px solid var(--brand-700);outline-offset:4px;border-radius:var(--radius)}
+.plan-card.is-selected{background:var(--brand-50);border-color:var(--brand-700);box-shadow:inset 0 0 0 1px var(--brand-700)}
+.plan-card__body{display:flex;flex-direction:column;height:100%}
+.plan-card__head{display:flex;align-items:center;gap:8px}
+.plan-card__name{color:var(--ink-1);font-size:15px;font-weight:600}
+.plan-card__tier{padding:2px 8px;background:var(--brand-100);border-radius:var(--radius-sm);color:var(--brand-700);font-size:11px;font-weight:600}
+.plan-card__badge{position:absolute;top:12px;right:12px;display:inline-block;padding:2px 8px;background:var(--brand-700);border-radius:var(--radius-sm);color:#fff;font-size:11px;font-weight:600}
+.plan-card__amount{display:block;margin-top:12px;color:var(--ink-1);font-size:24px;font-weight:600;line-height:1.2}
+.plan-card__unit{display:inline-block;align-self:flex-start;margin-top:8px;padding:3px 10px;background:var(--brand-50);border:1px solid var(--brand-200);border-radius:var(--radius-sm);color:var(--brand-700);font-size:12px}
+.plan-card__providers{display:block;margin-top:8px;color:var(--ink-3);font-size:12px}
+.plan-card.is-unavailable{opacity:.55;cursor:not-allowed}
+.plan-card.is-unavailable .plan-card__providers{color:var(--ink-2);font-weight:600}
+.plan-card__benefits{display:block;margin-top:auto;padding-top:12px;border-top:1px dashed var(--line-strong)}
+.plan-card__benefit{display:block;position:relative;padding-left:18px;color:var(--ink-2);font-size:12.5px;line-height:1.9}
+.plan-card__benefit::before{content:"";position:absolute;left:2px;top:11px;width:5px;height:9px;border-right:2px solid var(--brand-500);border-bottom:2px solid var(--brand-500);transform:rotate(45deg) translateY(-2px)}
+.machine-box{margin-top:20px;padding:14px 16px;background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--radius)}
+.machine-box__top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.machine-box__label{color:var(--ink-3);font-size:12px}
+.machine-box__value{margin-top:2px;color:var(--ink-1);font-family:var(--font-mono);font-size:13px;word-break:break-all}
+.machine-box__hint{margin-top:8px;color:var(--ink-3);font-size:12.5px}
+.summary{padding:20px;background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--radius-lg)}
+.summary__title{font-size:15px;color:var(--ink-1);margin:0}
+.summary__list{margin:14px 0 0}
+.summary__row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line);font-size:13.5px}
+.summary__row:first-child{border-top:0}
+.summary__row dt{color:var(--ink-3);white-space:nowrap}
+.summary__row dd{margin:0;color:var(--ink-1);font-weight:600;text-align:right;word-break:break-all}
+.summary__foot{margin-top:14px;color:var(--ink-3);font-size:13px}
+
+/* 支付方式 / 扫码 / 结果 */
+.region-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.region-chip{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:var(--brand-50);border:1px solid var(--brand-200);color:var(--brand-700);font-size:12px;font-weight:600}
+.region-row__note{font-size:12.5px;color:var(--ink-3);margin:0}
+.provider-list{display:grid;gap:10px}
+.provider-card{display:flex;align-items:center;gap:14px;width:100%;padding:14px 16px;border:1px solid var(--line-strong);border-radius:var(--radius-lg);background:#fff;cursor:pointer;text-align:left;transition:border-color .16s var(--ease),box-shadow .16s var(--ease)}
+.provider-card:hover{border-color:var(--brand-500);box-shadow:var(--shadow)}
+.provider-card__icon{flex:none;width:40px;height:40px;border-radius:10px;display:grid;place-items:center;font-size:16px;font-weight:700;color:#fff}
+.provider-card__name{font-size:15px;font-weight:700;color:var(--ink-1);display:block}
+.provider-card__note{font-size:12px;color:var(--ink-3);display:block;margin-top:2px}
+.provider-card__amount{margin-left:auto;text-align:right;display:flex;align-items:center;gap:12px}
+.provider-card__price{font-size:16px;font-weight:700;color:var(--ink-1)}
+.provider-card__arrow{color:var(--brand-500);font-size:18px}
+.recap{margin-top:16px;padding:14px 16px;border:1px dashed var(--line-strong);border-radius:var(--radius-lg);background:var(--bg-soft);font-size:13px}
+.recap__row{display:flex;justify-content:space-between;gap:12px;padding:5px 0}
+.recap__row span{color:var(--ink-3)}
+.recap__row b{color:var(--ink-1);text-align:right}
+.cd-row{display:flex;align-items:center;gap:12px;margin:4px 0 16px}
+.cd-row__label{font-size:13px;color:var(--ink-3);white-space:nowrap}
+.cd-text{font-family:var(--font-mono);font-size:14px;font-weight:700;color:var(--ink-1)}
+.cd-bar{flex:1;height:6px;border-radius:999px;background:var(--brand-100);overflow:hidden}
+.cd-bar__fill{height:100%;width:100%;background:var(--brand-700);border-radius:999px;transition:width 1s linear}
+.qr-box{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.qr-box__canvas{width:176px;height:176px;padding:8px;background:#fff;border:1px solid var(--line-strong);border-radius:var(--radius)}
+.qr-box__canvas svg{width:100%;height:100%;display:block}
+.qr-box__aside{flex:1 1 240px;min-width:0}
+.qr-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.notice{margin-top:14px;padding:12px 14px;border:1px solid var(--line-strong);border-radius:var(--radius);background:var(--bg-soft);color:var(--ink-2);font-size:13.5px}
+.notice--busy{display:flex;align-items:center;gap:10px}
+.notice--warn{border-color:#E7D2A8;background:#FDF7EC;color:#6F5518}
+.result__title{display:flex;align-items:center;gap:10px;font-size:19px;color:var(--ink-1);margin:0}
+.result__badge{display:inline-grid;place-items:center;width:26px;height:26px;background:var(--success);border-radius:50%;color:#fff;font-size:14px;font-weight:700}
+.result__desc{margin-top:10px;color:var(--ink-3);font-size:14px}
+.result__steps{margin:12px 0 0;padding-left:20px;list-style:decimal;color:var(--ink-2);font-size:14px}
+.result__steps li{line-height:1.9}
+.result__next{margin-top:14px;font-size:14px;font-weight:600;color:var(--ink-1)}
+.code-block{margin-top:14px;padding:14px 16px;background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--radius)}
+.code-block code{display:block;color:var(--ink-1);font-family:var(--font-mono);font-size:14px;word-break:break-all}
+
+/* 账号页 */
+.account{padding-block:32px 72px}
+.account__eyebrow{margin-bottom:10px;color:var(--brand-600);font-size:13px;font-weight:600;letter-spacing:.08em}
+.account__title{font-size:28px;color:var(--ink-1);margin:0}
+.account__sub{margin-top:10px;color:var(--ink-3);font-size:15px}
+.auth-panel{margin-top:20px}
+.auth-step{padding:18px 0;border-top:1px solid var(--line)}
+.auth-step:first-child{padding-top:0;border-top:0}
+.auth-step__tag{font-size:12px;font-weight:700;color:var(--brand-700);letter-spacing:.05em;margin:0 0 12px}
+.auth-step--mfa{margin-top:14px;padding:16px;background:var(--brand-50);border:1px solid var(--brand-200);border-radius:var(--radius-lg)}
+.otp{display:flex;gap:8px;margin:10px 0 14px}
+.otp__inp{width:44px;height:50px;text-align:center;font-size:20px;font-weight:700;border:1px solid var(--line-strong);border-radius:10px;color:var(--ink-1);background:#fff}
+.otp__inp:focus{outline:none;border-color:var(--brand-700);box-shadow:0 0 0 3px var(--brand-100)}
+.code-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.userbar{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 14px;background:var(--bg-soft);border:1px solid var(--line);border-radius:10px;margin-top:18px;font-size:13px;flex-wrap:wrap}
+.seg{display:inline-flex;gap:4px;padding:4px;background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;margin-top:18px;flex-wrap:wrap}
+.seg__item{border:0;background:transparent;padding:8px 14px;border-radius:9px;font-size:13px;color:var(--ink-2);cursor:pointer;display:inline-flex;gap:7px;align-items:center}
+.seg__item:hover{background:#fff;color:var(--ink-1)}
+.seg__item.is-active{background:#fff;color:var(--ink-1);font-weight:600;box-shadow:var(--shadow-sm)}
+.seg__count{font-size:11px;background:var(--brand-100);color:var(--brand-700);border-radius:999px;padding:1px 7px;font-weight:700}
+.asset-panel{margin-top:16px}
+.panel__head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.table-wrap{margin-top:14px;border:1px solid var(--line);border-radius:var(--radius-lg);overflow:auto}
+table.data-table,table.asset-table{width:100%;border-collapse:collapse;font-size:13px}
+table.data-table th,table.asset-table th{text-align:left;padding:10px 14px;background:var(--bg-soft);color:var(--ink-3);font-size:12px;font-weight:600;border-bottom:1px solid var(--line);white-space:nowrap}
+table.data-table td,table.asset-table td{padding:11px 14px;border-bottom:1px solid var(--line);color:var(--ink-2);vertical-align:middle}
+table.data-table tr:last-child td,table.asset-table tr:last-child td{border-bottom:0}
+table.data-table tbody tr:hover,table.asset-table tbody tr:hover{background:var(--brand-50)}
+.key-cell{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.copy-btn{border:1px solid var(--line-strong);background:#fff;border-radius:6px;padding:2px 8px;font-size:11.5px;color:var(--ink-2);cursor:pointer}
+.copy-btn:hover{border-color:var(--brand-400);color:var(--ink-1)}
+.unbind-btn{border:1px solid #E7C0BC;background:#fff;border-radius:6px;padding:2px 8px;font-size:11.5px;color:var(--danger);cursor:pointer;margin-left:8px}
+.refund-btn{border:1px solid #E7C0BC;background:#fff;border-radius:6px;padding:3px 10px;font-size:12px;color:var(--danger);cursor:pointer}
+.refund-hint{display:block;margin-top:4px;font-size:11.5px;color:var(--ink-3)}
+.pay-btn{border:1px solid var(--brand-300);background:var(--brand-50);border-radius:6px;padding:3px 10px;font-size:12px;color:var(--brand-800);cursor:pointer;font-weight:600}
+.empty-note{color:var(--ink-3);font-size:13px;padding:20px 0;text-align:center}
+.badge{display:inline-flex;align-items:center;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600;line-height:1.6;white-space:nowrap}
+.badge--success{background:#E4F3EC;color:#256B51}
+.badge--warn{background:#FBF3E2;color:#8A6216}
+.badge--danger{background:#F9E9E7;color:#8E3A31}
+.badge--info{background:#E8EEF0;color:#43555C}
+.badge--neutral{background:#EEF1F2;color:#5F6D72}
+/* 骨架屏 */
+.sk-wrap{display:none}
+.is-loading .sk-wrap{display:block}
+.is-loading .asset-table,.is-loading .empty-note{display:none}
+.sk-row{display:flex;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line);align-items:center}
+.sk-row:last-child{border-bottom:0}
+.sk{border-radius:6px;background:linear-gradient(90deg,#EDF1F2 25%,#F7F9FA 50%,#EDF1F2 75%);background-size:200% 100%;animation:skMove 1.2s linear infinite;height:13px;flex:1}
+@keyframes skMove{to{background-position:-200% 0}}
+
+/* 管理后台 */
+.admin{padding-block:30px 72px}
+.admin__eyebrow{margin-bottom:10px;color:var(--brand-600);font-size:13px;font-weight:600;letter-spacing:.08em}
+.admin__title{font-size:28px;color:var(--ink-1);margin:0}
+.admin__sub{margin-top:10px;color:var(--ink-3);font-size:15px;max-width:70ch}
+.mfa-banner{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-top:16px;padding:12px 14px;border:1px solid #E7D2A8;background:#FDF7EC;border-radius:10px;font-size:12.5px;color:#6F5518;flex-wrap:wrap}
+.toolbar{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-top:14px}
+.toolbar__range{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.toolbar__range .field{margin-top:0}
+.toolbar__presets{display:flex;gap:6px;flex-wrap:wrap}
+.chip{padding:6px 12px;border-radius:999px;border:1px solid var(--line-strong);background:#fff;font-size:12.5px;color:var(--ink-2);cursor:pointer}
+.chip:hover{border-color:var(--brand-400)}
+.chip.is-active{background:var(--brand-700);border-color:var(--brand-700);color:#fff;font-weight:600}
+.tabs{display:flex;flex-wrap:wrap;gap:6px 18px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--bg-soft);margin-top:16px}
+.tabs__group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tabs__group-label{font-size:11px;color:var(--ink-3);font-weight:700}
+.tabs__item{border:0;background:transparent;padding:7px 12px;border-radius:8px;font-size:13px;color:var(--ink-2);cursor:pointer}
+.tabs__item:hover{background:#fff;color:var(--ink-1)}
+.tabs__item.is-active{background:var(--brand-700);color:#fff;font-weight:600}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:14px}
+.kpi{border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:#fff}
+.kpi__label{font-size:12px;color:var(--ink-3)}
+.kpi__value{margin-top:6px;font-size:22px;font-weight:700;color:var(--ink-1)}
+.kpi__sub{margin-top:4px;font-size:11.5px;color:var(--ink-3)}
+.pager{display:flex;gap:10px;align-items:center;margin-top:12px;font-size:12.5px;color:var(--ink-3)}
+.lic-action{margin-top:16px;padding:16px;border:1px solid var(--brand-200);background:var(--brand-50);border-radius:12px}
+.lic-action__title{font-size:15px;color:var(--ink-1);margin:0 0 4px}
+.lic-action__title code{font-family:var(--font-mono);font-size:13px;color:var(--brand-800)}
+.lic-row.is-selected{background:var(--brand-50)}
+.lic-row.is-selected td:first-child{box-shadow:inset 3px 0 0 var(--brand-700)}
+.is-self td{color:var(--ink-3)}
+.self-note{display:block;font-size:11px;color:var(--ink-3);margin-top:2px}
+.danger-box{margin-top:12px;padding:12px 14px;border:1px solid #E7C0BC;background:var(--danger-bg);border-radius:10px;color:#7B2F26;font-size:13px;line-height:1.7}
+.jump-note{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+
+/* 弹层 / 抽屉（限定在浏览器框内） */
+.modal{position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:24px}
+.modal__backdrop{position:absolute;inset:0;background:rgba(17,26,29,.45)}
+.modal__panel{position:relative;width:min(440px,100%);background:#fff;border-radius:14px;box-shadow:var(--shadow-lg);padding:22px;max-height:calc(100% - 48px);overflow-y:auto}
+.modal__title{font-size:17px;color:var(--ink-1);margin:0}
+.modal__desc{margin-top:8px;color:var(--ink-3);font-size:13.5px}
+.modal__actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.modal__textarea{width:100%;padding:11px 14px;border:1px solid var(--line-strong);border-radius:var(--radius);font-family:inherit;font-size:14px;resize:vertical}
+.drawer-wrap{position:absolute;inset:0;z-index:40;display:flex;align-items:stretch;justify-content:flex-end}
+.drawer__backdrop{position:absolute;inset:0;background:rgba(17,26,29,.35)}
+.drawer{position:relative;width:min(430px,100%);background:#fff;height:100%;overflow-y:auto;padding:22px;box-shadow:var(--shadow-lg);animation:drawerIn .25s var(--ease)}
+@keyframes drawerIn{from{transform:translateX(40px);opacity:.4}to{transform:none;opacity:1}}
+.user-detail-table th{width:96px}
+
+/* 优化标注 */
+.annot{position:relative}
+.pin{position:absolute;top:-10px;right:-10px;z-index:30;width:22px;height:22px;border-radius:50%;background:var(--danger);color:#fff;font-size:9.5px;font-weight:800;display:grid;place-items:center;box-shadow:0 2px 8px rgba(180,84,74,.45);cursor:default}
+.pin--hl{animation:pinPulse 1s ease infinite;background:#8F3A32;transform:scale(1.18)}
+@keyframes pinPulse{0%,100%{box-shadow:0 0 0 0 rgba(180,84,74,.5)}50%{box-shadow:0 0 0 7px rgba(180,84,74,0)}}
+body.hide-pins .pin{display:none}
+
+/* toast */
+.toast-wrap{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none}
+.toast{background:var(--ink-1);color:#fff;font-size:13px;padding:10px 18px;border-radius:10px;box-shadow:var(--shadow-lg);animation:toastIn .22s var(--ease);max-width:80vw}
+.toast.is-out{opacity:0;transition:opacity .25s}
+@keyframes toastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+/* S7 背景压暗 */
+.s7-dim{position:absolute;inset:0;background:rgba(17,26,29,.45);z-index:35}
+.s7-tip{position:absolute;top:18px;left:50%;transform:translateX(-50%);z-index:36;background:#fff;border-radius:999px;padding:6px 16px;font-size:12px;color:var(--ink-2);box-shadow:var(--shadow)}
+
+@media (max-width:1080px){.checkout__inner{grid-template-columns:1fr}.kpi-grid{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="proto">
+  <header class="proto__bar">
+    <span class="proto__brand">Web 原型 · 交互优化提案</span>
+    <span class="proto__meta">billing-license-service ｜ 收银台 / 我的授权 / 管理后台 ｜ v1 · 2026-10-25</span>
+    <div class="proto__actions">
+      <button class="proto__btn" id="pinToggle" type="button">隐藏优化标注</button>
+    </div>
+  </header>
+
+  <div class="proto__body">
+    <!-- ======================= 侧栏：屏幕导航 + 优化点 ======================= -->
+    <aside class="proto__side">
+      <div class="side-block">
+        <h2 class="side-title">页面原型（10 屏）</h2>
+
+        <div class="nav-group">
+          <p class="nav-group__title">收银台 · /checkout/</p>
+          <button class="nav-item is-active" type="button" data-screen="s1"><span class="nav-item__num">1</span><span><span class="nav-item__name">选档位下单</span><span class="nav-item__desc">步骤拆分 · 摘要联动 · 即时校验</span></span></button>
+          <button class="nav-item" type="button" data-screen="s2"><span class="nav-item__num">2</span><span><span class="nav-item__name">选择支付方式</span><span class="nav-item__desc">渠道卡片 · 区域明示 · 可返回</span></span></button>
+          <button class="nav-item" type="button" data-screen="s3"><span class="nav-item__num">3</span><span><span class="nav-item__name">扫码支付等待</span><span class="nav-item__desc">倒计时 · 手动刷新 · 重选渠道</span></span></button>
+          <button class="nav-item" type="button" data-screen="s4"><span class="nav-item__num">4</span><span><span class="nav-item__name">支付结果</span><span class="nav-item__desc">结果分层 · 复制下载 · 后续引导</span></span></button>
+        </div>
+
+        <div class="nav-group">
+          <p class="nav-group__title">我的授权 · /account/</p>
+          <button class="nav-item" type="button" data-screen="s5"><span class="nav-item__num">5</span><span><span class="nav-item__name">登录与二次验证</span><span class="nav-item__desc">两步分段 · 动态码分格 · 重发倒计时</span></span></button>
+          <button class="nav-item" type="button" data-screen="s6"><span class="nav-item__num">6</span><span><span class="nav-item__name">我的资产</span><span class="nav-item__desc">Tab 分区 · 继续支付 · 骨架屏</span></span></button>
+          <button class="nav-item" type="button" data-screen="s7"><span class="nav-item__num">7</span><span><span class="nav-item__name">退款确认弹层</span><span class="nav-item__desc">风险前置 · 字数计数 · 危险确认</span></span></button>
+        </div>
+
+        <div class="nav-group">
+          <p class="nav-group__title">管理后台 · /admin/</p>
+          <button class="nav-item" type="button" data-screen="s8"><span class="nav-item__num">8</span><span><span class="nav-item__name">账务总览</span><span class="nav-item__desc">Tab 分组 · 预设即应用 · 指标卡</span></span></button>
+          <button class="nav-item" type="button" data-screen="s9"><span class="nav-item__num">9</span><span><span class="nav-item__name">License 处置</span><span class="nav-item__desc">行选中 · 字段联动 · 作废强确认</span></span></button>
+          <button class="nav-item" type="button" data-screen="s10"><span class="nav-item__num">10</span><span><span class="nav-item__name">用户管理</span><span class="nav-item__desc">侧滑抽屉 · 自身行禁用 · 导出反馈</span></span></button>
+        </div>
+      </div>
+
+      <div class="side-block">
+        <h2 class="side-title">本屏优化点（悬停可定位）</h2>
+        <div id="optList"></div>
+      </div>
+
+      <div class="side-block">
+        <h2 class="side-title">跨屏通用优化</h2>
+        <div class="opt" data-pin="G1">
+          <div class="opt__head"><span class="opt__id">G1</span><span class="opt__title">统一 toast 反馈</span></div>
+          <p class="opt__row"><b>现状：</b>复制、解绑、导出等结果靠页面文字区域变化，不醒目。</p>
+          <p class="opt__row"><b>优化：</b>全部操作反馈统一走toast，2 秒自动消失，可堆积。</p>
+        </div>
+        <div class="opt" data-pin="G2">
+          <div class="opt__head"><span class="opt__id">G2</span><span class="opt__title">危险操作统一规范</span></div>
+          <p class="opt__row"><b>现状：</b>解绑 / 退款 / 作废 / 停用 / 重置密码的确认强度不一致。</p>
+          <p class="opt__row"><b>优化：</b>红色主按钮 + 后果明示 + 二次确认三件套，缺一不上线。</p>
+        </div>
+        <div class="opt" data-pin="G3">
+          <div class="opt__head"><span class="opt__id">G3</span><span class="opt__title">加载态规范</span></div>
+          <p class="opt__row"><b>现状：</b>表格加载期间空白，只有按钮有 busy 态。</p>
+          <p class="opt__row"><b>优化：</b>表格骨架屏 + 按钮 busy 禁用防重 + 分区错误条带重试。</p>
+        </div>
+        <div class="opt" data-pin="G4">
+          <div class="opt__head"><span class="opt__id">G4</span><span class="opt__title">键盘与焦点管理</span></div>
+          <p class="opt__row"><b>现状：</b>已有 skip-link 与 aria-live，模态无焦点圈定。</p>
+          <p class="opt__row"><b>优化：</b>保留现有无障碍能力，补 OTP 分格、方向键选档位、模态焦点圈定与 Esc 关闭。</p>
+        </div>
+      </div>
+
+      <div class="side-block">
+        <div class="side-note">
+          原型边界：本文件是交互提案，未连接后端、不含真实数据，图标与二维码均为示意。落地到生产静态页需走 plan 流程，并按上线准备工作逐页更新缓存版本号。
+        </div>
+      </div>
+    </aside>
+
+    <!-- ======================= 主区：浏览器框 + 屏幕 ======================= -->
+    <main class="proto__stage">
+      <div class="browser">
+        <div class="browser__chrome">
+          <span class="bdot bdot--r"></span><span class="bdot bdot--y"></span><span class="bdot bdot--g"></span>
+          <span class="browser__url" id="urlBar">billing.ywhome.top/checkout/?machineId=5E01-7EB8-3661-E06A</span>
+        </div>
+        <div class="browser__view">
+
+          <!-- ============================================================ -->
+          <!-- S1 · 收银台：选档位下单                                        -->
+          <!-- ============================================================ -->
+          <section class="screen is-active" id="s1">
+            <div class="site-header-mount"></div>
+            <main class="checkout">
+              <div class="container checkout__inner">
+                <div class="checkout__main">
+                  <p class="checkout__eyebrow">获取授权</p>
+                  <h1 class="checkout__title">获取 AI-Tools 授权</h1>
+                  <p class="checkout__sub">选择授权档位并完成支付，即可获得许可证或兑换码；支持买断与订阅。</p>
+
+                  <ol class="steps annot" data-pin="P1" aria-label="结账流程">
+                    <li class="steps__item is-active"><span class="steps__num">1</span><span class="steps__label">选择档位</span></li>
+                    <li class="steps__item"><span class="steps__num">2</span><span class="steps__label">确认信息</span></li>
+                    <li class="steps__item"><span class="steps__num">3</span><span class="steps__label">完成支付</span></li>
+                    <li class="steps__item"><span class="steps__num">4</span><span class="steps__label">获取授权</span></li>
+                  </ol>
+
+                  <div class="panel">
+                    <div class="annot" data-pin="P2">
+                      <fieldset class="plan-field">
+                        <legend class="plan-legend">选择授权档位</legend>
+                        <p class="plan-group-title">买断制 · 一次付费，永久使用</p>
+                        <ul class="plan-list">
+                          <li>
+                            <label class="plan-card">
+                              <input type="radio" name="plan" class="plan-card__input" value="pro" data-name="AI-Tools Pro · 买断" data-price="¥712.80">
+                              <span class="plan-card__body">
+                                <span class="plan-card__head"><span class="plan-card__name">AI-Tools Pro</span><span class="plan-card__tier">买断</span></span>
+                                <span class="plan-card__amount">¥712.80</span>
+                                <span class="plan-card__unit">永久授权 · 免费小版本更新</span>
+                                <span class="plan-card__providers">支付宝 · 微信支付</span>
+                                <span class="plan-card__benefits"><span class="plan-card__benefit">全部基础功能</span><span class="plan-card__benefit">1 台设备绑定</span></span>
+                              </span>
+                            </label>
+                          </li>
+                          <li>
+                            <label class="plan-card">
+                              <input type="radio" name="plan" class="plan-card__input" value="proplus" data-name="AI-Tools Pro Plus · 买断" data-price="¥1,280.00">
+                              <span class="plan-card__badge">推荐</span>
+                              <span class="plan-card__body">
+                                <span class="plan-card__head"><span class="plan-card__name">AI-Tools Pro Plus</span><span class="plan-card__tier">买断</span></span>
+                                <span class="plan-card__amount">¥1,280.00</span>
+                                <span class="plan-card__unit">永久授权 · 含全部高级功能</span>
+                                <span class="plan-card__providers">支付宝 · 微信支付</span>
+                                <span class="plan-card__benefits"><span class="plan-card__benefit">Pro 全部权益</span><span class="plan-card__benefit">优先支持</span></span>
+                              </span>
+                            </label>
+                          </li>
+                        </ul>
+                        <p class="plan-group-title">订阅制 · 按期自动续费</p>
+                        <ul class="plan-list">
+                          <li>
+                            <div class="plan-card is-unavailable">
+                              <span class="plan-card__body">
+                                <span class="plan-card__head"><span class="plan-card__name">AI-Tools Pro</span><span class="plan-card__tier">月付</span></span>
+                                <span class="plan-card__amount">¥68.00<span style="font-size:13px;font-weight:600;color:var(--ink-3)">/月</span></span>
+                                <span class="plan-card__unit">自动续费，可随时在渠道取消</span>
+                                <span class="plan-card__providers">当前区域暂不可售</span>
+                                <span class="plan-card__benefits"><span class="plan-card__benefit">订阅渠道暂不支持人民币区域结算</span><span class="plan-card__benefit">切换英文界面即可用美元购买</span></span>
+                              </span>
+                            </div>
+                          </li>
+                          <li>
+                            <div class="plan-card is-unavailable">
+                              <span class="plan-card__body">
+                                <span class="plan-card__head"><span class="plan-card__name">AI-Tools Pro Plus</span><span class="plan-card__tier">月付</span></span>
+                                <span class="plan-card__amount">¥128.00<span style="font-size:13px;font-weight:600;color:var(--ink-3)">/月</span></span>
+                                <span class="plan-card__unit">自动续费，可随时在渠道取消</span>
+                                <span class="plan-card__providers">当前区域暂不可售</span>
+                                <span class="plan-card__benefits"><span class="plan-card__benefit">订阅渠道暂不支持人民币区域结算</span><span class="plan-card__benefit">切换英文界面即可用美元购买</span></span>
+                              </span>
+                            </div>
+                          </li>
+                        </ul>
+                        <p class="plan-field__note">价格随界面语言切换：中文界面以人民币（CNY）结算，英文界面以美元（USD）结算。</p>
+                      </fieldset>
+                    </div>
+
+                    <div class="annot" data-pin="P4">
+                      <div class="field">
+                        <label class="field__label" for="s1Email">电子邮箱</label>
+                        <input class="field__input" id="s1Email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" aria-describedby="s1EmailErr">
+                        <p class="field__hint">授权凭证与订单通知将发送到此邮箱。</p>
+                        <p class="field__error" id="s1EmailErr" role="alert" hidden>邮箱格式不正确，请检查后重试。</p>
+                      </div>
+                    </div>
+
+                    <div class="machine-box annot" data-pin="P5">
+                      <div class="machine-box__top">
+                        <div>
+                          <p class="machine-box__label">机器码</p>
+                          <p class="machine-box__value">5E01-7EB8-3661-E06A</p>
+                        </div>
+                        <button class="btn btn--ghost btn--sm" type="button" data-act="copy">复制</button>
+                      </div>
+                      <p class="machine-box__hint">许可证将与这台设备绑定；换机激活前，请先在「我的授权」中解绑。</p>
+                    </div>
+
+                    <div class="panel__actions">
+                      <button class="btn btn--primary" type="button" data-act="goto" data-value="s2">下一步：确认信息</button>
+                    </div>
+                  </div>
+                </div>
+
+                <aside class="summary annot" data-pin="P3" aria-label="订单摘要">
+                  <h2 class="summary__title">订单摘要</h2>
+                  <dl class="summary__list">
+                    <div class="summary__row"><dt>档位</dt><dd id="sumPlan">待选择</dd></div>
+                    <div class="summary__row"><dt>金额</dt><dd id="sumAmount">—</dd></div>
+                    <div class="summary__row"><dt>邮箱</dt><dd id="sumEmail">待填写</dd></div>
+                    <div class="summary__row"><dt>机器码</dt><dd>5E01-7EB8-3661-E06A</dd></div>
+                    <div class="summary__row"><dt>订单号</dt><dd>—</dd></div>
+                    <div class="summary__row"><dt>状态</dt><dd>待下单</dd></div>
+                  </dl>
+                  <p class="summary__foot">需要帮助？<a href="javascript:void(0)">联系我们</a></p>
+                </aside>
+              </div>
+            </main>
+            <div class="site-footer-mount"></div>
+          </section>
+
+          <!-- ============================================================ -->
+          <!-- S2 · 收银台：选择支付方式                                      -->
+          <!-- ============================================================ -->
+          <section class="screen" id="s2">
+            <div class="site-header-mount"></div>
+            <main class="checkout">
+              <div class="container checkout__inner">
+                <div class="checkout__main">
+                  <p class="checkout__eyebrow">获取授权</p>
+                  <h1 class="checkout__title">选择支付方式</h1>
+
+                  <ol class="steps" aria-label="结账流程">
+                    <li class="steps__item is-done"><span class="steps__num">✓</span><span class="steps__label">选择档位</span></li>
+                    <li class="steps__item is-done"><span class="steps__num">✓</span><span class="steps__label">确认信息</span></li>
+                    <li class="steps__item is-active"><span class="steps__num">3</span><span class="steps__label">完成支付</span></li>
+                    <li class="steps__item"><span class="steps__num">4</span><span class="steps__label">获取授权</span></li>
+                  </ol>
+
+                  <div class="panel">
+                    <div class="region-row annot" data-pin="P7">
+                      <span class="region-chip">当前区域：中国 · 人民币（CNY）结算</span>
+                      <p class="region-row__note">切换到英文界面后，可用 Stripe / Paddle / PayPal 以美元（USD）结算。</p>
+                    </div>
+
+                    <div class="annot" data-pin="P6">
+                      <p class="plan-legend">选择支付方式</p>
+                      <div class="provider-list">
+                        <button class="provider-card" type="button" data-act="provider" data-value="支付宝">
+                          <span class="provider-card__icon" style="background:#1677FF">支</span>
+                          <span><span class="provider-card__name">支付宝</span><span class="provider-card__note">扫码支付 · 人民币 CNY</span></span>
+                          <span class="provider-card__amount">
+                            <span class="badge badge--success">推荐</span>
+                            <span class="provider-card__price">¥1,280.00</span>
+                            <span class="provider-card__arrow">→</span>
+                          </span>
+                        </button>
+                        <button class="provider-card" type="button" data-act="provider" data-value="微信支付">
+                          <span class="provider-card__icon" style="background:#07C160">微</span>
+                          <span><span class="provider-card__name">微信支付</span><span class="provider-card__note">扫码支付 · 人民币 CNY</span></span>
+                          <span class="provider-card__amount">
+                            <span class="provider-card__price">¥1,280.00</span>
+                            <span class="provider-card__arrow">→</span>
+                          </span>
+                        </button>
+                      </div>
+                      <p class="form-note">点击渠道后生成付款码或跳转渠道页面；支付成功后自动回到本页展示结果。</p>
+                    </div>
+
+                    <div class="recap annot" data-pin="P8">
+                      <div class="recap__row"><span>档位</span><b>AI-Tools Pro Plus · 买断</b></div>
+                      <div class="recap__row"><span>金额</span><b>¥1,280.00</b></div>
+                      <div class="recap__row"><span>邮箱</span><b>you@example.com</b></div>
+                      <div class="recap__row"><span>机器码</span><b class="mono">5E01-7EB8-3661-E06A</b></div>
+                      <button class="linklike" type="button" data-act="goto" data-value="s1">← 返回修改订单</button>
+                    </div>
+                  </div>
+                </div>
+                <aside class="summary" aria-label="订单摘要">
+                  <h2 class="summary__title">订单摘要</h2>
+                  <dl class="summary__list">
+                    <div class="summary__row"><dt>档位</dt><dd>Pro Plus · 买断</dd></div>
+                    <div class="summary__row"><dt>金额</dt><dd>¥1,280.00</dd></div>
+                    <div class="summary__row"><dt>邮箱</dt><dd>you@example.com</dd></div>
+                    <div class="summary__row"><dt>机器码</dt><dd>5E01-7EB8-3661-E06A</dd></div>
+                    <div class="summary__row"><dt>订单号</dt><dd class="mono">ORD-1790691168309-616DF8FE</dd></div>
+                    <div class="summary__row"><dt>状态</dt><dd><span class="badge badge--warn">待支付</span></dd></div>
+                  </dl>
+                  <p class="summary__foot">需要帮助？<a href="javascript:void(0)">联系我们</a></p>
+                </aside>
+              </div>
+            </main>
+            <div class="site-footer-mount"></div>
+          </section>
+
+          <!-- ============================================================ -->
+          <!-- S3 · 收银台：扫码支付等待                                      -->
+          <!-- ============================================================ -->
+          <section class="screen" id="s3">
+            <div class="site-header-mount"></div>
+            <main class="checkout">
+              <div class="container checkout__inner">
+                <div class="checkout__main">
+                  <p class="checkout__eyebrow">获取授权</p>
+                  <h1 class="checkout__title">扫码支付</h1>
+
+                  <ol class="steps" aria-label="结账流程">
+                    <li class="steps__item is-done"><span class="steps__num">✓</span><span class="steps__label">选择档位</span></li>
+                    <li class="steps__item is-done"><span class="steps__num">✓</span><span class="steps__label">确认信息</span></li>
+                    <li class="steps__item is-active"><span class="steps__num">3</span><span class="steps__label">完成支付</span></li>
+                    <li class="steps__item"><span class="steps__num">4</span><span class="steps__label">获取授权</span></li>
+                  </ol>
+
+                  <div class="panel">
+                    <h2 class="panel__title">请使用支付宝扫码</h2>
+                    <p class="panel__desc">二维码有效期以倒计时为准；支付完成后本页自动更新结果，请勿关闭页面。</p>
+
+                    <div class="cd-row annot" data-pin="P9">
+                      <span class="cd-row__label">会话有效期剩余</span>
+                      <span class="cd-text" id="cdText">14:32</span>
+                      <span class="cd-bar"><span class="cd-bar__fill" id="cdBar"></span></span>
+                    </div>
+
+                    <div class="qr-box">
+                      <div class="qr-box__canvas" id="qrMock" aria-label="示意支付二维码"></div>
+                      <div class="qr-box__aside">
+                        <p class="notice notice--busy"><span class="spinner"></span>等待支付结果…已等待 <b class="mono" id="waitText">00:23</b>，系统每 3 秒自动查询一次。</p>
+                        <div class="qr-actions annot" data-pin="P10">
+                          <button class="btn btn--ghost btn--sm" type="button" data-act="busy" data-value="查询中…" data-value2="支付状态：待支付（原型数据）">刷新支付状态</button>
+                          <button class="btn btn--ghost btn--sm" type="button" data-act="goto" data-value="s2">重新选择支付方式</button>
+                          <button class="btn btn--ghost btn--sm" type="button" data-act="copy">复制支付链接</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <aside class="summary" aria-label="订单摘要">
+                  <h2 class="summary__title">订单摘要</h2>
+                  <dl class="summary__list">
+                    <div class="summary__row"><dt>档位</dt><dd>Pro Plus · 买断</dd></div>
+                    <div class="summary__row"><dt>金额</dt><dd>¥1,280.00</dd></div>
+                    <div class="summary__row"><dt>渠道</dt><dd>支付宝</dd></div>
+                    <div class="summary__row"><dt>订单号</dt><dd class="mono">ORD-1790691168309-616DF8FE</dd></div>
+                    <div class="summary__row"><dt>状态</dt><dd><span class="badge badge--warn">待支付</span></dd></div>
+                  </dl>
+                  <p class="summary__foot">需要帮助？<a href="javascript:void(0)">联系我们</a></p>
+                </aside>
+              </div>
+            </main>
+            <div class="site-footer-mount"></div>
+          </section>
+
+          <!-- ============================================================ -->
+          <!-- S4 · 收银台：支付结果                                          -->
+          <!-- ============================================================ -->
+          <section class="screen" id="s4">
+            <div class="site-header-mount"></div>
+            <main class="checkout">
+              <div class="container checkout__inner">
+                <div class="checkout__main">
+                  <p class="checkout__eyebrow">获取授权</p>
+                  <h1 class="checkout__title">支付完成</h1>
+
+                  <ol class="steps" aria-label="结账流程">
+                    <li class="steps__item is-done"><span class="steps__num">✓</span><span class="steps__label">选择档位</span></li>
+                    <li class="steps__item is-done"><span class="steps__num">✓</span><span class="steps__label">确认信息</span></li>
+                    <li class="steps__item is-done"><span class="steps__num">✓</span><span class="steps__label">完成支付</span></li>
+                    <li class="steps__item is-done"><span class="steps__num">✓</span><span class="steps__label">获取授权</span></li>
+                  </ol>
+
+                  <div class="panel">
+                    <h2 class="result__title"><span class="result__badge">✓</span>支付成功</h2>
+                    <p class="result__desc">许可证已签发，并已发送至 you@example.com。请妥善保管以下密钥：</p>
+
+                    <div class="annot" data-pin="P12">
+                      <div class="code-block"><code>LIC-9T4K-2QXM-7F3D-8W1A</code></div>
+                      <div class="qr-actions">
+                        <button class="btn btn--primary btn--sm" type="button" data-act="copy">复制许可证</button>
+                        <button class="btn btn--ghost btn--sm" type="button" data-act="copy">下载 .txt</button>
+                      </div>
+                    </div>
+
+                    <div class="annot" data-pin="P11">
+                      <p class="result__next">接下来：</p>
+                      <ol class="result__steps">
+                        <li>打开 AI-Tools 客户端，进入激活页面</li>
+                        <li>粘贴许可证密钥，完成机器绑定</li>
+                        <li>之后可在「我的授权」中随时查看、解绑</li>
+                      </ol>
+                      <p class="form-note">订阅订单的说明会单独成区：续费与取消在支付渠道后台管理，本页不代管。</p>
+                    </div>
+
+                    <div class="panel__actions">
+                      <button class="btn btn--primary" type="button" data-act="goto" data-value="s6">前往「我的授权」</button>
+                      <button class="btn btn--ghost" type="button" data-act="toast" data-value="原型：返回首页">返回首页</button>
+                    </div>
+                  </div>
+                </div>
+                <aside class="summary" aria-label="订单摘要">
+                  <h2 class="summary__title">订单摘要</h2>
+                  <dl class="summary__list">
+                    <div class="summary__row"><dt>档位</dt><dd>Pro Plus · 买断</dd></div>
+                    <div class="summary__row"><dt>金额</dt><dd>¥1,280.00</dd></div>
+                    <div class="summary__row"><dt>渠道</dt><dd>支付宝</dd></div>
+                    <div class="summary__row"><dt>订单号</dt><dd class="mono">ORD-1790691168309-616DF8FE</dd></div>
+                    <div class="summary__row"><dt>状态</dt><dd><span class="badge badge--success">已支付</span></dd></div>
+                  </dl>
+                  <p class="summary__foot">需要帮助？<a href="javascript:void(0)">联系我们</a></p>
+                </aside>
+              </div>
+            </main>
+            <div class="site-footer-mount"></div>
+          </section>
+
+          <!-- ============================================================ -->
+          <!-- S5 · 我的授权：登录与二次验证                                   -->
+          <!-- ============================================================ -->
+          <section class="screen" id="s5">
+            <div class="site-header-mount"></div>
+            <main class="account">
+              <div class="container">
+                <p class="account__eyebrow">我的授权</p>
+                <h1 class="account__title">我的授权管理</h1>
+                <p class="account__sub">查看购买 / 兑换时所用邮箱名下的许可证、订阅与订单。</p>
+
+                <div class="panel auth-panel annot" data-pin="P13">
+                  <div class="auth-step">
+                    <p class="auth-step__tag">第 1 步 · 账号密码</p>
+                    <div class="field">
+                      <label class="field__label" for="s5Email">电子邮箱</label>
+                      <input class="field__input" id="s5Email" type="email" placeholder="you@example.com" autocomplete="email">
+                    </div>
+                    <div class="field">
+                      <label class="field__label" for="s5Pwd">密码</label>
+                      <input class="field__input" id="s5Pwd" type="password" placeholder="登录密码" autocomplete="current-password">
+                    </div>
+                    <div class="panel__actions">
+                      <button class="btn btn--primary" type="button" data-act="toast" data-value="原型：密码校验通过，进入第 2 步">登录</button>
+                    </div>
+                    <p class="form-note">忘记密码？<button class="linklike" type="button" data-act="toast" data-value="原型：切换到邮箱验证码找回">用邮箱验证码重新设置</button></p>
+                  </div>
+
+                  <div class="auth-step auth-step--mfa annot" data-pin="P14">
+                    <p class="auth-step__tag">第 2 步 · 二次验证（该账号已开启 MFA）</p>
+                    <p class="panel__desc">密码已通过。请输入认证器 App 显示的 6 位动态码，或改用邮箱验证码。</p>
+                    <div class="otp" role="group" aria-label="6 位动态码">
+                      <input class="otp__inp" type="text" inputmode="numeric" maxlength="1" aria-label="第 1 位">
+                      <input class="otp__inp" type="text" inputmode="numeric" maxlength="1" aria-label="第 2 位">
+                      <input class="otp__inp" type="text" inputmode="numeric" maxlength="1" aria-label="第 3 位">
+                      <input class="otp__inp" type="text" inputmode="numeric" maxlength="1" aria-label="第 4 位">
+                      <input class="otp__inp" type="text" inputmode="numeric" maxlength="1" aria-label="第 5 位">
+                      <input class="otp__inp" type="text" inputmode="numeric" maxlength="1" aria-label="第 6 位">
+                    </div>
+                    <div class="code-row">
+                      <button class="btn btn--ghost" type="button" id="mfaSendBtn">发送邮箱验证码</button>
+                      <button class="btn btn--primary" type="button" data-act="goto" data-value="s6">验证并登录</button>
+                    </div>
+                    <p class="form-note"><button class="linklike" type="button" data-act="toast" data-value="原型：返回第 1 步">返回重新输入密码</button></p>
+                  </div>
+                </div>
+              </div>
+            </main>
+            <div class="site-footer-mount"></div>
+          </section>
+
+          <!-- ============================================================ -->
+          <!-- S6 · 我的授权：资产总览                                        -->
+          <!-- ============================================================ -->
+          <section class="screen" id="s6">
+            <div class="site-header-mount"></div>
+            <main class="account">
+              <div class="container">
+                <p class="account__eyebrow">我的授权</p>
+                <h1 class="account__title">我的授权管理</h1>
+                <p class="account__sub">查看购买 / 兑换时所用邮箱名下的许可证、订阅与订单。</p>
+
+                <div class="userbar">
+                  <p><b id="s6UserEmail">you@example.com</b></p>
+                  <button class="btn btn--ghost btn--sm" type="button" data-act="toast" data-value="原型：已退出登录">退出登录</button>
+                </div>
+
+                <div class="annot" data-pin="P15">
+                  <div class="seg" role="tablist" aria-label="资产分区">
+                    <button class="seg__item tabs__item is-active" type="button" role="tab" data-tab="license" aria-selected="true">许可证 <span class="seg__count">3</span></button>
+                    <button class="seg__item tabs__item" type="button" role="tab" data-tab="sub" aria-selected="false">订阅 <span class="seg__count">1</span></button>
+                    <button class="seg__item tabs__item" type="button" role="tab" data-tab="order" aria-selected="false">订单 <span class="seg__count">2</span></button>
+                    <button class="seg__item tabs__item" type="button" role="tab" data-tab="security" aria-selected="false">安全</button>
+                  </div>
+                </div>
+
+                <section class="panel asset-panel tabpanel" data-panel="license" id="licensePanel">
+                  <div class="panel__head annot" data-pin="P18">
+                    <div>
+                      <h2 class="panel__title">我的许可证（License）</h2>
+                      <p class="panel__desc">激活软件所用的许可证；点击「复制」后粘贴到客户端激活框。</p>
+                    </div>
+                    <button class="btn btn--ghost btn--sm" type="button" id="skToggle" data-act="skeleton">加载态演示</button>
+                  </div>
+                  <div class="table-wrap annot" data-pin="P17">
+                    <table class="asset-table">
+                      <thead>
+                        <tr><th>许可证</th><th>产品</th><th>状态</th><th>签发时间</th><th>有效期至</th><th>绑定机器码</th></tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td><span class="key-cell"><code class="mono">LIC-9T4K-2QXM-7F3D-8W1A</code><button class="copy-btn" type="button" data-act="copy">复制</button></span></td>
+                          <td>pro-plus-buyout</td><td><span class="badge badge--success">正常</span></td>
+                          <td class="mono">2026-09-30</td><td class="mono">永久</td>
+                          <td><span class="mono">5E01-7EB8-3661-E06A</span><button class="unbind-btn" type="button" data-open="unbindModal">解绑</button></td>
+                        </tr>
+                        <tr>
+                          <td><span class="key-cell"><code class="mono">LIC-3H7P-8NVD-5K2Z-1M6B</code><button class="copy-btn" type="button" data-act="copy">复制</button></span></td>
+                          <td>pro-buyout</td><td><span class="badge badge--success">正常</span></td>
+                          <td class="mono">2026-08-12</td><td class="mono">永久</td>
+                          <td><span class="mono">未绑定</span></td>
+                        </tr>
+                        <tr>
+                          <td><span class="key-cell"><code class="mono">LIC-1W5R-6TBQ-9J4C-2D8F</code><button class="copy-btn" type="button" data-act="copy">复制</button></span></td>
+                          <td>pro-buyout</td><td><span class="badge badge--danger">已作废</span></td>
+                          <td class="mono">2026-07-01</td><td class="mono">永久</td>
+                          <td><span class="mono">—</span></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <div class="sk-wrap" aria-hidden="true">
+                      <div class="sk-row"><span class="sk" style="max-width:180px"></span><span class="sk"></span><span class="sk" style="max-width:56px"></span><span class="sk" style="max-width:80px"></span><span class="sk" style="max-width:60px"></span><span class="sk" style="max-width:140px"></span></div>
+                      <div class="sk-row"><span class="sk" style="max-width:180px"></span><span class="sk"></span><span class="sk" style="max-width:56px"></span><span class="sk" style="max-width:80px"></span><span class="sk" style="max-width:60px"></span><span class="sk" style="max-width:140px"></span></div>
+                      <div class="sk-row"><span class="sk" style="max-width:180px"></span><span class="sk"></span><span class="sk" style="max-width:56px"></span><span class="sk" style="max-width:80px"></span><span class="sk" style="max-width:60px"></span><span class="sk" style="max-width:140px"></span></div>
+                    </div>
+                  </div>
+                  <p class="empty-note" hidden>暂无记录</p>
+                </section>
+
+                <section class="panel asset-panel tabpanel" data-panel="sub" hidden>
+                  <h2 class="panel__title">我的订阅</h2>
+                  <p class="panel__desc">订阅由支付渠道托管续费；取消后本周期结束即失效。</p>
+                  <div class="table-wrap">
+                    <table class="asset-table">
+                      <thead><tr><th>产品</th><th>渠道</th><th>状态</th><th>当前周期</th></tr></thead>
+                      <tbody>
+                        <tr>
+                          <td>AI-Tools Pro</td><td>Stripe</td><td><span class="badge badge--success">生效中</span></td>
+                          <td class="mono">2026-09-01 ~ 2026-10-01（已设取消）</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <p class="empty-note" hidden>暂无记录</p>
+                </section>
+
+                <section class="panel asset-panel tabpanel" data-panel="order" hidden>
+                  <div class="annot" data-pin="P16">
+                    <h2 class="panel__title">我的订单</h2>
+                    <p class="panel__desc">购买与兑换产生的订单记录。</p>
+                  </div>
+                  <div class="table-wrap">
+                    <table class="asset-table">
+                      <thead><tr><th>订单号</th><th>金额</th><th>订单状态</th><th>支付状态</th><th>下单时间</th><th>操作</th></tr></thead>
+                      <tbody>
+                        <tr>
+                          <td class="mono">ORD-1790691168309-616DF8FE</td>
+                          <td class="mono">¥712.80</td>
+                          <td><span class="badge badge--warn">待支付</span></td>
+                          <td><span class="badge badge--warn">待处理</span></td>
+                          <td class="mono">2026-09-29 21:06</td>
+                          <td><button class="pay-btn" type="button" data-act="continue-pay">继续支付</button></td>
+                        </tr>
+                        <tr>
+                          <td class="mono">ORD-1789412345678-ABCD1234</td>
+                          <td class="mono">¥1,280.00</td>
+                          <td><span class="badge badge--success">已完成</span></td>
+                          <td><span class="badge badge--success">已支付</span></td>
+                          <td class="mono">2026-08-12 10:24</td>
+                          <td>
+                            <button class="refund-btn" type="button" data-act="goto" data-value="s7">申请退款</button>
+                            <span class="refund-hint">可退 ¥1,020.00（按剩余有效期折算）</span>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <p class="empty-note" hidden>暂无记录</p>
+                </section>
+
+                <section class="panel asset-panel tabpanel" data-panel="security" hidden>
+                  <h2 class="panel__title">修改密码</h2>
+                  <p class="panel__desc">修改成功后所有已登录会话将失效，需用新密码重新登录。</p>
+                  <div class="field">
+                    <label class="field__label" for="s6OldPwd">当前密码</label>
+                    <input class="field__input" id="s6OldPwd" type="password" autocomplete="current-password">
+                  </div>
+                  <div class="field">
+                    <label class="field__label" for="s6NewPwd">新密码</label>
+                    <input class="field__input" id="s6NewPwd" type="password" autocomplete="new-password">
+                    <p class="field__hint">8–72 位，须同时包含字母与数字，且不得与旧密码相同。</p>
+                  </div>
+                  <div class="field">
+                    <label class="field__label" for="s6PwdConfirm">确认新密码</label>
+                    <input class="field__input" id="s6PwdConfirm" type="password" autocomplete="new-password">
+                  </div>
+                  <div class="panel__actions">
+                    <button class="btn btn--primary" type="button" data-act="toast" data-value="原型：密码已修改，会话已失效">确认修改</button>
+                  </div>
+                </section>
+              </div>
+            </main>
+            <div class="site-footer-mount"></div>
+
+            <div class="modal" id="unbindModal" hidden>
+              <div class="modal__backdrop" data-close></div>
+              <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="unbindTitle">
+                <h2 class="modal__title" id="unbindTitle">释放设备绑定</h2>
+                <p class="modal__desc">将释放该许可证当前绑定的设备「5E01-7EB8-3661-E06A」。释放后可在新设备上重新激活；只解绑，不会吊销许可证本身。</p>
+                <div class="modal__actions">
+                  <button class="btn btn--ghost" type="button" data-close>取消</button>
+                  <button class="btn btn--primary" type="button" data-act="unbind-ok">确认解绑</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ============================================================ -->
+          <!-- S7 · 我的授权：退款确认弹层                                     -->
+          <!-- ============================================================ -->
+          <section class="screen" id="s7">
+            <div class="s7-dim"></div>
+            <p class="s7-tip">下图为弹层叠加在「我的资产 · 订单」页之上的效果</p>
+            <div class="site-header-mount"></div>
+            <main class="account">
+              <div class="container">
+                <p class="account__eyebrow">我的授权</p>
+                <h1 class="account__title">我的授权管理</h1>
+                <div class="userbar"><p><b>you@example.com</b></p><button class="btn btn--ghost btn--sm" type="button">退出登录</button></div>
+                <section class="panel asset-panel">
+                  <h2 class="panel__title">我的订单</h2>
+                  <div class="table-wrap">
+                    <table class="asset-table">
+                      <thead><tr><th>订单号</th><th>金额</th><th>订单状态</th><th>支付状态</th><th>下单时间</th><th>操作</th></tr></thead>
+                      <tbody>
+                        <tr>
+                          <td class="mono">ORD-1789412345678-ABCD1234</td><td class="mono">¥1,280.00</td>
+                          <td><span class="badge badge--success">已完成</span></td><td><span class="badge badge--success">已支付</span></td>
+                          <td class="mono">2026-08-12 10:24</td>
+                          <td><button class="refund-btn" type="button">申请退款</button></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </div>
+            </main>
+
+            <div class="modal" id="refundModal">
+              <div class="modal__backdrop"></div>
+              <div class="modal__panel annot" role="dialog" aria-modal="true" aria-labelledby="refundTitle" data-pin="P19">
+                <h2 class="modal__title" id="refundTitle">申请退款</h2>
+                <div class="danger-box">确认后退款 <b>¥1,020.00</b>（按许可证剩余有效期折算）。该订单全部许可证将立即作废，且<b>不可撤销</b>。</div>
+                <div class="field">
+                  <label class="field__label" for="refundReason">退款原因（可选）</label>
+                  <textarea class="modal__textarea" id="refundReason" rows="3" maxlength="200" placeholder="如：买错了版本"></textarea>
+                  <p class="field__hint"><span id="refundCount">0/200</span> · 留下原因有助于我们改进</p>
+                </div>
+                <p class="form-error" hidden>（错误提示位）</p>
+                <div class="modal__actions">
+                  <button class="btn btn--ghost" type="button" data-act="refund-cancel">取消</button>
+                  <button class="btn btn--danger" type="button" data-act="refund-ok">确认退款</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ============================================================ -->
+          <!-- S8 · 管理后台：账务总览                                        -->
+          <!-- ============================================================ -->
+          <section class="screen" id="s8">
+            <div class="site-header-mount"></div>
+            <main class="admin">
+              <div class="container">
+                <p class="admin__eyebrow">管理后台</p>
+                <h1 class="admin__title">平台账务统计</h1>
+                <p class="admin__sub">收入总览、分渠道 / 分产品统计、交易流水、时间趋势与对账差异（仅查询）。</p>
+
+                <div class="userbar">
+                  <p>已登录 · 令牌保存在本机</p>
+                  <button class="linklike" type="button" data-act="toast" data-value="原型：已退出登录">退出登录</button>
+                </div>
+
+                <div class="mfa-banner" role="status">
+                  <span>当前管理员账号尚未开启二次验证（MFA）。管理台可处置 License 与用户账号，建议尽快绑定认证器 App。</span>
+                  <span>
+                    <button class="btn btn--primary btn--sm" type="button" data-act="goto" data-value="s8">去开启</button>
+                    <button class="linklike" type="button" style="margin-left:8px" data-act="toast" data-value="原型：本次忽略">本次忽略</button>
+                  </span>
+                </div>
+
+                <div class="panel toolbar-panel annot" data-pin="P21">
+                  <div class="toolbar">
+                    <div class="toolbar__presets" role="group" aria-label="快捷时间范围">
+                      <button class="chip" type="button" data-act="preset">今天</button>
+                      <button class="chip is-active" type="button" data-act="preset">近 7 天</button>
+                      <button class="chip" type="button" data-act="preset">近 30 天</button>
+                      <button class="chip" type="button" data-act="preset">本月</button>
+                    </div>
+                    <div class="toolbar__range">
+                      <div class="field">
+                        <label class="field__label" for="fromInput">起始时间</label>
+                        <input class="field__input" type="datetime-local" id="fromInput" value="2026-10-19T00:00" style="width:190px">
+                      </div>
+                      <div class="field">
+                        <label class="field__label" for="toInput">结束时间</label>
+                        <input class="field__input" type="datetime-local" id="toInput" value="2026-10-25T23:59" style="width:190px">
+                      </div>
+                      <button class="btn btn--primary" type="button" data-act="busy" data-value="查询中…" data-value2="已按自定义范围刷新（原型）">查询</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="annot" data-pin="P20">
+                  <div class="tabs-mount" data-active="overview"></div>
+                </div>
+
+                <section class="panel data-panel tabpanel" data-panel="overview">
+                  <h2 class="panel__title">收入总览</h2>
+                  <p class="panel__desc">2026-10-19 ~ 2026-10-25 · 已支付类订单计入实收，不跨币种求和。</p>
+                  <div class="kpi-grid annot" data-pin="P22">
+                    <div class="kpi"><p class="kpi__label">实收（CNY）</p><p class="kpi__value">¥8,942.60</p><p class="kpi__sub">较上一周期 +12.4%</p></div>
+                    <div class="kpi"><p class="kpi__label">实收（USD）</p><p class="kpi__value">$1,240.00</p><p class="kpi__sub">Stripe · 6 笔</p></div>
+                    <div class="kpi"><p class="kpi__label">订单数</p><p class="kpi__value">36</p><p class="kpi__sub">含待支付 2 笔</p></div>
+                    <div class="kpi"><p class="kpi__label">退款</p><p class="kpi__value">¥620.00</p><p class="kpi__sub">2 笔 · 已吊销 License 3 张</p></div>
+                  </div>
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead><tr><th>币种</th><th>实收</th><th>订单数</th><th>退款</th><th>客单价</th></tr></thead>
+                      <tbody>
+                        <tr><td>CNY</td><td class="mono">¥8,942.60</td><td>30</td><td class="mono">¥620.00</td><td class="mono">¥298.09</td></tr>
+                        <tr><td>USD</td><td class="mono">$1,240.00</td><td>6</td><td class="mono">$0.00</td><td class="mono">$206.67</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section class="panel data-panel tabpanel" data-panel="channel" hidden>
+                  <h2 class="panel__title">分渠道统计</h2>
+                  <p class="panel__desc">按支付渠道 × 币种汇总；历史订单无渠道时归入「未知渠道」。</p>
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead><tr><th>渠道</th><th>币种</th><th>实收</th><th>订单数</th><th>退款</th></tr></thead>
+                      <tbody>
+                        <tr><td>支付宝</td><td>CNY</td><td class="mono">¥5,120.00</td><td>18</td><td class="mono">¥620.00</td></tr>
+                        <tr><td>微信支付</td><td>CNY</td><td class="mono">¥3,822.60</td><td>12</td><td class="mono">¥0.00</td></tr>
+                        <tr><td>Stripe</td><td>USD</td><td class="mono">$1,240.00</td><td>6</td><td class="mono">$0.00</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section class="panel data-panel tabpanel" data-panel="product" hidden>
+                  <h2 class="panel__title">分产品统计</h2>
+                  <p class="panel__desc">按产品 × 币种汇总，金额取自订单明细，按订单级支付状态归类。</p>
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead><tr><th>产品</th><th>币种</th><th>实收</th><th>订单数</th></tr></thead>
+                      <tbody>
+                        <tr><td>AI-Tools Pro · 买断</td><td>CNY</td><td class="mono">¥4,276.80</td><td>6</td></tr>
+                        <tr><td>AI-Tools Pro Plus · 买断</td><td>CNY</td><td class="mono">¥4,665.80</td><td>24</td></tr>
+                        <tr><td>AI-Tools Pro · 月付</td><td>USD</td><td class="mono">$1,240.00</td><td>6</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section class="panel data-panel tabpanel" data-panel="transactions" hidden>
+                  <h2 class="panel__title">交易流水</h2>
+                  <p class="panel__desc">每条支付记录一行（一次资金变动）。</p>
+                  <div class="toolbar">
+                    <div class="field" style="margin-top:0"><label class="field__label" for="txChannel">渠道</label>
+                      <select class="field__input" id="txChannel"><option>全部</option><option>支付宝</option><option>微信支付</option><option>Stripe</option></select>
+                    </div>
+                    <div class="field" style="margin-top:0"><label class="field__label" for="txStatus">状态</label>
+                      <select class="field__input" id="txStatus"><option>全部</option><option>成功</option><option>已退款</option><option>失败</option></select>
+                    </div>
+                    <button class="btn btn--ghost" type="button" data-act="busy" data-value="筛选中…" data-value2="筛选已应用（原型）">筛选</button>
+                  </div>
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead><tr><th>时间</th><th>订单号</th><th>渠道</th><th>金额</th><th>状态</th></tr></thead>
+                      <tbody>
+                        <tr><td class="mono">10-25 14:02</td><td class="mono">ORD-1790691168309-616DF8FE</td><td>支付宝</td><td class="mono">¥712.80</td><td><span class="badge badge--success">成功</span></td></tr>
+                        <tr><td class="mono">10-24 09:41</td><td class="mono">ORD-1790688234567-11AA22BB</td><td>Stripe</td><td class="mono">$19.99</td><td><span class="badge badge--success">成功</span></td></tr>
+                        <tr><td class="mono">10-23 20:15</td><td class="mono">ORD-1790685123456-33CC44DD</td><td>微信支付</td><td class="mono">¥712.80</td><td><span class="badge badge--danger">已退款</span></td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div class="pager"><button class="btn btn--ghost btn--sm" type="button">上一页</button><span class="pager__info">第 1 / 3 页 · 共 36 条</span><button class="btn btn--ghost btn--sm" type="button">下一页</button></div>
+                </section>
+
+                <section class="panel data-panel tabpanel" data-panel="trend" hidden>
+                  <h2 class="panel__title">收入趋势</h2>
+                  <div class="toolbar">
+                    <div class="field" style="margin-top:0"><label class="field__label" for="trendGran">分桶粒度</label>
+                      <select class="field__input" id="trendGran"><option>按日</option><option>按月</option></select>
+                    </div>
+                    <button class="btn btn--ghost" type="button" data-act="busy" data-value="刷新中…" data-value2="趋势已刷新（原型）">刷新</button>
+                  </div>
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead><tr><th>日期</th><th>订单数</th><th>实收（CNY）</th><th>实收（USD）</th></tr></thead>
+                      <tbody>
+                        <tr><td class="mono">2026-10-25</td><td>6</td><td class="mono">¥1,712.80</td><td class="mono">$0.00</td></tr>
+                        <tr><td class="mono">2026-10-24</td><td>4</td><td class="mono">¥0.00</td><td class="mono">$19.99</td></tr>
+                        <tr><td class="mono">2026-10-23</td><td>5</td><td class="mono">¥2,138.40</td><td class="mono">$0.00</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section class="panel data-panel tabpanel" data-panel="discrepancies" hidden>
+                  <h2 class="panel__title">对账差异</h2>
+                  <p class="panel__desc">订单与支付记录状态 / 金额不一致的疑点，按发现时间倒序；无输出即账实相符。</p>
+                  <p class="empty-note">未发现对账差异。</p>
+                </section>
+
+                <section class="panel data-panel tabpanel" data-panel="license" hidden>
+                  <h2 class="panel__title">License 处置</h2>
+                  <div class="jump-note">
+                    <p class="panel__desc" style="margin:0">该分区在原型第 9 屏完整展开：查询 → 行选中 → 处置动作联动 → 作废强确认。</p>
+                    <button class="btn btn--ghost btn--sm" type="button" data-act="goto" data-value="s9">前往第 9 屏 →</button>
+                  </div>
+                </section>
+
+                <section class="panel data-panel tabpanel" data-panel="users" hidden>
+                  <h2 class="panel__title">用户管理</h2>
+                  <div class="jump-note">
+                    <p class="panel__desc" style="margin:0">该分区在原型第 10 屏完整展开：筛选 → 表格 → 详情侧滑抽屉。</p>
+                    <button class="btn btn--ghost btn--sm" type="button" data-act="goto" data-value="s10">前往第 10 屏 →</button>
+                  </div>
+                </section>
+
+                <section class="panel data-panel tabpanel" data-panel="products" hidden>
+                  <h2 class="panel__title">产品配置</h2>
+                  <p class="panel__desc">产品档案与套餐两层配置沿用现状表单，本原型未展开；交互优化建议与「用户管理」同源（行选中、危险确认、加载态）。</p>
+                </section>
+
+                <section class="panel data-panel tabpanel" data-panel="security" hidden>
+                  <h2 class="panel__title">安全设置 · 二次验证（MFA）</h2>
+                  <p class="panel__desc">MFA 绑定 / 解绑流程与改密表单沿用现状；建议套用 G1–G4 通用规范（toast、危险确认、busy、焦点管理）。</p>
+                </section>
+              </div>
+            </main>
+            <div class="site-footer-mount" data-variant="admin"></div>
+          </section>
+
+          <!-- ============================================================ -->
+          <!-- S9 · 管理后台：License 处置                                    -->
+          <!-- ============================================================ -->
+          <section class="screen" id="s9">
+            <div class="site-header-mount"></div>
+            <main class="admin">
+              <div class="container">
+                <p class="admin__eyebrow">管理后台</p>
+                <h1 class="admin__title">License 处置</h1>
+
+                <div class="userbar">
+                  <p>已登录 · 令牌保存在本机</p>
+                  <button class="linklike" type="button" data-act="toast" data-value="原型：已退出登录">退出登录</button>
+                </div>
+
+                <div class="tabs-mount" data-active="license"></div>
+
+                <section class="panel data-panel">
+                  <p class="panel__desc">按密钥精确查询，或按客户邮箱列出名下全部许可证（含失效件）。选中一行后可执行解绑 / 失效重发 / 作废——三者语义不同，请按实际情况择一。</p>
+
+                  <div class="toolbar">
+                    <div class="field" style="margin-top:0">
+                      <label class="field__label" for="licSearchInput">License 密钥 / 客户邮箱</label>
+                      <input class="field__input" type="text" id="licSearchInput" value="you@example.com" spellcheck="false" style="width:280px">
+                    </div>
+                    <button class="btn btn--primary" type="button" data-act="lic-search">按密钥查询</button>
+                    <button class="btn btn--ghost" type="button" data-act="lic-search">按邮箱查询</button>
+                  </div>
+
+                  <div class="table-wrap" id="licResultWrap" hidden>
+                    <table class="data-table">
+                      <thead><tr><th style="width:36px">选择</th><th>许可证</th><th>产品</th><th>状态</th><th>有效期至</th><th>绑定机器码</th></tr></thead>
+                      <tbody>
+                        <tr class="lic-row" data-key="LIC-9T4K-2QXM-7F3D-8W1A">
+                          <td><input type="radio" name="licRow" aria-label="选择该行"></td>
+                          <td class="mono">LIC-9T4K-2QXM-7F3D-8W1A</td><td>pro-plus-buyout</td>
+                          <td><span class="badge badge--success">正常</span></td><td class="mono">永久</td><td class="mono">5E01-7EB8-3661-E06A</td>
+                        </tr>
+                        <tr class="lic-row" data-key="LIC-3H7P-8NVD-5K2Z-1M6B">
+                          <td><input type="radio" name="licRow" aria-label="选择该行"></td>
+                          <td class="mono">LIC-3H7P-8NVD-5K2Z-1M6B</td><td>pro-buyout</td>
+                          <td><span class="badge badge--success">正常</span></td><td class="mono">永久</td><td class="mono">未绑定</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <p class="empty-note" id="licEmpty">尚未查询，或未查询到许可证。点击上方任一查询按钮查看示意结果。</p>
+
+                  <div class="lic-action annot" id="licActionBox" hidden data-pin="P23">
+                    <h3 class="lic-action__title">处置 <code id="licActionKey"></code></h3>
+                    <div class="field">
+                      <label class="field__label" for="licActionType">处置动作</label>
+                      <select class="field__input" id="licActionType">
+                        <option value="unbind">解绑设备（保留授权，用户可在新机重新激活）</option>
+                        <option value="reissue">失效重发（旧证置 REISSUED，签发新密钥）</option>
+                        <option value="revoke">作废（不可逆，用户权益终止）</option>
+                      </select>
+                    </div>
+                    <div class="field" id="licMachineField">
+                      <label class="field__label" for="licNewMachine">新机器码（留空 = 不绑设备）</label>
+                      <input class="field__input" type="text" id="licNewMachine" spellcheck="false" placeholder="留空则由用户随后自行在新机激活">
+                    </div>
+                    <div class="field field--check" id="licForceField" hidden>
+                      <label class="check-label"><input type="checkbox" id="licForce"><span>越权重发次数上限（仅在已达上限时勾选；处置留痕会标注 forced）</span></label>
+                    </div>
+                    <div class="field">
+                      <label class="field__label" for="licReason">处置原因</label>
+                      <input class="field__input" type="text" id="licReason" spellcheck="false" placeholder="如：用户换机 / 违规使用 / 重复购买">
+                    </div>
+                    <p class="form-error" id="licActionError" hidden></p>
+                    <div class="form-actions">
+                      <button class="btn btn--primary" type="button" id="licActionSubmit" data-act="lic-submit">确认执行</button>
+                      <button class="btn btn--ghost" type="button" data-act="toast" data-value="已取消（原型）">取消</button>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </main>
+            <div class="site-footer-mount" data-variant="admin"></div>
+
+            <div class="modal" id="revokeModal" hidden>
+              <div class="modal__backdrop" data-close></div>
+              <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="revokeTitle">
+                <h2 class="modal__title" id="revokeTitle">确认作废许可证</h2>
+                <div class="danger-box">作废为<b>终态、不可逆</b>：用户权益立即终止，已绑设备下次校验将失败。请确认处置原因已填写且对象无误。</div>
+                <div class="modal__actions">
+                  <button class="btn btn--ghost" type="button" data-close>取消</button>
+                  <button class="btn btn--danger" type="button" data-act="revoke-ok">确认作废</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ============================================================ -->
+          <!-- S10 · 管理后台：用户管理                                       -->
+          <!-- ============================================================ -->
+          <section class="screen" id="s10">
+            <div class="site-header-mount"></div>
+            <main class="admin">
+              <div class="container">
+                <p class="admin__eyebrow">管理后台</p>
+                <h1 class="admin__title">用户管理</h1>
+
+                <div class="userbar">
+                  <p>已登录 · 令牌保存在本机</p>
+                  <button class="linklike" type="button" data-act="toast" data-value="原型：已退出登录">退出登录</button>
+                </div>
+
+                <div class="tabs-mount" data-active="users"></div>
+
+                <section class="panel data-panel">
+                  <p class="panel__desc">按邮箱 / 角色 / 状态查询账号，可就地改角色、停用 / 启用、代重置密码。不能对自己执行这些动作（列表里自身的行会禁用）；服务端也会二次校验，前端禁用只是体验层。</p>
+
+                  <div class="toolbar annot" data-pin="P25">
+                    <div class="field" style="margin-top:0">
+                      <label class="field__label" for="userEmail">邮箱（包含匹配）</label>
+                      <input class="field__input" type="text" id="userEmail" spellcheck="false" autocomplete="off" placeholder="user@example.com" style="width:220px">
+                    </div>
+                    <div class="field" style="margin-top:0">
+                      <label class="field__label" for="userRole">角色</label>
+                      <select class="field__input" id="userRole"><option>全部</option><option>普通用户</option><option>管理员</option></select>
+                    </div>
+                    <div class="field" style="margin-top:0">
+                      <label class="field__label" for="userStatus">状态</label>
+                      <select class="field__input" id="userStatus"><option>全部</option><option>正常</option><option>已停用</option></select>
+                    </div>
+                    <button class="btn btn--primary" type="button" data-act="busy" data-value="查询中…" data-value2="查询完成（原型）">查询</button>
+                    <button class="btn btn--ghost" type="button" data-act="export">导出 CSV</button>
+                  </div>
+
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead><tr><th>邮箱</th><th>角色</th><th>状态</th><th>二次验证</th><th>最近登录</th><th>操作</th></tr></thead>
+                      <tbody>
+                        <tr class="is-self">
+                          <td>admin@example.com<span class="self-note">当前登录账号</span></td>
+                          <td>管理员</td><td><span class="badge badge--success">正常</span></td><td><span class="badge badge--warn">未开启</span></td><td class="mono">10-25 21:58</td>
+                          <td><span style="font-size:12px;color:var(--ink-3)">不能对自己执行这些动作</span></td>
+                        </tr>
+                        <tr>
+                          <td>you@example.com</td><td>普通用户</td><td><span class="badge badge--success">正常</span></td><td><span class="badge badge--warn">未开启</span></td><td class="mono">10-25 14:20</td>
+                          <td>
+                            <button class="copy-btn" type="button" data-open="userDrawer">详情</button>
+                            <button class="copy-btn" type="button" data-open="resetPwdModal" style="margin-left:6px">重置密码</button>
+                            <button class="unbind-btn" type="button" style="margin-left:6px" data-act="toast" data-value="原型：已停用该账号">停用</button>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td>buyer@example.com</td><td>普通用户</td><td><span class="badge badge--danger">已停用</span></td><td><span class="badge badge--success">已开启</span></td><td class="mono">10-20 08:03</td>
+                          <td>
+                            <button class="copy-btn" type="button" data-open="userDrawer">详情</button>
+                            <button class="copy-btn" type="button" data-open="resetPwdModal" style="margin-left:6px">重置密码</button>
+                            <button class="copy-btn" type="button" style="margin-left:6px" data-act="toast" data-value="原型：已启用该账号">启用</button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div class="pager"><button class="btn btn--ghost btn--sm" type="button">上一页</button><span class="pager__info">第 1 / 3 页 · 共 42 条</span><button class="btn btn--ghost btn--sm" type="button">下一页</button></div>
+                </section>
+              </div>
+            </main>
+            <div class="site-footer-mount" data-variant="admin"></div>
+
+            <div class="drawer-wrap" id="userDrawer" hidden>
+              <div class="drawer__backdrop" data-close></div>
+              <div class="drawer annot" role="dialog" aria-modal="true" aria-labelledby="userDetailTitle" data-pin="P24">
+                <h2 class="panel__title" id="userDetailTitle">用户详情</h2>
+                <div class="table-wrap" style="margin-top:14px">
+                  <table class="data-table user-detail-table">
+                    <tbody>
+                      <tr><th>邮箱</th><td>you@example.com</td></tr>
+                      <tr><th>角色</th><td>普通用户</td></tr>
+                      <tr><th>状态</th><td><span class="badge badge--success">正常</span></td></tr>
+                      <tr><th>二次验证</th><td><span class="badge badge--warn">未开启</span></td></tr>
+                      <tr><th>注册时间</th><td class="mono">2026-08-12 10:24</td></tr>
+                      <tr><th>最近登录</th><td class="mono">2026-10-25 14:20</td></tr>
+                      <tr><th>名下许可证</th><td>2 张</td></tr>
+                      <tr><th>名下订单</th><td>3 笔</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="form-actions">
+                  <button class="btn btn--ghost btn--sm" type="button" id="drawerLicensesBtn" data-act="drawer-licenses">查看许可证</button>
+                </div>
+                <div id="userDetailLicensesBox" hidden>
+                  <p class="form-note">以下为该用户邮箱名下的许可证（完整密钥，仅供售后处置；不含签名令牌）：</p>
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead><tr><th>许可证</th><th>产品</th><th>状态</th><th>绑定机器码</th></tr></thead>
+                      <tbody>
+                        <tr><td class="mono">LIC-9T4K-2QXM-7F3D-8W1A</td><td>pro-plus-buyout</td><td><span class="badge badge--success">正常</span></td><td class="mono">5E01-7EB8-3661-E06A</td></tr>
+                        <tr><td class="mono">LIC-3H7P-8NVD-5K2Z-1M6B</td><td>pro-buyout</td><td><span class="badge badge--success">正常</span></td><td class="mono">未绑定</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="form-actions">
+                  <button class="btn btn--ghost" type="button" data-close>关闭</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="modal" id="resetPwdModal" hidden>
+              <div class="modal__backdrop" data-close></div>
+              <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="resetPwdTitle">
+                <h2 class="modal__title" id="resetPwdTitle">重置密码：you@example.com</h2>
+                <p class="modal__desc">为该账号设置新密码并告知用户本人；重置后旧会话立即失效，且该用户下次登录必须先修改密码。新密码须 8–72 位且同时包含字母与数字。</p>
+                <div class="field">
+                  <label class="field__label" for="resetPwdNew">新密码</label>
+                  <input class="field__input" type="password" id="resetPwdNew" autocomplete="new-password" placeholder="8–72 位，含字母与数字">
+                </div>
+                <div class="field">
+                  <label class="field__label" for="resetPwdConfirm">确认新密码</label>
+                  <input class="field__input" type="password" id="resetPwdConfirm" autocomplete="new-password" placeholder="再次输入新密码">
+                </div>
+                <div class="modal__actions">
+                  <button class="btn btn--ghost" type="button" data-close>取消</button>
+                  <button class="btn btn--primary" type="button" data-act="resetpwd-ok">确认重置</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+        </div>
+      </div>
+      <p class="stage-legend">使用说明：左侧切换屏幕；红色编号标记为交互优化点，悬停左侧对应条目可定位到屏幕内标记；「隐藏优化标注」可查看纯净页面效果。全部数据为示意，不含真实接口。</p>
+    </main>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap" aria-live="polite"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ============================ 数据 ============================ */
+  var URLS = {
+    s1: 'billing.ywhome.top/checkout/?machineId=5E01-7EB8-3661-E06A',
+    s2: 'billing.ywhome.top/checkout/?machineId=5E01-7EB8-3661-E06A（会话中）',
+    s3: 'billing.ywhome.top/checkout/?machineId=5E01-7EB8-3661-E06A（会话中）',
+    s4: 'billing.ywhome.top/checkout/?machineId=5E01-7EB8-3661-E06A（已完成）',
+    s5: 'billing.ywhome.top/account/',
+    s6: 'billing.ywhome.top/account/',
+    s7: 'billing.ywhome.top/account/（弹层）',
+    s8: 'billing.ywhome.top/admin/',
+    s9: 'billing.ywhome.top/admin/#license',
+    s10: 'billing.ywhome.top/admin/#users'
+  };
+
+  var OPTS = {
+    s1: [
+      { id: 'P1', title: '结账步骤条口径对齐', now: '三步流程把「选支付方式」藏进第 2 步，按钮却写「下一步：选择支付方式」，步骤与实际动作错位。', change: '拆为 4 步：选档位 / 确认信息 / 完成支付 / 获取授权，每步一个主任务。', gain: '进度可见，减少「我在哪一步」的困惑。' },
+      { id: 'P2', title: '档位分组 + 不可售引导', now: '买断与订阅混排；人民币区订阅不可售只做灰显，用户不知道为什么、也不知道怎么办。', change: '买断 / 订阅分两组；不可售卡片明示原因，并给出出路（切换英文界面用美元购买）。', gain: '选择成本下降，减少无效点击与客诉。' },
+      { id: 'P3', title: '订单摘要实时联动', now: '摘要面板要等下单成功后才有内容。', change: '选档位、填邮箱即更新摘要（档位 / 金额 / 邮箱 / 机器码）。', gain: '下单前即可核对关键信息。' },
+      { id: 'P4', title: '邮箱即时校验', now: '提交后才知道邮箱格式错误。', change: '失焦即验，错误内联到字段下方，输入修正后即时消除。', gain: '少一次失败往返。' },
+      { id: 'P5', title: '机器码一键复制', now: '机器码纯文本展示，换设备购买时要手动选区复制。', change: '等宽展示 + 复制按钮 + 一句「为何需要机器码」的说明。', gain: '复制零出错，绑定预期更清晰。' }
+    ],
+    s2: [
+      { id: 'P6', title: '支付方式卡片化', now: '渠道列表只有名称，金额与支付形态（扫码 / 跳转）不突出。', change: '渠道卡片含标识、支付形态说明、右侧金额与箭头；主渠道标「推荐」。', gain: '一眼选定，金额防错。' },
+      { id: 'P7', title: '区域与币种明示', now: '中英文界面的可用渠道集不同（CNY 两家 / USD 三家），页面本身无提示。', change: '顶部区域标识明示当前结算币种与可用渠道，附切换提示。', gain: '避免「怎么没有 PayPal」的困惑。' },
+      { id: 'P8', title: '支付前可返回修改', now: '进入支付阶段后想改邮箱 / 档位，只能重开页面。', change: '提供「返回修改订单」入口，结账会话保留。', gain: '容错，减少弃单。' }
+    ],
+    s3: [
+      { id: 'P9', title: '有效期倒计时可视化', now: '二维码过期时间只有文字提示，用户不知道还能等多久。', change: '倒计时进度条 + 剩余时间，随轮询同步。', gain: '等待有预期，减少反复刷新。' },
+      { id: 'P10', title: '等待期手动出口', now: '轮询失败或链接过期后，只能干等或刷新整页（会丢会话）。', change: '「刷新支付状态」「重新选择支付方式」「复制支付链接」三个手动出口。', gain: '异常可自愈，不必刷新整页。' }
+    ],
+    s4: [
+      { id: 'P11', title: '结果分层展示', now: '结果区对买断 / 订阅 / 兑换码复用同一模板。', change: '按订单类型分层：许可证直发、订阅续费说明、兑换码，各自给下一步。', gain: '不同用户看到与自己相关的引导。' },
+      { id: 'P12', title: '许可证一键复制与后续引导', now: '结果页只有密钥文本，用户拿到钥匙不知道往哪插。', change: '复制 + 下载 + 「前往我的授权」主按钮 + 客户端激活三步说明。', gain: '从「买到」到「用上」路径完整。' }
+    ],
+    s5: [
+      { id: 'P13', title: '登录两步分段', now: '登录 / 二次验证 / 找回密码三个表单同屏切换，容易迷失。', change: '明确「第 1 步密码 → 第 2 步二次验证」的顺序与状态，找回密码独立入口。', gain: '用户始终知道自己卡在哪一步。' },
+      { id: 'P14', title: '动态码分格 + 重发倒计时', now: '6 位动态码单框输入；发送邮箱验证码无冷却提示。', change: '6 格分输（自动前进 / 粘贴分发 / 退格回跳）；发送按钮 60 秒倒计时禁用。', gain: '输入出错率下降，防重复发送。' }
+    ],
+    s6: [
+      { id: 'P15', title: '资产区 Tab 化', now: '许可证 / 订阅 / 订单三张表纵向堆叠，改密表单混在其中，一屏看不到重点。', change: '四个 Tab（许可证 / 订阅 / 订单 / 安全）分区承载，计数上 Tab。', gain: '一屏一主任务，滚动距离大幅缩短。' },
+      { id: 'P16', title: '待支付订单补「继续支付」', now: '订单表对待支付订单只有退款资格判断，没有继续支付入口。', change: '待支付行给「继续支付」，携带原会话直达收银台。', gain: '挽回未完成订单。' },
+      { id: 'P17', title: '操作反馈 toast', now: '复制 / 解绑结果靠文字区域变化，不醒目。', change: '统一 toast：已复制 / 已解绑 / 已退款，2 秒自动消失。', gain: '操作确认即时可见。' },
+      { id: 'P18', title: '骨架屏与分区错误态', now: '表格加载期间空白，错误文字与表格混排。', change: '加载骨架 + 分区错误条带重试（点击「加载态演示」查看骨架效果）。', gain: '加载有感知，错误可恢复。' }
+    ],
+    s7: [
+      { id: 'P19', title: '退款风险前置', now: '退款说明混在弹层描述里，原因可选，确认按钮与普通按钮无异。', change: '危险提示块置顶（折算金额 + 全部作废 + 不可逆）；原因带字数计数；确认按钮用危险样式。', gain: '不可逆操作前三思可控。' }
+    ],
+    s8: [
+      { id: 'P20', title: '后台 Tab 分组', now: '10 个 Tab 平铺一行，账务查询与系统设置混排。', change: '按 账务 / 运营 / 系统 三组归类，带分组标签。', gain: '导航有结构，找功能更快。' },
+      { id: 'P21', title: '时间预设即应用', now: '点完「近 7 天」预设，仍要手点「查询」才刷新。', change: '预设点击即应用并刷新；自定义范围仍走「查询」。', gain: '少一次点击。' },
+      { id: 'P22', title: '总览指标卡前置', now: '总览只有一张明细表，要先读表才知道经营状况。', change: '4 张指标卡置顶（分币种实收 / 订单 / 退款）+ 明细表。', gain: '经营状况一屏概括。' }
+    ],
+    s9: [
+      { id: 'P23', title: '处置行选中 + 作废强确认', now: '查询结果与处置表单分离，作废与解绑同权确认。', change: '结果行单选高亮后才出处置表单；条件字段随动作联动；作废走危险确认弹层且原因必填。', gain: '处置对象明确，不可逆动作有护栏。' }
+    ],
+    s10: [
+      { id: 'P24', title: '用户详情侧滑抽屉', now: '用户详情用居中弹层，里面再嵌许可证列表，层级深、遮罩多。', change: '右侧滑出抽屉承载详情与名下许可证，不打断列表上下文。', gain: '深浅层级清晰，返回不断档。' },
+      { id: 'P25', title: '自身行禁用与导出反馈', now: '自身行禁用有提示但弱；导出 CSV 无任何反馈。', change: '自身行操作区置灰 + 行内说明；导出完成给 toast 与文件名。', gain: '边界可见，导出可感知。' }
+    ]
+  };
+
+  /* ============================ 工具 ============================ */
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+
+  function toast(msg) {
+    var wrap = $('#toastWrap');
+    while (wrap.children.length >= 3) { wrap.firstElementChild.remove(); }
+    var el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = msg;
+    wrap.appendChild(el);
+    setTimeout(function () {
+      el.classList.add('is-out');
+      setTimeout(function () { el.remove(); }, 260);
+    }, 2000);
+  }
+
+  /* ============================ 屏幕切换 ============================ */
+  function showScreen(id) {
+    $$('.screen').forEach(function (s) { s.classList.toggle('is-active', s.id === id); });
+    $$('.nav-item').forEach(function (n) { n.classList.toggle('is-active', n.getAttribute('data-screen') === id); });
+    var bar = $('#urlBar');
+    if (bar) bar.textContent = URLS[id] || '';
+    renderOpts(id);
+    var stage = $('.proto__stage');
+    if (stage) stage.scrollTop = 0;
+    if (id === 's3') { remain = 15 * 60; }
+  }
+
+  function renderOpts(id) {
+    var list = $('#optList');
+    if (!list) return;
+    var items = OPTS[id] || [];
+    list.innerHTML = items.map(function (o) {
+      return '<div class="opt" data-pin="' + o.id + '">'
+        + '<div class="opt__head"><span class="opt__id">' + o.id + '</span><span class="opt__title">' + o.title + '</span></div>'
+        + '<p class="opt__row"><b>现状：</b>' + o.now + '</p>'
+        + '<p class="opt__row"><b>优化：</b>' + o.change + '</p>'
+        + '<p class="opt__row"><b>收益：</b>' + o.gain + '</p>'
+        + '</div>';
+    }).join('');
+    $$('.opt', list).forEach(function (item) {
+      var pid = item.getAttribute('data-pin');
+      item.addEventListener('mouseenter', function () {
+        var pin = $('.screen.is-active .pin[data-pin="' + pid + '"]');
+        if (pin) pin.classList.add('pin--hl');
+      });
+      item.addEventListener('mouseleave', function () {
+        var pin = $('.screen.is-active .pin[data-pin="' + pid + '"]');
+        if (pin) pin.classList.remove('pin--hl');
+      });
+    });
+  }
+
+  /* ============================ 静态挂载 ============================ */
+  var HEADER_HTML = '<header class="site-header"><div class="container site-header__inner">'
+    + '<a class="brand" href="javascript:void(0)"><span>晏宁科技</span></a>'
+    + '<div class="site-header__actions">'
+    + '<button class="lang-switch" type="button" data-act="toast" data-value="原型：切换英文界面（USD 渠道集）"><span>中文</span><span class="lang-switch__sep">/</span><span>EN</span></button>'
+    + '<a class="btn btn--ghost btn--sm" href="javascript:void(0)">返回首页</a>'
+    + '</div></div></header>';
+
+  var FOOTER_HTML = '<footer class="site-footer"><div class="container site-footer__bottom">'
+    + '<p>© 2026 晏宁科技 Yaning Labs · 保留所有权利</p>'
+    + '<p><a href="javascript:void(0)">service@ywhome.top</a></p></div></footer>';
+
+  var FOOTER_ADMIN_HTML = '<footer class="site-footer"><div class="container site-footer__bottom">'
+    + '<p>内部页面，请勿外传链接。已开启二次验证的账号登录时需输入动态码。</p>'
+    + '<p><a href="javascript:void(0)">service@ywhome.top</a></p></div></footer>';
+
+  $$('.site-header-mount').forEach(function (el) { el.innerHTML = HEADER_HTML; });
+  $$('.site-footer-mount').forEach(function (el) {
+    el.innerHTML = el.getAttribute('data-variant') === 'admin' ? FOOTER_ADMIN_HTML : FOOTER_HTML;
+  });
+
+  var ADMIN_TABS = [
+    { group: '账务', items: [['overview', '收入总览'], ['channel', '分渠道'], ['product', '分产品'], ['transactions', '交易流水'], ['trend', '趋势'], ['discrepancies', '对账差异']] },
+    { group: '运营', items: [['license', 'License 处置'], ['users', '用户管理'], ['products', '产品配置']] },
+    { group: '系统', items: [['security', '安全设置']] }
+  ];
+  $$('.tabs-mount').forEach(function (mount) {
+    var active = mount.getAttribute('data-active');
+    var html = '<nav class="tabs" aria-label="管理台分区">';
+    ADMIN_TABS.forEach(function (g) {
+      html += '<div class="tabs__group"><span class="tabs__group-label">' + g.group + '</span>';
+      g.items.forEach(function (it) {
+        var on = it[0] === active;
+        html += '<button type="button" class="tabs__item' + (on ? ' is-active' : '') + '" data-tab="' + it[0] + '" aria-selected="' + on + '">' + it[1] + '</button>';
+      });
+      html += '</div>';
+    });
+    html += '</nav>';
+    mount.innerHTML = html;
+  });
+
+  /* ============================ 示意二维码 ============================ */
+  function drawQr() {
+    var el = $('#qrMock');
+    if (!el) return;
+    var n = 25, cell = 8, size = n * cell, seed = 20261025;
+    function rnd() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+    var rects = '';
+    var r, c, i, j;
+    for (r = 0; r < n; r++) {
+      for (c = 0; c < n; c++) {
+        var inFinder = (r < 8 && c < 8) || (r < 8 && c >= n - 8) || (r >= n - 8 && c < 8);
+        if (inFinder) continue;
+        if (rnd() > 0.52) rects += '<rect x="' + c * cell + '" y="' + r * cell + '" width="' + cell + '" height="' + cell + '"/>';
+      }
+    }
+    function finder(fr, fc) {
+      for (i = 0; i < 7; i++) {
+        for (j = 0; j < 7; j++) {
+          var edge = i === 0 || i === 6 || j === 0 || j === 6;
+          var core = i >= 2 && i <= 4 && j >= 2 && j <= 4;
+          if (edge || core) rects += '<rect x="' + (fc + j) * cell + '" y="' + (fr + i) * cell + '" width="' + cell + '" height="' + cell + '"/>';
+        }
+      }
+    }
+    finder(0, 0); finder(0, n - 7); finder(n - 7, 0);
+    el.innerHTML = '<svg viewBox="0 0 ' + size + ' ' + size + '" role="img" aria-label="示意支付二维码"><g fill="#111A1D">' + rects + '</g></svg>';
+  }
+
+  /* ============================ S1：档位 / 邮箱 / 摘要 ============================ */
+  var emailInput = $('#s1Email');
+  var emailErr = $('#s1EmailErr');
+  function emailOk() { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailInput.value.trim()); }
+  if (emailInput) {
+    emailInput.addEventListener('blur', function () {
+      if (!emailInput.value.trim()) { emailErr.hidden = true; emailInput.setAttribute('aria-invalid', 'false'); return; }
+      var ok = emailOk();
+      emailErr.hidden = ok;
+      emailInput.setAttribute('aria-invalid', ok ? 'false' : 'true');
+    });
+    emailInput.addEventListener('input', function () {
+      if (emailInput.getAttribute('aria-invalid') === 'true' && emailOk()) {
+        emailErr.hidden = true;
+        emailInput.setAttribute('aria-invalid', 'false');
+      }
+      var sum = $('#sumEmail');
+      if (sum) sum.textContent = emailInput.value.trim() || '待填写';
+    });
+  }
+
+  $$('#s1 .plan-card__input').forEach(function (radio) {
+    radio.addEventListener('change', function () {
+      $$('#s1 .plan-card').forEach(function (c) { c.classList.remove('is-selected'); });
+      radio.closest('.plan-card').classList.add('is-selected');
+      $('#sumPlan').textContent = radio.getAttribute('data-name');
+      $('#sumAmount').textContent = radio.getAttribute('data-price');
+      var sum = $('#sumEmail');
+      if (sum) sum.textContent = emailInput.value.trim() || '待填写';
+    });
+  });
+
+  /* ============================ S3：倒计时 ============================ */
+  var remain = 15 * 60, waited = 23;
+  setInterval(function () {
+    var s3 = $('#s3');
+    if (!s3 || !s3.classList.contains('is-active')) return;
+    if (remain > 0) remain--;
+    var m = String(Math.floor(remain / 60)).padStart(2, '0');
+    var s = String(remain % 60).padStart(2, '0');
+    var cd = $('#cdText'); if (cd) cd.textContent = m + ':' + s;
+    var bar = $('#cdBar'); if (bar) bar.style.width = (remain / 900 * 100) + '%';
+    waited++;
+    var wt = $('#waitText');
+    if (wt) wt.textContent = String(Math.floor(waited / 60)).padStart(2, '0') + ':' + String(waited % 60).padStart(2, '0');
+  }, 1000);
+
+  /* ============================ S5：OTP ============================ */
+  var otpInputs = $$('.otp__inp');
+  otpInputs.forEach(function (inp, i) {
+    inp.addEventListener('input', function () {
+      inp.value = inp.value.replace(/\D/g, '').slice(0, 1);
+      if (inp.value && otpInputs[i + 1]) otpInputs[i + 1].focus();
+    });
+    inp.addEventListener('keydown', function (e) {
+      if (e.key === 'Backspace' && !inp.value && otpInputs[i - 1]) otpInputs[i - 1].focus();
+    });
+    inp.addEventListener('paste', function (e) {
+      var txt = (e.clipboardData || window.clipboardData).getData('text').replace(/\D/g, '').slice(0, 6);
+      if (!txt) return;
+      e.preventDefault();
+      otpInputs.forEach(function (x, k) { x.value = txt[k] || ''; });
+      otpInputs[Math.min(txt.length, 5)].focus();
+    });
+  });
+
+  var sendBtn = $('#mfaSendBtn');
+  if (sendBtn) {
+    sendBtn.addEventListener('click', function () {
+      if (sendBtn.disabled) return;
+      var left = 60;
+      sendBtn.disabled = true;
+      sendBtn.textContent = left + 's 后重发';
+      toast('验证码已发送（示意）');
+      var t = setInterval(function () {
+        left--;
+        if (left <= 0) {
+          clearInterval(t);
+          sendBtn.disabled = false;
+          sendBtn.textContent = '发送邮箱验证码';
+        } else {
+          sendBtn.textContent = left + 's 后重发';
+        }
+      }, 1000);
+    });
+  }
+
+  /* ============================ S7：字数计数 ============================ */
+  var reason = $('#refundReason');
+  if (reason) {
+    reason.addEventListener('input', function () {
+      $('#refundCount').textContent = reason.value.length + '/200';
+    });
+  }
+
+  /* ============================ S9：行选中 / 动作联动 ============================ */
+  var licActionType = $('#licActionType');
+  if (licActionType) {
+    licActionType.addEventListener('change', function () {
+      var v = licActionType.value;
+      $('#licMachineField').hidden = !(v === 'unbind' || v === 'reissue');
+      $('#licForceField').hidden = (v !== 'reissue');
+    });
+  }
+  $$('#s9 .lic-row').forEach(function (tr) {
+    tr.addEventListener('click', function () {
+      $$('#s9 .lic-row').forEach(function (x) { x.classList.remove('is-selected'); });
+      tr.classList.add('is-selected');
+      var radio = $('input[type="radio"]', tr);
+      if (radio) radio.checked = true;
+      $('#licActionBox').hidden = false;
+      $('#licActionKey').textContent = tr.getAttribute('data-key');
+    });
+  });
+
+  /* ============================ 通用点击分发 ============================ */
+  document.addEventListener('click', function (e) {
+    var tab = e.target.closest('.tabs__item[data-tab]');
+    if (tab) {
+      var screen = tab.closest('.screen');
+      $$('.tabs__item', screen).forEach(function (t) { t.classList.remove('is-active'); t.setAttribute('aria-selected', 'false'); });
+      tab.classList.add('is-active'); tab.setAttribute('aria-selected', 'true');
+      var tabName = tab.getAttribute('data-tab');
+      $$('.tabpanel', screen).forEach(function (p) { p.hidden = (p.getAttribute('data-panel') !== tabName); });
+    }
+    var opener = e.target.closest('[data-open]');
+    if (opener) {
+      var m = document.getElementById(opener.getAttribute('data-open'));
+      if (m) {
+        m.hidden = false;
+        var f = m.querySelector('input, textarea, button');
+        if (f) f.focus();
+      }
+    }
+    var closer = e.target.closest('[data-close]');
+    if (closer) {
+      var box = closer.closest('.modal, .drawer-wrap');
+      if (box) box.hidden = true;
+    }
+    var el = e.target.closest('[data-act]');
+    if (!el) return;
+    var act = el.getAttribute('data-act');
+
+    if (act === 'goto') {
+      showScreen(el.getAttribute('data-value'));
+    } else if (act === 'toast') {
+      toast(el.getAttribute('data-value'));
+    } else if (act === 'copy') {
+      toast('已复制到剪贴板');
+    } else if (act === 'provider') {
+      toast('已选择 ' + el.getAttribute('data-value') + '，正在生成付款码（原型）');
+      showScreen('s3');
+    } else if (act === 'busy') {
+      if (el.disabled) return;
+      var old = el.innerHTML;
+      el.disabled = true;
+      el.innerHTML = '<span class="spinner"></span>' + (el.getAttribute('data-value') || '处理中…');
+      setTimeout(function () {
+        el.disabled = false;
+        el.innerHTML = old;
+        toast(el.getAttribute('data-value2') || '已完成（原型）');
+      }, 900);
+    } else if (act === 'preset') {
+      var group = el.parentElement;
+      $$('.chip', group).forEach(function (c) { c.classList.remove('is-active'); });
+      el.classList.add('is-active');
+      toast('已应用时间范围：' + el.textContent + '（原型）');
+    } else if (act === 'skeleton') {
+      var panel = $('#licensePanel');
+      var on = panel.classList.toggle('is-loading');
+      el.textContent = on ? '恢复数据' : '加载态演示';
+    } else if (act === 'lic-search') {
+      $('#licResultWrap').hidden = false;
+      $('#licEmpty').hidden = true;
+      toast('查询到 2 条许可证（示意）');
+    } else if (act === 'lic-submit') {
+      if (licActionType.value === 'revoke') {
+        $('#revokeModal').hidden = false;
+      } else {
+        toast('已执行：' + licActionType.options[licActionType.selectedIndex].text.split('（')[0] + '（原型）');
+      }
+    } else if (act === 'revoke-ok') {
+      $('#revokeModal').hidden = true;
+      toast('已作废该许可证（原型，不可逆）');
+    } else if (act === 'unbind-ok') {
+      $('#unbindModal').hidden = true;
+      toast('已释放设备绑定，可在新设备上重新激活（原型）');
+    } else if (act === 'refund-ok') {
+      $('#refundModal').hidden = true;
+      toast('已退款 ¥1,020.00，该订单许可证已作废（原型）');
+      showScreen('s6');
+    } else if (act === 'refund-cancel') {
+      $('#refundModal').hidden = true;
+      showScreen('s6');
+    } else if (act === 'resetpwd-ok') {
+      $('#resetPwdModal').hidden = true;
+      toast('密码已重置，旧会话立即失效（原型）');
+    } else if (act === 'continue-pay') {
+      toast('原型：携带原会话跳转收银台继续支付');
+    } else if (act === 'export') {
+      toast('已导出 users-20261025.csv（原型）');
+    } else if (act === 'drawer-licenses') {
+      var box = $('#userDetailLicensesBox');
+      box.hidden = !box.hidden;
+      el.textContent = box.hidden ? '查看许可证' : '收起许可证';
+    }
+  });
+
+  /* ============================ 侧栏导航 / 标注开关 ============================ */
+  $$('.nav-item').forEach(function (n) {
+    n.addEventListener('click', function () { showScreen(n.getAttribute('data-screen')); });
+  });
+
+  $('#pinToggle').addEventListener('click', function () {
+    var hidden = document.body.classList.toggle('hide-pins');
+    this.textContent = hidden ? '显示优化标注' : '隐藏优化标注';
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      $$('.modal:not([hidden]), .drawer-wrap:not([hidden])').forEach(function (m) { m.hidden = true; });
+    }
+  });
+
+  /* ============================ 初始化 ============================ */
+  drawQr();
+  renderOpts('s1');
+})();
+</script>
+</body>
+</html>

@@ -2,6 +2,9 @@ package com.billing.license.service.payment.impl;
 
 import com.billing.license.config.PaymentHttpClientConfig;
 import com.billing.license.entity.Order;
+import com.billing.license.entity.OrderItem;
+import com.billing.license.entity.Product;
+import com.billing.license.exception.BusinessException;
 import com.billing.license.service.payment.strategy.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,6 +18,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -25,6 +29,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Paddle 支付策略实现（国际，Merchant of Record，适合卖软件 License）
@@ -140,23 +145,61 @@ public class PaddleStrategy implements PaymentStrategy {
     Map<String, Object> buildCreateTransactionBody(Order order) {
         // C2：Paddle Billing v2 请求体字段为 snake_case（unit_price/currency_code/custom_data），
         // 与旧 camelCase 不符会被 422 拒单；ad-hoc price 需声明 tax_mode。
-        Map<String, Object> unitPrice = new HashMap<>();
-        unitPrice.put("amount", toMinorUnitString(order.getAmount()));
-        unitPrice.put("currency_code", order.getCurrency().code());
-        Map<String, Object> price = new HashMap<>();
-        price.put("description", order.getTitle() != null ? order.getTitle() : "License");
-        price.put("unit_price", unitPrice);
         Map<String, Object> items = new HashMap<>();
         items.put("quantity", 1);
-        items.put("price", price);
+
+        Product recurringProduct = resolveRecurringProduct(order);
+        if (recurringProduct != null) {
+            // #25：Paddle 只认 catalog price_id（不认内联价目），带 price_id 的交易由 Paddle 自动建订阅。
+            // 缺失即拒单——静默回退 ad-hoc 价目会让用户付了钱却拿不到自动续费。
+            String priceId = recurringProduct.getPaddlePriceId();
+            if (priceId == null || priceId.isBlank()) {
+                throw new BusinessException("PADDLE_PRICE_ID_MISSING",
+                        "订阅套餐未配置 Paddle 价目 ID（paddle_price_id），无法开通自动续费");
+            }
+            items.put("price_id", priceId.trim());
+            logger.info("Paddle 订阅模式下单：orderNo={}, cycle={}, priceId={}",
+                    order.getOrderNo(), recurringProduct.getBillingCycle(), priceId);
+        } else {
+            Map<String, Object> unitPrice = new HashMap<>();
+            unitPrice.put("amount", toMinorUnitString(order.getAmount()));
+            unitPrice.put("currency_code", order.getCurrency().code());
+            Map<String, Object> price = new HashMap<>();
+            price.put("description", order.getTitle() != null ? order.getTitle() : "License");
+            price.put("unit_price", unitPrice);
+            items.put("price", price);
+            // ad-hoc 价格必须声明 tax_mode（Paddle 代收代缴模式用 external；如需 Paddle 计税改为 automatic）
+        }
+
         Map<String, Object> customData = new HashMap<>();
         customData.put("order_id", order.getOrderNo());
         Map<String, Object> body = new HashMap<>();
         body.put("items", java.util.List.of(items));
+        // custom_data.order_id 会被 Paddle 带到自动创建的订阅上，是后续 subscription.* 事件
+        // 回查订单的唯一依据（SubscriptionService 用它续期）
         body.put("custom_data", customData);
-        // ad-hoc 价格必须声明 tax_mode（Paddle 代收代缴模式用 external；如需 Paddle 计税改为 automatic）
-        body.put("tax_mode", "external");
+        if (recurringProduct == null) {
+            body.put("tax_mode", "external");
+        }
         return body;
+    }
+
+    /**
+     * #25：从订单行反查「订阅类周期」的套餐；一次性买断或取不到行项时返回 null。
+     */
+    Product resolveRecurringProduct(Order order) {
+        List<OrderItem> items = order.getOrderItems();
+        if (items == null) {
+            return null;
+        }
+        for (OrderItem item : items) {
+            Product product = item.getProduct();
+            if (product != null && product.getBillingCycle() != null
+                    && product.getBillingCycle().isRecurring()) {
+                return product;
+            }
+        }
+        return null;
     }
 
     @Override
@@ -414,6 +457,115 @@ public class PaddleStrategy implements PaymentStrategy {
         refundBody.put("amount", toMinorUnitString(amount));
         refundBody.put("reason", "管理员退款");
         return refundBody;
+    }
+
+    /**
+     * #26：按订阅 ID 向 Paddle 反查订阅，取回建单时写入交易的 {@code custom_data.order_id}
+     * （Paddle 会把交易的 custom_data 带到自动创建的订阅上）。
+     * 查询失败 / 未配置 / 取不到 order_id 一律返回 empty（不抛异常），由调用方转人工告警。
+     */
+    @Override
+    public Optional<SubscriptionLookup> lookupSubscription(String subscriptionId) {
+        if (apiKey == null || apiKey.isEmpty()) {
+            logger.warn("Paddle 未配置，跳过订阅查询：subId={}", subscriptionId);
+            return Optional.empty();
+        }
+        if (subscriptionId == null || subscriptionId.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            String encoded = URLEncoder.encode(subscriptionId.trim(), StandardCharsets.UTF_8);
+            HttpRequest request = HttpRequest.newBuilder()
+                    .timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
+                    .uri(URI.create(buildUrl("/subscriptions/" + encoded)))
+                    .header("Authorization", "Bearer " + apiKey)
+                    .GET()
+                    .build();
+            HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            JsonNode root = objectMapper.readTree(httpResponse.body());
+            if (!root.has("data")) {
+                logger.error("Paddle 订阅查询返回无 data：subId={}, body={}", subscriptionId, httpResponse.body());
+                return Optional.empty();
+            }
+            JsonNode data = root.get("data");
+            String orderId = data.has("custom_data") && data.get("custom_data").has("order_id")
+                    ? data.get("custom_data").get("order_id").asText() : null;
+            if (orderId == null || orderId.isBlank()) {
+                logger.warn("Paddle 订阅未携带 order_id，无法自动重修：subId={}", subscriptionId);
+                return Optional.empty();
+            }
+            String status = data.has("status") ? data.get("status").asText() : "";
+            LocalDateTime start = null;
+            LocalDateTime end = null;
+            if (data.has("current_billing_period")) {
+                JsonNode period = data.get("current_billing_period");
+                if (period.has("starts_at")) {
+                    start = parsePaddleDateTime(period.get("starts_at").asText());
+                }
+                if (period.has("ends_at")) {
+                    end = parsePaddleDateTime(period.get("ends_at").asText());
+                }
+            }
+            return Optional.of(SubscriptionLookup.builder()
+                    .subscriptionId(data.has("id") ? data.get("id").asText() : subscriptionId)
+                    .orderId(orderId)
+                    .active("active".equals(status) || "trialing".equals(status))
+                    .currentPeriodStart(start)
+                    .currentPeriodEnd(end)
+                    .build());
+        } catch (Exception e) {
+            logger.error("Paddle 订阅查询失败，转人工补录：subId={}", subscriptionId, e);
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * 订阅自助取消（期末生效）：调 Paddle {@code POST /subscriptions/{id}/cancel} 并声明
+     * {@code effective_from=next_billing_period}，用户已付到期的权益保留到本周期结束。
+     *
+     * <p>Paddle 的确认形态是响应体里出现 {@code scheduled_change.action=cancel}
+     * （订阅本体仍是 active），故以此为据；确认不到即返回 false（不抛），
+     * 由调用方转成明确业务错误，避免「界面显示已取消、渠道仍在扣款」。
+     */
+    @Override
+    public boolean cancelSubscriptionAtPeriodEnd(String subscriptionId) {
+        if (apiKey == null || apiKey.isEmpty()) {
+            logger.warn("Paddle 未配置，无法取消订阅：subId={}", subscriptionId);
+            return false;
+        }
+        if (subscriptionId == null || subscriptionId.isBlank()) {
+            return false;
+        }
+        try {
+            String encoded = URLEncoder.encode(subscriptionId.trim(), StandardCharsets.UTF_8);
+            Map<String, Object> body = new HashMap<>();
+            body.put("effective_from", "next_billing_period");
+            HttpRequest request = HttpRequest.newBuilder()
+                    .timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
+                    .uri(URI.create(buildUrl("/subscriptions/" + encoded + "/cancel")))
+                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)))
+                    .build();
+            HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (httpResponse.statusCode() < 200 || httpResponse.statusCode() >= 300) {
+                logger.error("Paddle 订阅取消被渠道拒绝：subId={}, status={}, body={}",
+                        subscriptionId, httpResponse.statusCode(), httpResponse.body());
+                return false;
+            }
+            JsonNode root = objectMapper.readTree(httpResponse.body());
+            JsonNode data = root.has("data") ? root.get("data") : null;
+            if (data == null || !data.has("scheduled_change")
+                    || !"cancel".equals(data.get("scheduled_change").path("action").asText())) {
+                logger.error("Paddle 订阅取消未见 scheduled_change=cancel，不落库：subId={}, body={}",
+                        subscriptionId, httpResponse.body());
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            logger.error("Paddle 订阅取消失败：subId={}", subscriptionId, e);
+            return false;
+        }
     }
 
     @Override

@@ -306,6 +306,21 @@ a:hover { color: var(--brand-900); }
   font-size: 12px;
   line-height: 1.5;
 }
+.plan-card__providers {
+  display: block;
+  margin-top: 8px;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.plan-card.is-unavailable {
+  opacity: .55;
+  cursor: not-allowed;
+}
+.plan-card.is-unavailable .plan-card__providers {
+  color: var(--ink-2);
+  font-weight: 600;
+}
 .plan-card__desc {
   display: block;
   margin-top: 10px;

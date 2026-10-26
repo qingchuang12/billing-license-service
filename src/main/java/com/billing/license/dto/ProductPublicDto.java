@@ -29,6 +29,8 @@ public class ProductPublicDto {
     private BigDecimal priceCny;
     private BigDecimal priceUsd;
     private Product.BillingCycle billingCycle;
+    /** 是否订阅类周期（由渠道托管自动续费）；接入方据此决定展示「自动续费」与到期提示 */
+    private Boolean recurring;
     private PlanTier tier;
     private String features;
     /** 权益特性视图（配置驱动的中英文显示名），收银台渲染用；原始键见 {@link #features} */
@@ -41,8 +43,12 @@ public class ProductPublicDto {
     private Integer updateUntilDays;
     private Integer maxMajorVersion;
     private Boolean active;
+    /** 收银台是否展示「推荐」标记（后台产品配置维护） */
+    private Boolean recommended;
+    /** 当前部署下能卖该套餐的已启用渠道（按渠道能力过滤）；空数组＝该套餐当前无任何可售渠道 */
+    private List<ProviderCapability> providers;
 
-    public static ProductPublicDto from(Product p) {
+    public static ProductPublicDto from(Product p, String productFeatures) {
         return ProductPublicDto.builder()
                 .sku(p.getSku())
                 .productCode(p.getProductCode())
@@ -51,14 +57,16 @@ public class ProductPublicDto {
                 .priceCny(p.getPriceCny())
                 .priceUsd(p.getPriceUsd())
                 .billingCycle(p.getBillingCycle())
+                .recurring(p.getBillingCycle() != null && p.getBillingCycle().isRecurring())
                 .tier(p.getTier())
-                .features(p.getFeatures())
+                .features(productFeatures)
                 .nameEn(p.getNameEn())
                 .descriptionEn(p.getDescriptionEn())
                 .licenseDurationDays(p.getLicenseDurationDays())
                 .updateUntilDays(p.getUpdateUntilDays())
                 .maxMajorVersion(p.getMaxMajorVersion())
                 .active(p.getActive())
+                .recommended(Boolean.TRUE.equals(p.getRecommended()))
                 .build();
     }
 

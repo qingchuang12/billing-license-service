@@ -1,6 +1,7 @@
 package com.billing.license.service.payment.impl;
 
 import com.billing.license.dto.PaymentChannelStatus;
+import com.billing.license.entity.Product;
 import com.billing.license.exception.ChannelDisabledException;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentStrategy;
@@ -211,20 +212,36 @@ public class PaymentServiceFactory {
      * 获取已启用的国内支付方式
      */
     public List<PaymentMethod> getDomesticMethods() {
-        return strategies.keySet().stream()
-                .filter(PaymentMethod::isDomestic)
-                .filter(this::isEnabled)
-                .collect(Collectors.toList());
+        return getEnabledMethods(true, null);
     }
 
     /**
      * 获取已启用的国际支付方式
      */
     public List<PaymentMethod> getInternationalMethods() {
-        return strategies.keySet().stream()
-                .filter(PaymentMethod::isInternational)
-                .filter(this::isEnabled)
-                .collect(Collectors.toList());
+        return getEnabledMethods(false, null);
+    }
+
+    /**
+     * 按区域与计费周期取可用渠道：已启用 + 区域匹配 + 渠道能力支持该周期。
+     * {@code cycle} 为 null 时只按区域过滤（保留旧调用方行为）。
+     *
+     * <p>顺序按枚举声明固定，避免渠道集合的哈希序导致收银台展示顺序漂移。
+     */
+    public List<PaymentMethod> getEnabledMethods(boolean domestic, Product.BillingCycle cycle) {
+        return Arrays.stream(PaymentMethod.values())
+            .filter(domestic ? PaymentMethod::isDomestic : PaymentMethod::isInternational)
+            .filter(this::isEnabled)
+            .filter(method -> cycle == null || method.supports(cycle))
+            .toList();
+    }
+
+    /** 全部区域中支持该周期的已启用渠道（供公开目录展示「可售渠道」）。 */
+    public List<PaymentMethod> getEnabledMethods(Product.BillingCycle cycle) {
+        return Arrays.stream(PaymentMethod.values())
+            .filter(this::isEnabled)
+            .filter(method -> cycle == null || method.supports(cycle))
+            .toList();
     }
 
     /**
@@ -252,7 +269,10 @@ public class PaymentServiceFactory {
                     enabled,
                     configured,
                     configured ? List.of() : missing,
-                    note));
+                    note,
+                    method.getSupportedBillingCycles().stream().map(Enum::name).toList(),
+                    method.supportsRecurring(),
+                    method.getPaymentProducts().stream().map(Enum::name).toList()));
         }
         return statuses;
     }

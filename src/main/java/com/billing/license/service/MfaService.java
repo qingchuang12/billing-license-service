@@ -53,7 +53,6 @@ public class MfaService {
     private final MfaSecretCipher secretCipher;
     private final VerificationCodeService verificationCodeService;
     private final RateLimitService rateLimitService;
-    private final AdminStepUpService stepUpService;
     private final AccountProperties properties;
 
     // ==================== 管理端：绑定管理（ROLE_ADMIN） ====================
@@ -157,65 +156,6 @@ public class MfaService {
         user.setMfaLastUsedStep(null);
         userRepository.save(user);
         log.info("二次因子已解绑：userId={}", userId);
-    }
-
-    // ==================== 管理端：敏感动作二次确认（step-up，P2） ====================
-
-    /**
-     * 请求发送邮箱兜底码（为即将执行的敏感动作做二次确认）。
-     *
-     * <p>与登录侧 {@link #challenge} 的差别：凭据是管理员<b>访问令牌</b>（控制器层已过
-     * {@code ROLE_ADMIN}），不是登录票据。TOTP 用户不需要本步——认证器上本就有当天的动态码。
-     */
-    @Transactional
-    public void stepUpChallenge(UUID userId, String action, String clientIp, String locale) {
-        User user = requireEnabledUser(userId);
-        requireProtectedAction(action);
-        if (!emailFallbackEnabled()) {
-            throw new BusinessException("MFA_EMAIL_FALLBACK_DISABLED",
-                "本服务未开放邮箱验证码兜底，请使用认证器动态码");
-        }
-        verificationCodeService.sendSecondFactorCode(user.getEmail(), clientIp, locale);
-    }
-
-    /**
-     * 校验第二因子，签发与动作绑定的短时效一次性确认令牌。
-     *
-     * <p>校验逻辑与登录侧同源（先 TOTP 后邮箱兜底、失败共享限流档、TOTP 一码一次）；
-     * 差别只在产出——不发访问令牌，而是发 {@link AdminStepUpService} 的确认令牌。
-     * <b>绝不能在这里复用登录票据或访问令牌充当二次确认</b>：那等于没确认。
-     */
-    @Transactional
-    public MfaStepUpResponse stepUpVerify(UUID userId, String action, String code) {
-        User user = requireEnabledUser(userId);
-        requireProtectedAction(action);
-        guardFailures(CODE_FAIL_NAMESPACE, user.getId());
-
-        if (!matchAnyCode(user, code)) {
-            recordFailure(CODE_FAIL_NAMESPACE, user.getId());
-            throw new BusinessException("MFA_CODE_INVALID", "动态码或邮箱验证码无效");
-        }
-        userRepository.save(user); // 落 TOTP 已用步：同码不能为下一个敏感动作复用
-
-        return MfaStepUpResponse.builder()
-            .stepUpToken(stepUpService.issue(user, action))
-            .expiresInSeconds(stepUpService.expiresInSeconds())
-            .build();
-    }
-
-    /** step-up 两侧共用的前置判定：已启用 MFA + 动作确属受保护清单。 */
-    private User requireEnabledUser(UUID userId) {
-        User user = requireUser(userId);
-        if (!user.isMfaEnabled()) {
-            throw new BusinessException("MFA_NOT_ENABLED", "该账号未开启二次验证");
-        }
-        return user;
-    }
-
-    private void requireProtectedAction(String action) {
-        if (!AdminStepUpService.isProtectedAction(action)) {
-            throw new BusinessException("INVALID_STEP_UP_ACTION", "未知或不受保护的敏感动作: " + action);
-        }
     }
 
     // ==================== 登录侧：第二因子（凭票据，无需令牌） ====================

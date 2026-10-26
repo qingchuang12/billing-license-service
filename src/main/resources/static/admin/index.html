@@ -13,8 +13,8 @@
   <!-- 有脚本时才启用隐藏态/动效的初始状态：无脚本环境下内容照常可见 -->
   <script>document.documentElement.classList.add('js');</script>
   <!-- 设计体系与收银台同源复用（design tokens + 通用组件）；页面专属样式见 admin.css -->
-  <link rel="stylesheet" href="../checkout/checkout.css">
-  <link rel="stylesheet" href="admin.css?v=20261018-1">
+  <link rel="stylesheet" href="../checkout/checkout.css?v=20261025-4">
+  <link rel="stylesheet" href="admin.css?v=20261025-4">
 </head>
 <body>
   <a class="skip-link" href="#main" data-i18n="a11y.skip">跳到主要内容</a>
@@ -160,6 +160,10 @@
           <button class="tabs__item" type="button" data-tab="discrepancies" aria-selected="false" data-i18n="tabs.discrepancies">对账差异</button>
           <button class="tabs__item" type="button" data-tab="license" aria-selected="false" data-i18n="tabs.license">License 处置</button>
           <button class="tabs__item" type="button" data-tab="users" aria-selected="false" data-i18n="tabs.users">用户管理</button>
+          <button class="tabs__item" type="button" data-tab="products" aria-selected="false" data-i18n="tabs.products">产品配置</button>
+          <button class="tabs__item" type="button" data-tab="orders" aria-selected="false" data-i18n="tabs.orders">订单处置</button>
+          <button class="tabs__item" type="button" data-tab="codes" aria-selected="false" data-i18n="tabs.codes">兑换码</button>
+          <button class="tabs__item" type="button" data-tab="channels" aria-selected="false" data-i18n="tabs.channels">渠道自查</button>
           <button class="tabs__item" type="button" data-tab="security" aria-selected="false" data-i18n="tabs.security">安全设置</button>
         </nav>
 
@@ -393,31 +397,6 @@
             </div>
           </div>
 
-          <!-- 敏感动作二次确认弹层（P2 step-up）：确认令牌只随单次请求发出，不落任何存储 -->
-          <div class="user-modal" id="stepUpModal" hidden>
-            <div class="user-modal__box" role="dialog" aria-modal="true" aria-labelledby="stepUpTitle">
-              <h3 class="user-modal__title" id="stepUpTitle" data-i18n="stepUp.title">敏感操作二次确认</h3>
-              <p class="mfa-status" id="stepUpAction"></p>
-              <p class="form-note" data-i18n="stepUp.note">
-                该操作影响账号安全，请输入认证器动态码完成二次确认（6 位数字）。
-                认证器不可用时可用邮箱验证码兜底。确认令牌 120 秒内有效且仅可使用一次。
-              </p>
-              <div class="field">
-                <label class="field__label" for="stepUpCode" data-i18n="stepUp.codeLabel">动态码</label>
-                <input class="field__input" type="text" id="stepUpCode" inputmode="numeric"
-                       maxlength="6" autocomplete="one-time-code" spellcheck="false"
-                       data-i18n-placeholder="pwd.sixDigits" placeholder="6 位数字">
-              </div>
-              <p class="form-note" id="stepUpNote" hidden></p>
-              <p class="form-error" id="stepUpError" hidden></p>
-              <div class="form-actions">
-                <button class="linklike" type="button" id="stepUpSendBtn" data-i18n="mfaLogin.useEmail">改用邮箱验证码</button>
-                <button class="btn btn--primary" type="button" id="stepUpSubmit" data-i18n="common.confirm">确认</button>
-                <button class="btn btn--ghost" type="button" id="stepUpCancel" data-i18n="common.cancel">取消</button>
-              </div>
-            </div>
-          </div>
-
           <!-- 用户详情弹层（P1）：资料 + 许可证/订单计数；明细复用既有许可证查询 -->
           <div class="user-modal" id="userDetailModal" hidden>
             <div class="user-modal__box" role="dialog" aria-modal="true" aria-labelledby="userDetailTitle">
@@ -450,6 +429,354 @@
               </div>
             </div>
           </div>
+        </section>
+
+        <section class="panel data-panel" id="panel-products" hidden>
+          <h2 class="panel__title" data-i18n="panel.products">产品配置</h2>
+          <p class="panel__desc" data-i18n="desc.products">
+            产品 → 套餐两层：产品档案定义名称、描述与权益；套餐定义支付周期、价格与授权参数。
+            同一产品下的月付 / 半年 / 年付 / 永久套餐共享产品权益。保存与上下架前会弹出确认框。
+          </p>
+
+          <h3 class="section-subtitle" data-i18n="profiles.title">产品档案（名称 / 描述 / 权益）</h3>
+          <div class="toolbar">
+            <div class="toolbar__range">
+              <div class="field">
+                <label class="field__label" for="profileKeyword" data-i18n="profiles.keyword">关键字</label>
+                <input class="field__input" type="text" id="profileKeyword" spellcheck="false"
+                       autocomplete="off" data-i18n-placeholder="profiles.keywordPlaceholder"
+                       placeholder="产品码 / 名称">
+              </div>
+              <button class="btn btn--primary" type="button" id="profileSearch" data-i18n="profiles.search">查询</button>
+              <button class="btn btn--ghost" type="button" id="profileCreateBtn" data-i18n="profiles.create">新增产品档案</button>
+            </div>
+          </div>
+          <p class="data-error" id="profilesError" hidden></p>
+          <div class="table-wrap" id="profilesTableWrap" hidden></div>
+          <p class="empty-note" id="profilesEmpty" hidden data-i18n="empty.profiles">没有符合条件的产品档案。</p>
+          <p class="lic-result" id="profilesResult" hidden></p>
+
+          <h3 class="section-subtitle" data-i18n="plans.title">套餐（支付周期 / 价格 / 上下架）</h3>
+          <div class="toolbar">
+            <div class="toolbar__range">
+              <div class="field">
+                <label class="field__label" for="productKeyword" data-i18n="products.keyword">关键字</label>
+                <input class="field__input" type="text" id="productKeyword" spellcheck="false"
+                       autocomplete="off" data-i18n-placeholder="products.keywordPlaceholder"
+                       placeholder="SKU / 名称 / 产品码">
+              </div>
+              <div class="field">
+                <label class="field__label" for="productActiveFilter" data-i18n="products.statusFilter">状态</label>
+                <select class="field__input" id="productActiveFilter">
+                  <option value="" data-i18n="opt.all">全部</option>
+                  <option value="true" data-i18n="products.onSale">已上架</option>
+                  <option value="false" data-i18n="products.offSale">已下架</option>
+                </select>
+              </div>
+              <button class="btn btn--primary" type="button" id="productSearch" data-i18n="products.search">查询</button>
+              <button class="btn btn--ghost" type="button" id="productCreateBtn" data-i18n="products.createPlan">新增套餐</button>
+            </div>
+          </div>
+
+          <p class="data-error" id="productsError" hidden></p>
+          <div class="table-wrap" id="productsTableWrap" hidden></div>
+          <p class="empty-note" id="productsEmpty" hidden data-i18n="empty.products">没有符合条件的套餐。</p>
+          <p class="lic-result" id="productsResult" hidden></p>
+
+          <div class="user-modal" id="profileModal" hidden>
+            <div class="user-modal__box user-modal__box--wide" role="dialog" aria-modal="true"
+                 aria-labelledby="profileModalTitle">
+              <h3 class="user-modal__title" id="profileModalTitle"></h3>
+              <p class="form-note" data-i18n="profileForm.note">
+                权益特性按产品定义，同一产品下的月付 / 半年 / 年付 / 永久套餐共享；产品码创建后不可修改。
+                保存前会再确认一次。
+              </p>
+
+              <div class="product-form">
+                <div class="field">
+                  <label class="field__label" for="profileCode" data-i18n="profileForm.code">产品码</label>
+                  <input class="field__input" type="text" id="profileCode" spellcheck="false"
+                         autocomplete="off" data-i18n-placeholder="profileForm.codePlaceholder"
+                         placeholder="如 ai-tools">
+                </div>
+                <div class="field">
+                  <label class="field__label" for="profileName" data-i18n="profileForm.name">产品名称（中文）</label>
+                  <input class="field__input" type="text" id="profileName" spellcheck="false" autocomplete="off">
+                </div>
+                <div class="field">
+                  <label class="field__label" for="profileNameEn" data-i18n="profileForm.nameEn">产品名称（英文）</label>
+                  <input class="field__input" type="text" id="profileNameEn" spellcheck="false" autocomplete="off">
+                </div>
+                <div class="field field--full">
+                  <label class="field__label" for="profileDescription" data-i18n="profileForm.description">产品描述（中文）</label>
+                  <textarea class="field__input" id="profileDescription" rows="2"></textarea>
+                </div>
+                <div class="field field--full">
+                  <label class="field__label" for="profileDescriptionEn" data-i18n="profileForm.descriptionEn">产品描述（英文）</label>
+                  <textarea class="field__input" id="profileDescriptionEn" rows="2"></textarea>
+                </div>
+                <div class="field field--full">
+                  <label class="field__label" data-i18n="profileForm.features">权益特性</label>
+                  <div class="feature-options" id="profileFeatures"></div>
+                </div>
+              </div>
+
+              <p class="form-error" id="profileFormError" hidden></p>
+              <div class="form-actions">
+                <button class="btn btn--primary" type="button" id="profileSubmit" data-i18n="profileForm.save">保存</button>
+                <button class="btn btn--ghost" type="button" id="profileCancel" data-i18n="common.cancel">取消</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="user-modal" id="productModal" hidden>
+            <div class="user-modal__box user-modal__box--wide" role="dialog" aria-modal="true"
+                 aria-labelledby="productModalTitle">
+              <h3 class="user-modal__title" id="productModalTitle"></h3>
+              <p class="form-note" data-i18n="productForm.note">
+                双币价均为必填：缺任一区域价格时该区域下单会被拒绝。SKU 创建后锁定，编辑时不可修改。
+                权益与产品级名称/描述在产品档案上维护，保存前会再确认一次。
+              </p>
+
+              <div class="product-form">
+                <div class="field">
+                  <label class="field__label" for="productSku" data-i18n="productForm.sku">SKU</label>
+                  <input class="field__input" type="text" id="productSku" spellcheck="false"
+                         autocomplete="off" data-i18n-placeholder="productForm.skuPlaceholder"
+                         placeholder="如 pro-half-year">
+                </div>
+                <div class="field">
+                  <label class="field__label" for="productCode" data-i18n="productForm.profile">所属产品档案</label>
+                  <select class="field__input" id="productCode"></select>
+                </div>
+                <div class="field">
+                  <label class="field__label" for="productName" data-i18n="productForm.name">套餐名称（中文）</label>
+                  <input class="field__input" type="text" id="productName" spellcheck="false" autocomplete="off">
+                </div>
+                <div class="field">
+                  <label class="field__label" for="productNameEn" data-i18n="productForm.nameEn">套餐名称（英文）</label>
+                  <input class="field__input" type="text" id="productNameEn" spellcheck="false" autocomplete="off">
+                </div>
+                <div class="field">
+                  <label class="field__label" for="productPriceCny" data-i18n="productForm.priceCny">人民币价格</label>
+                  <input class="field__input" type="number" id="productPriceCny" min="0.01" step="0.01">
+                </div>
+                <div class="field">
+                  <label class="field__label" for="productPriceUsd" data-i18n="productForm.priceUsd">美元价格</label>
+                  <input class="field__input" type="number" id="productPriceUsd" min="0.01" step="0.01">
+                </div>
+                <div class="field">
+                  <label class="field__label" for="productBillingCycle" data-i18n="th.billingCycle">计费周期</label>
+                  <select class="field__input" id="productBillingCycle"></select>
+                  <p class="form-note" id="productChannelHint" hidden></p>
+                </div>
+                <div class="field">
+                  <label class="field__label" for="productTier" data-i18n="th.plan">档位</label>
+                  <select class="field__input" id="productTier"></select>
+                </div>
+                <div class="field">
+                  <label class="field__label" for="productLicenseDays" data-i18n="productForm.licenseDays">授权有效天数</label>
+                  <input class="field__input" type="number" id="productLicenseDays" min="1" step="1">
+                </div>
+                <div class="field">
+                  <label class="field__label" for="productUpdateDays" data-i18n="productForm.updateDays">更新权益天数（留空=不限制）</label>
+                  <input class="field__input" type="number" id="productUpdateDays" min="1" step="1">
+                </div>
+                <div class="field">
+                  <label class="field__label" for="productMaxMajor" data-i18n="productForm.maxMajor">大版本上限（留空=不限制）</label>
+                  <input class="field__input" type="number" id="productMaxMajor" min="1" step="1">
+                </div>
+                <div class="field field--full">
+                  <p class="form-note" id="priceIdHint" hidden></p>
+                </div>
+                <div class="field">
+                  <label class="field__label" for="productStripePriceId" data-i18n="productForm.stripePriceId">Stripe 价目 ID</label>
+                  <input class="field__input" type="text" id="productStripePriceId" spellcheck="false"
+                         autocomplete="off" placeholder="price_...">
+                </div>
+                <div class="field">
+                  <label class="field__label" for="productPaddlePriceId" data-i18n="productForm.paddlePriceId">Paddle 价目 ID</label>
+                  <input class="field__input" type="text" id="productPaddlePriceId" spellcheck="false"
+                         autocomplete="off" placeholder="pri_...">
+                </div>
+                <div class="field" id="productActiveField">
+                  <label class="field__label" for="productActive" data-i18n="productForm.active">初始状态</label>
+                  <select class="field__input" id="productActive">
+                    <option value="true" data-i18n="products.onSale">已上架</option>
+                    <option value="false" data-i18n="products.offSale">已下架</option>
+                  </select>
+                </div>
+                <div class="field field--full">
+                  <label class="field__label" for="productDescription" data-i18n="productForm.description">套餐描述（中文）</label>
+                  <textarea class="field__input" id="productDescription" rows="2"></textarea>
+                </div>
+                <div class="field field--full">
+                  <label class="field__label" for="productDescriptionEn" data-i18n="productForm.descriptionEn">套餐描述（英文）</label>
+                  <textarea class="field__input" id="productDescriptionEn" rows="2"></textarea>
+                </div>
+                <div class="field field--full">
+                  <label class="check-label">
+                    <input type="checkbox" id="productRecommended">
+                    <span data-i18n="productForm.recommended">在收银台展示「推荐」标记</span>
+                  </label>
+                </div>
+              </div>
+
+              <p class="form-error" id="productFormError" hidden></p>
+              <div class="form-actions">
+                <button class="btn btn--primary" type="button" id="productSubmit" data-i18n="productForm.save">保存</button>
+                <button class="btn btn--ghost" type="button" id="productCancel" data-i18n="common.cancel">取消</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==================== 订单处置（#10） ==================== -->
+        <section class="panel data-panel" id="panel-orders" hidden>
+          <h2 class="panel__title" data-i18n="panel.orders">订单处置</h2>
+          <p class="panel__desc">
+            <span data-i18n="desc.orders1">按订单号或状态查询订单，可对已支付订单补签许可证、或对订单发起退款。</span>
+            <b data-i18n="desc.ordersBold">退款会立即作废该订单下的全部许可证</b>
+            <span data-i18n="desc.orders2">，且渠道退款失败时订单会被标记 REFUND_FAILED（钱没退成，不会谎报成功）。</span>
+          </p>
+
+          <div class="toolbar">
+            <div class="toolbar__range">
+              <div class="field">
+                <label class="field__label" for="orderNumberInput" data-i18n="orders.number">订单号</label>
+                <input class="field__input" type="text" id="orderNumberInput" spellcheck="false"
+                       autocomplete="off" placeholder="ORD-...">
+              </div>
+              <div class="field">
+                <label class="field__label" for="orderStatusFilter" data-i18n="orders.status">订单状态</label>
+                <select class="field__input" id="orderStatusFilter">
+                  <option value="" data-i18n="opt.all">全部</option>
+                  <option value="PENDING">PENDING</option>
+                  <option value="CONFIRMED">CONFIRMED</option>
+                  <option value="PROCESSING">PROCESSING</option>
+                  <option value="COMPLETED">COMPLETED</option>
+                  <option value="CANCELLED">CANCELLED</option>
+                  <option value="REFUNDED">REFUNDED</option>
+                  <option value="REFUND_FAILED">REFUND_FAILED</option>
+                  <option value="PAID">PAID</option>
+                </select>
+              </div>
+              <button class="btn btn--primary" type="button" id="orderSearch" data-i18n="orders.search">查询</button>
+            </div>
+          </div>
+
+          <p class="data-error" id="orderError" hidden></p>
+          <div class="table-wrap" id="orderTableWrap" hidden></div>
+          <p class="empty-note" id="orderEmpty" hidden data-i18n="empty.orders">没有符合条件的订单。</p>
+
+          <div class="pager" id="orderPager" hidden>
+            <button class="btn btn--ghost btn--sm" type="button" id="orderPrev" data-i18n="pager.prev">上一页</button>
+            <span class="pager__info" id="orderPageInfo"></span>
+            <button class="btn btn--ghost btn--sm" type="button" id="orderNext" data-i18n="pager.next">下一页</button>
+          </div>
+
+          <p class="lic-result" id="orderResult" hidden></p>
+
+          <!-- 退款原因弹层：退款不可逆，必须显式填原因（写进审计留痕） -->
+          <div class="user-modal" id="refundModal" hidden>
+            <div class="user-modal__box" role="dialog" aria-modal="true" aria-labelledby="refundTitle">
+              <h3 class="user-modal__title" id="refundTitle"><span data-i18n="refund.title">退款：</span><span id="refundOrderNo"></span></h3>
+              <p class="form-note" data-i18n="refund.note">
+                退款成功后该订单名下的许可证会立即作废且不可恢复，请确认金额与订单无误后再执行。
+              </p>
+              <div class="field">
+                <label class="field__label" for="refundReason" data-i18n="refund.reason">退款原因（写入审计留痕）</label>
+                <input class="field__input" type="text" id="refundReason" spellcheck="false" autocomplete="off">
+              </div>
+              <p class="form-error" id="refundError" hidden></p>
+              <div class="form-actions">
+                <button class="btn btn--primary btn--danger" type="button" id="refundSubmit" data-i18n="refund.submit">确认退款</button>
+                <button class="btn btn--ghost" type="button" id="refundCancel" data-i18n="common.cancel">取消</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==================== 兑换码（#10） ==================== -->
+        <section class="panel data-panel" id="panel-codes" hidden>
+          <h2 class="panel__title" data-i18n="panel.codes">兑换码</h2>
+          <p class="panel__desc">
+            <span data-i18n="desc.codes1">按套餐 SKU 与状态检索兑换码，用于批量导出与对账；也可批量生成新码。</span>
+            <b data-i18n="desc.codes2">生成结果只在这一次以明文返回，关掉后页面不再保留。</b>
+          </p>
+
+          <h3 class="section-subtitle" data-i18n="codes.queryTitle">检索</h3>
+          <div class="toolbar">
+            <div class="toolbar__range">
+              <div class="field">
+                <label class="field__label" for="codeSku" data-i18n="codes.sku">套餐 SKU</label>
+                <input class="field__input" type="text" id="codeSku" spellcheck="false"
+                       autocomplete="off" placeholder="pro-buyout">
+              </div>
+              <div class="field">
+                <label class="field__label" for="codeStatus" data-i18n="codes.status">状态</label>
+                <select class="field__input" id="codeStatus">
+                  <option value="" data-i18n="opt.all">全部</option>
+                  <option value="UNUSED" data-i18n="codes.unused">未使用</option>
+                  <option value="USED" data-i18n="codes.used">已使用</option>
+                  <option value="EXPIRED" data-i18n="codes.expired">已过期</option>
+                  <option value="REVOKED" data-i18n="codes.revoked">已撤销</option>
+                </select>
+              </div>
+              <button class="btn btn--primary" type="button" id="codeSearch" data-i18n="codes.search">查询</button>
+              <button class="btn btn--ghost" type="button" id="codeExportBtn" data-i18n="codes.export">导出 CSV</button>
+            </div>
+          </div>
+
+          <p class="data-error" id="codeError" hidden></p>
+          <div class="table-wrap" id="codeTableWrap" hidden></div>
+          <p class="empty-note" id="codeEmpty" hidden data-i18n="empty.codes">没有符合条件的兑换码。</p>
+          <p class="lic-result" id="codeResult" hidden></p>
+
+          <h3 class="section-subtitle" data-i18n="codes.generateTitle">批量生成</h3>
+          <div class="toolbar">
+            <div class="toolbar__range">
+              <div class="field">
+                <label class="field__label" for="genSku" data-i18n="codes.genSku">套餐 SKU</label>
+                <input class="field__input" type="text" id="genSku" spellcheck="false"
+                       autocomplete="off" placeholder="pro-buyout">
+              </div>
+              <div class="field">
+                <label class="field__label" for="genCount" data-i18n="codes.count">生成数量</label>
+                <input class="field__input" type="number" id="genCount" min="1" step="1" value="10">
+              </div>
+              <div class="field">
+                <label class="field__label" for="genExpires" data-i18n="codes.expiresAt">过期时间（留空=不过期）</label>
+                <input class="field__input" type="datetime-local" id="genExpires">
+              </div>
+              <button class="btn btn--primary" type="button" id="codeGenerate" data-i18n="codes.generate">生成</button>
+            </div>
+          </div>
+
+          <!-- 生成结果：明文列表，便于一次复制走 -->
+          <div class="codes-output" id="codeOutput" hidden>
+            <label class="field__label" for="codeOutputText" data-i18n="codes.outputLabel">生成结果（明文）</label>
+            <textarea class="field__input" id="codeOutputText" rows="6" readonly></textarea>
+          </div>
+        </section>
+
+        <!-- ==================== 渠道自查（#10） ==================== -->
+        <section class="panel data-panel" id="panel-channels" hidden>
+          <h2 class="panel__title" data-i18n="panel.channels">渠道自查</h2>
+          <p class="panel__desc" data-i18n="desc.channels">
+            列出各支付渠道的启用状态与配置齐全情况，缺失项只回显**配置项名**，不显示任何密钥值。
+            部署完填好密钥后先来这里确认「配得对不对」，再去做真实下单验证。
+          </p>
+
+          <div class="toolbar">
+            <div class="toolbar__range">
+              <button class="btn btn--primary" type="button" id="channelCheck" data-i18n="channels.check">立即自查</button>
+            </div>
+          </div>
+
+          <p class="data-error" id="channelCheckError" hidden></p>
+          <div class="table-wrap" id="channelCheckTableWrap" hidden></div>
+          <p class="empty-note" id="channelCheckEmpty" hidden data-i18n="empty.channels">没有可自查的渠道。</p>
         </section>
 
         <section class="panel data-panel" id="panel-security" hidden>
@@ -552,6 +879,7 @@
 
       </div>
     </div>
+  <!-- 敏感动作确认弹层已移除：MFA 只用于登录，数据修改仅做一次确认弹窗 -->
   </main>
 
   <footer class="site-footer">
@@ -560,6 +888,6 @@
     </div>
   </footer>
 
-  <script src="admin.js?v=20261018-1"></script>
+  <script src="admin.js?v=20261025-4"></script>
 </body>
 </html>

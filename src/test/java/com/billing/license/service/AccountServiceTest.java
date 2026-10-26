@@ -367,6 +367,17 @@ class AccountServiceTest {
         assertEquals("ACTIVE", profile.getStatus());
     }
 
+    @Test
+    void me_exposesMfaEnabledForAdminBanner() {
+        User user = activeUser();
+        user.setMfaEnabled(true);
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+
+        UserProfileResponse profile = service.me(user.getId());
+
+        assertTrue(profile.isMfaEnabled(), "管理端 MFA 引导横幅依赖 me 回传 mfaEnabled");
+    }
+
     /**
      * B6（2026-09-20，账户枚举修复）：保留注册端点后，账号可在购买/兑换外单独创建，
      * 原「查无账户抛 EMAIL_NOT_PURCHASED」既语义不再成立、又构成账户枚举神谕（暴露邮箱是否注册/付费）。

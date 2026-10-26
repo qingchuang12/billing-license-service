@@ -66,6 +66,33 @@ public class AccountAssetController {
         return ResponseEntity.ok(accountAssetService.listMySubscriptions(currentUserId()));
     }
 
+    /**
+     * 订阅自助取消（期末生效，需登录）。
+     *
+     * <p>渠道侧置「本周期结束即停」，本地同步打 {@code cancelAtPeriodEnd} 标记：
+     * **权益保留到当前计费周期结束**，到期后才经渠道取消事件走期末失效链路。
+     * 点取消不会当场停权——用户已付到期的那一段不能因为点了按钮就作废。
+     *
+     * <p>渠道未确认取消时返回 400 {@code SUBSCRIPTION_CANCEL_FAILED} 且**本地不落库**；
+     * 他人订阅按 {@code SUBSCRIPTION_NOT_FOUND} 语义返回，不泄露存在性；
+     * 已取消 / 已标记期末取消时幂等返回当前状态。
+     */
+    @Operation(summary = "取消订阅（需登录）",
+            description = "置为本周期结束后不再续费：权益保留到周期结束，到期后自动取消；"
+                    + "渠道未确认则本地不落库。他人订阅按 404 语义返回。")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "已置为期末取消（或本就已是该状态）"),
+            @ApiResponse(responseCode = "400",
+                    description = "订阅不存在/无权访问、尚未生效、渠道不支持自助取消或渠道未确认"),
+            @ApiResponse(responseCode = "401", description = "缺少或非法令牌")
+    })
+    @Audit(action = "USER_SUBSCRIPTION_CANCEL", target = "#subscriptionId")
+    @PostMapping("/subscriptions/{subscriptionId}/cancel")
+    public ResponseEntity<SubscriptionView> cancelMySubscription(
+            @Parameter(description = "订阅唯一标识", required = true) @PathVariable UUID subscriptionId) {
+        return ResponseEntity.ok(accountAssetService.cancelMySubscription(currentUserId(), subscriptionId));
+    }
+
     /** 我的订单列表，下单时间倒序。 */
     @Operation(summary = "我的订单列表（需登录）",
             description = "本人名下全部订单：单号、金额、币种、订单/支付状态、下单时间；下单时间倒序")

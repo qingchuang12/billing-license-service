@@ -1,6 +1,7 @@
 package com.billing.license.service;
 
 import com.billing.license.dto.RedeemCodeRequest;
+import com.billing.license.dto.RedeemCodeView;
 import com.billing.license.entity.*;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.LicenseRepository;
@@ -128,8 +129,14 @@ public class RedeemCodeService {
 
     /**
      * I6：按产品 SKU + 状态检索兑换码（参数为空表示不过滤），供管理端导出与对账。
+     *
+     * <p>#12：直接返回**视图**而不是实体。{@code RedeemCodeView#from} 要读 LAZY 的
+     * {@code redeemCode.product}，若把实体交给控制层再映射，映射就发生在事务之外——
+     * OSIV 关闭后必然抛 {@code LazyInitializationException}。映射收进事务内，
+     * 调用方拿到的就是与会话无关的普通 DTO。
      */
-    public List<RedeemCode> listCodes(String productSku, String status) {
+    @Transactional(readOnly = true)
+    public List<RedeemCodeView> listCodes(String productSku, String status) {
         RedeemCode.RedeemCodeStatus target = null;
         if (status != null && !status.isBlank()) {
             try {
@@ -139,7 +146,9 @@ public class RedeemCodeService {
             }
         }
         String sku = (productSku == null || productSku.isBlank()) ? null : productSku.trim();
-        return redeemCodeRepository.search(sku, target);
+        return redeemCodeRepository.search(sku, target).stream()
+            .map(RedeemCodeView::from)
+            .toList();
     }
     
     /**
@@ -226,10 +235,15 @@ public class RedeemCodeService {
         LocalDateTime issuedAt = LocalDateTime.now();
         LocalDateTime expiresAt = issuedAt.plusDays(redeemCode.getProduct().getLicenseDurationDays());
 
+        // 订单发货生成的兑换码：签发的 License 挂回原订单，订阅续费/取消才能按订单找到这张证；
+        // 批量生成的码没有订单，保持不挂订单。
+        Order redeemOrder = redeemCode.getOrderId() == null ? null
+            : orderRepository.findByOrderNumber(redeemCode.getOrderId()).orElse(null);
+
         License license = License.builder()
             .licenseKey(licenseKey)
             .customerId(customerId)
-            .order(null) // No order for redeemed codes
+            .order(redeemOrder)
             .product(redeemCode.getProduct())
             .status(License.LicenseStatus.ACTIVE)
             .issuedAt(issuedAt)

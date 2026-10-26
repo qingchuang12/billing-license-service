@@ -63,7 +63,11 @@ public class CheckoutService {
     // F8：锁条目引用计数，最后一个持有者退出即摘除——只增不减会让每个被轮询过的订单号永久占位。
     private final ConcurrentHashMap<String, OrderLock> fulfillmentLocks = new ConcurrentHashMap<>();
 
-    /** 订单级发放锁：{@code monitor} 是同步对象，{@code refs} 只在 {@code fulfillmentLocks.compute} 内改动（按 key 原子）。 */
+    // #19：按 checkoutId 串行化「选择支付渠道」整段（判 + 调渠道 + 写库），
+    // 并发连点/前端重试时后到者进入即命中 B4 幂等分支，不会各自创建一个真实收银台。
+    private final ConcurrentHashMap<String, OrderLock> checkoutLocks = new ConcurrentHashMap<>();
+
+    /** 引用计数锁：{@code monitor} 是同步对象，{@code refs} 只在对应锁表的 {@code compute} 内改动（按 key 原子）。 */
     private static final class OrderLock {
         private final Object monitor = new Object();
         private int refs;
@@ -112,12 +116,13 @@ public class CheckoutService {
 
         // 区域判定：CNY 或 zh-CN 视为国内，否则国际
         boolean domestic = isDomestic(request.getCurrency(), request.getLocale());
-        List<PaymentMethod> methods = domestic
-            ? paymentServiceFactory.getDomesticMethods()
-            : paymentServiceFactory.getInternationalMethods();
+        // 渠道能力矩阵：只保留「支持该套餐计费周期」的已启用渠道
+        // （国内支付宝/微信只支持一次性买断；订阅周期仅 Stripe / Paddle）
+        List<PaymentMethod> methods = paymentServiceFactory.getEnabledMethods(domestic, product.getBillingCycle());
 
         if (methods.isEmpty()) {
-            throw new BusinessException("NO_PAYMENT_METHOD", "No available payment method for region");
+            throw new BusinessException("NO_PAYMENT_METHOD",
+                "当前套餐（" + product.getBillingCycle().name() + "）在该区域没有可用的支付方式");
         }
 
         // 双币种定价（B19）：金额与币种随区域取用，国内走 CNY/priceCny，国际走 USD/priceUsd
@@ -223,44 +228,63 @@ public class CheckoutService {
     public CheckoutResponse selectProvider(String checkoutId, SelectProviderRequest request) {
         log.info("选择支付方式：checkoutId={}, provider={}", checkoutId, request.getProvider());
 
-        CheckoutSession session = checkoutSessionRepository.findByCheckoutId(checkoutId)
-            .orElseThrow(() -> new BusinessException("CHECKOUT_NOT_FOUND", "Checkout session not found: " + checkoutId));
-
-        UUID orderId = session.getOrderId();
-        Order order = orderRepository.findById(orderId)
-            .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "Order not found: " + orderId));
-
         PaymentMethod method = resolveMethod(request.getProvider());
 
-        // B4（双重扣款修复）：selectProvider 幂等前置校验，避免用户连点/重复提交生成第二个真实收银台。
-        // 1) 会话已支付：直接返回状态，绝不再创建支付。
-        if (session.getStatus() == CheckoutSession.Status.PAID) {
-            log.info("会话已支付，忽略重复选择支付方式：checkoutId={}", checkoutId);
-            return buildResumeResponse(session, session.getProvider() != null ? session.getProvider() : method);
-        }
-        // 2) 同一渠道且已创建过支付入口（PENDING + 已有 providerSessionId）：复用既有支付，不重复创建。
-        if (session.getStatus() == CheckoutSession.Status.PENDING
-                && method == session.getProvider()
-                && session.getProviderSessionId() != null && !session.getProviderSessionId().isEmpty()) {
-            log.info("同渠道重复选择，复用既有支付入口（幂等）：checkoutId={}, provider={}", checkoutId, method);
-            return buildResumeResponse(session, method);
-        }
-        // 3) 其余情况（首次选择 / 切换到不同渠道）走正常创建流程。
+        // #19：同一 checkoutId 的「判 + 调渠道 + 写库」整段串行化。
+        // 未加锁时两个并发请求都能读到 CREATED 而各建一个真实收银台，用户若两个都付即双收；
+        // 锁在外部渠道调用期间保持持有（同 checkoutId 串行，不同 checkoutId 互不影响）。
+        OrderLock lock = acquireLock(checkoutLocks, checkoutId);
+        try {
+            synchronized (lock.monitor) {
+                CheckoutSession session = checkoutSessionRepository.findByCheckoutId(checkoutId)
+                    .orElseThrow(() -> new BusinessException("CHECKOUT_NOT_FOUND", "Checkout session not found: " + checkoutId));
 
-        PaymentResponse paymentResponse = paymentService.requestPayment(order, method);
+                UUID orderId = session.getOrderId();
+                // #12：本方法不开事务（渠道 HTTP 必须在事务外），故取订单时就预加载行项与其产品：
+                // 下方 resolveBillingCycle 与支付策略的 resolveRecurringProduct 都要读它们。
+                Order order = orderRepository.findWithItemsById(orderId)
+                    .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "Order not found: " + orderId));
 
-        // H6：支付创建失败（渠道未配置/网络异常/参数错误等）必须向前端显式反馈，
-        // 禁止静默返回空 payUrl 让前端陷入"已下单却无支付入口"的困惑状态。
-        // 抛出点在任何写库之前：订单渠道、会话与 Payment 行都不落地。
-        if (PaymentStatus.FAILED.name().equals(paymentResponse.getStatus())) {
-            String err = (paymentResponse.getErrorMessage() != null && !paymentResponse.getErrorMessage().isEmpty())
-                    ? paymentResponse.getErrorMessage()
-                    : "支付渠道创建失败，请稍后重试或联系支持";
-            throw new BusinessException("PAYMENT_CREATE_FAILED", err);
+                // 渠道能力校验：不允许用不支持该套餐周期的渠道下单（如国内渠道买月付套餐）
+                Product.BillingCycle cycle = resolveBillingCycle(order);
+                if (cycle != null && !method.supports(cycle)) {
+                    throw new BusinessException("PROVIDER_NOT_SUPPORTED_FOR_PLAN",
+                        "支付渠道 " + method.name() + " 不支持该套餐的计费周期：" + cycle.name());
+                }
+
+                // B4（双重扣款修复）：selectProvider 幂等前置校验，避免用户连点/重复提交生成第二个真实收银台。
+                // 1) 会话已支付：直接返回状态，绝不再创建支付。
+                if (session.getStatus() == CheckoutSession.Status.PAID) {
+                    log.info("会话已支付，忽略重复选择支付方式：checkoutId={}", checkoutId);
+                    return buildResumeResponse(session, session.getProvider() != null ? session.getProvider() : method);
+                }
+                // 2) 同一渠道且已创建过支付入口（PENDING + 已有 providerSessionId）：复用既有支付，不重复创建。
+                if (session.getStatus() == CheckoutSession.Status.PENDING
+                        && method == session.getProvider()
+                        && session.getProviderSessionId() != null && !session.getProviderSessionId().isEmpty()) {
+                    log.info("同渠道重复选择，复用既有支付入口（幂等）：checkoutId={}, provider={}", checkoutId, method);
+                    return buildResumeResponse(session, method);
+                }
+                // 3) 其余情况（首次选择 / 切换到不同渠道）走正常创建流程。
+
+                PaymentResponse paymentResponse = paymentService.requestPayment(order, method);
+
+                // H6：支付创建失败（渠道未配置/网络异常/参数错误等）必须向前端显式反馈，
+                // 禁止静默返回空 payUrl 让前端陷入"已下单却无支付入口"的困惑状态。
+                // 抛出点在任何写库之前：订单渠道、会话与 Payment 行都不落地。
+                if (PaymentStatus.FAILED.name().equals(paymentResponse.getStatus())) {
+                    String err = (paymentResponse.getErrorMessage() != null && !paymentResponse.getErrorMessage().isEmpty())
+                            ? paymentResponse.getErrorMessage()
+                            : "支付渠道创建失败，请稍后重试或联系支持";
+                    throw new BusinessException("PAYMENT_CREATE_FAILED", err);
+                }
+
+                session = self.recordPaymentChoice(order.getId(), checkoutId, method, paymentResponse);
+                return buildPaymentChoiceResponse(session, method, paymentResponse);
+            }
+        } finally {
+            releaseLock(checkoutLocks, checkoutId, lock);
         }
-
-        session = self.recordPaymentChoice(order.getId(), checkoutId, method, paymentResponse);
-        return buildPaymentChoiceResponse(session, method, paymentResponse);
     }
 
     /**
@@ -361,9 +385,10 @@ public class CheckoutService {
         // 页面恢复流程据此直接续选支付方式；缺了它前端拿到空列表会误报「暂无可用支付方式」。
         // （按 createCheckout 的区域判定口径：session.country CN → 国内渠道，其余 → 国际渠道）
         if (session.getStatus() == CheckoutSession.Status.CREATED) {
-            List<PaymentMethod> restoreMethods = "CN".equals(session.getCountry())
-                ? paymentServiceFactory.getDomesticMethods()
-                : paymentServiceFactory.getInternationalMethods();
+            boolean domestic = "CN".equals(session.getCountry());
+            Order sessionOrder = orderRepository.findById(session.getOrderId()).orElse(null);
+            List<PaymentMethod> restoreMethods = paymentServiceFactory.getEnabledMethods(
+                domestic, resolveBillingCycle(sessionOrder));
             resp.paymentMethods(restoreMethods.stream().map(Enum::name).collect(Collectors.toList()));
         }
 
@@ -406,11 +431,7 @@ public class CheckoutService {
 
     // R5：获取订单级发放锁（单实例串行化，避免并发轮询重复签发）
     private OrderLock acquireOrderLock(String orderNumber) {
-        return fulfillmentLocks.compute(orderNumber, (k, v) -> {
-            OrderLock lock = (v != null) ? v : new OrderLock();
-            lock.refs++;
-            return lock;
-        });
+        return acquireLock(fulfillmentLocks, orderNumber);
     }
 
     /**
@@ -418,7 +439,20 @@ public class CheckoutService {
      * 计数归零摘除后另一线程会新建一个不同的 monitor 并立即进入，两个线程同时处在临界区。
      */
     private void releaseOrderLock(String orderNumber, OrderLock lock) {
-        fulfillmentLocks.compute(orderNumber, (k, v) -> {
+        releaseLock(fulfillmentLocks, orderNumber, lock);
+    }
+
+    /** 引用计数锁的取用：同一 key 的并发请求共享同一个 monitor，最后一个持有者退出时摘除条目。 */
+    private static OrderLock acquireLock(ConcurrentHashMap<String, OrderLock> locks, String key) {
+        return locks.compute(key, (k, v) -> {
+            OrderLock lock = (v != null) ? v : new OrderLock();
+            lock.refs++;
+            return lock;
+        });
+    }
+
+    private static void releaseLock(ConcurrentHashMap<String, OrderLock> locks, String key, OrderLock lock) {
+        locks.compute(key, (k, v) -> {
             if (v != lock) {
                 return v;
             }
@@ -454,6 +488,15 @@ public class CheckoutService {
         } catch (IllegalArgumentException e) {
             throw new BusinessException("UNSUPPORTED_PROVIDER", "Unsupported provider: " + provider);
         }
+    }
+
+    /** 从订单明细取套餐计费周期；订单/明细缺失时返回 null（渠道过滤退化为只按区域过滤）。 */
+    private static Product.BillingCycle resolveBillingCycle(Order order) {
+        if (order == null || order.getOrderItems() == null || order.getOrderItems().isEmpty()) {
+            return null;
+        }
+        OrderItem item = order.getOrderItems().get(0);
+        return (item != null && item.getProduct() != null) ? item.getProduct().getBillingCycle() : null;
     }
 
     /**

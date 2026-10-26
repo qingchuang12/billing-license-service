@@ -1,6 +1,8 @@
 package com.billing.license.service.payment.impl;
 
 import com.billing.license.entity.Order;
+import com.billing.license.entity.OrderItem;
+import com.billing.license.entity.Product;
 import com.billing.license.service.payment.strategy.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,6 +25,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Stripe 支付策略实现（国际信用卡/Apple Pay/Google Pay）
@@ -64,37 +67,23 @@ public class StripeStrategy implements PaymentStrategy {
         try {
             initStripe();
 
-            long unitAmount = order.getAmount()
-                    .multiply(new BigDecimal("100"))
-                    .setScale(0, RoundingMode.HALF_UP)
-                    .longValue();
+            // #25：订阅类周期（月/季/半年/年）走 SUBSCRIPTION 模式，由 Stripe 托管自动续费；
+            // 一次性（ONE_TIME/LIFETIME）维持原 PAYMENT 模式。解析放在外层 try 内，
+            // 解析失败即下单失败（不静默降级为一次性收款——那等于用户以为订阅却不续费）。
+            Product recurringProduct = resolveRecurringProduct(order);
 
-            SessionCreateParams params = SessionCreateParams.builder()
-                    .setMode(SessionCreateParams.Mode.PAYMENT)
-                    .setSuccessUrl(successUrl + "?session_id={CHECKOUT_SESSION_ID}")
-                    .setCancelUrl(cancelUrl)
-                    .putMetadata("order_id", order.getOrderNo())
-                    .addLineItem(SessionCreateParams.LineItem.builder()
-                            .setQuantity(1L)
-                            .setPriceData(SessionCreateParams.LineItem.PriceData.builder()
-                                    .setCurrency(order.getCurrency().name().toLowerCase())
-                                    .setUnitAmount(unitAmount)
-                                    .setProductData(SessionCreateParams.LineItem.PriceData.ProductData.builder()
-                                            .setName(order.getTitle() != null ? order.getTitle() : "License")
-                                            .build())
-                                    .build())
-                            .build())
-                    .build();
-
+            SessionCreateParams params = buildCheckoutParams(order, recurringProduct);
             Session session = Session.create(params);
             response.setPayUrl(session.getUrl());
             response.setPaymentId(session.getId());
 
             Map<String, Object> extraParams = new HashMap<>();
             extraParams.put("sessionId", session.getId());
+            extraParams.put("mode", recurringProduct != null ? "subscription" : "payment");
             response.setExtraParams(extraParams);
 
-            logger.info("Stripe Checkout Session 创建成功：url={}", session.getUrl());
+            logger.info("Stripe Checkout Session 创建成功：url={}, mode={}",
+                    session.getUrl(), extraParams.get("mode"));
         } catch (Exception e) {
             logger.error("Stripe 创建支付失败", e);
             response.setStatus(PaymentStatus.FAILED.name());
@@ -249,6 +238,115 @@ public class StripeStrategy implements PaymentStrategy {
     }
 
     /**
+     * #25：构建 Checkout Session 参数（包级可测，锁定「订阅周期 → SUBSCRIPTION 模式」分支）。
+     *
+     * @param order            订单（取金额/币种/标题/订单号）
+     * @param recurringProduct 订阅类周期套餐；null 表示一次性买断
+     */
+    SessionCreateParams buildCheckoutParams(Order order, Product recurringProduct) {
+        long unitAmount = order.getAmount()
+                .multiply(new BigDecimal("100"))
+                .setScale(0, RoundingMode.HALF_UP)
+                .longValue();
+        String currency = order.getCurrency().name().toLowerCase();
+        String productName = order.getTitle() != null ? order.getTitle() : "License";
+
+        SessionCreateParams.Builder builder = SessionCreateParams.builder()
+                .setSuccessUrl(successUrl + "?session_id={CHECKOUT_SESSION_ID}")
+                .setCancelUrl(cancelUrl)
+                .putMetadata("order_id", order.getOrderNo());
+
+        if (recurringProduct != null) {
+            // 订阅模式：优先用套餐配置的 catalog price；未配置则按周期内联 recurring price_data
+            SessionCreateParams.LineItem.Builder lineItem =
+                    SessionCreateParams.LineItem.builder().setQuantity(1L);
+            String priceId = recurringProduct.getStripePriceId();
+            if (priceId != null && !priceId.isBlank()) {
+                lineItem.setPrice(priceId.trim());
+            } else {
+                lineItem.setPriceData(recurringPriceData(currency, unitAmount,
+                        productName, recurringProduct.getBillingCycle()));
+            }
+            builder.setMode(SessionCreateParams.Mode.SUBSCRIPTION)
+                    .addLineItem(lineItem.build())
+                    // 订阅对象自带 metadata.order_id：后续 customer.subscription.* / invoice.paid
+                    // 事件靠它回查订单续期，缺失则续费无法匹配到订单（SubscriptionService）
+                    .setSubscriptionData(SessionCreateParams.SubscriptionData.builder()
+                            .putMetadata("order_id", order.getOrderNo())
+                            .build());
+            logger.info("Stripe 订阅模式下单：orderNo={}, cycle={}, priceId={}",
+                    order.getOrderNo(), recurringProduct.getBillingCycle(),
+                    priceId == null || priceId.isBlank() ? "(内联)" : priceId);
+        } else {
+            builder.setMode(SessionCreateParams.Mode.PAYMENT)
+                    .addLineItem(SessionCreateParams.LineItem.builder()
+                            .setQuantity(1L)
+                            .setPriceData(SessionCreateParams.LineItem.PriceData.builder()
+                                    .setCurrency(currency)
+                                    .setUnitAmount(unitAmount)
+                                    .setProductData(SessionCreateParams.LineItem.PriceData.ProductData.builder()
+                                            .setName(productName)
+                                            .build())
+                                    .build())
+                            .build());
+        }
+        return builder.build();
+    }
+
+    /**
+     * #25：从订单行反查「订阅类周期」的套餐。
+     *
+     * <p>取第一个 {@code billingCycle.isRecurring()} 的行项；一次性买断（ONE_TIME/LIFETIME）
+     * 或取不到行项时返回 null，由调用方走原一次性收款分支。
+     */
+    Product resolveRecurringProduct(Order order) {
+        List<OrderItem> items = order.getOrderItems();
+        if (items == null) {
+            return null;
+        }
+        for (OrderItem item : items) {
+            Product product = item.getProduct();
+            if (product != null && product.getBillingCycle() != null
+                    && product.getBillingCycle().isRecurring()) {
+                return product;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * #25：按计费周期内联构造 Stripe recurring price_data（套餐未配 stripe_price_id 时使用）。
+     * 周期映射：MONTHLY=1 月 / QUARTERLY=3 月 / HALF_YEAR=6 月 / YEARLY=1 年。
+     */
+    private SessionCreateParams.LineItem.PriceData recurringPriceData(
+            String currency, long unitAmount, String productName, Product.BillingCycle cycle) {
+        SessionCreateParams.LineItem.PriceData.Recurring.Builder recurring =
+                SessionCreateParams.LineItem.PriceData.Recurring.builder();
+        switch (cycle) {
+            case YEARLY -> recurring.setInterval(
+                            SessionCreateParams.LineItem.PriceData.Recurring.Interval.YEAR)
+                    .setIntervalCount(1L);
+            case QUARTERLY -> recurring.setInterval(
+                            SessionCreateParams.LineItem.PriceData.Recurring.Interval.MONTH)
+                    .setIntervalCount(3L);
+            case HALF_YEAR -> recurring.setInterval(
+                            SessionCreateParams.LineItem.PriceData.Recurring.Interval.MONTH)
+                    .setIntervalCount(6L);
+            default -> recurring.setInterval(
+                            SessionCreateParams.LineItem.PriceData.Recurring.Interval.MONTH)
+                    .setIntervalCount(1L);
+        }
+        return SessionCreateParams.LineItem.PriceData.builder()
+                .setCurrency(currency)
+                .setUnitAmount(unitAmount)
+                .setRecurring(recurring.build())
+                .setProductData(SessionCreateParams.LineItem.PriceData.ProductData.builder()
+                        .setName(productName)
+                        .build())
+                .build();
+    }
+
+    /**
      * B18：将 Stripe epoch 秒解析为 LocalDateTime（UTC）
      */
     private LocalDateTime parseEpoch(long epochSeconds) {
@@ -294,6 +392,84 @@ public class StripeStrategy implements PaymentStrategy {
             return false;
         } catch (Exception e) {
             logger.error("Stripe 退款异常：orderNo={}", order.getOrderNo(), e);
+            return false;
+        }
+    }
+
+    /**
+     * #26：按订阅 ID 向 Stripe 反查订阅，取回建单时写入的 {@code metadata.order_id}。
+     * 查询失败 / 未配置 / 取不到 order_id 一律返回 empty（不抛异常），由调用方转人工告警。
+     */
+    @Override
+    public Optional<SubscriptionLookup> lookupSubscription(String subscriptionId) {
+        if (apiKey == null || apiKey.isEmpty()) {
+            logger.warn("Stripe 未配置，跳过订阅查询：subId={}", subscriptionId);
+            return Optional.empty();
+        }
+        if (subscriptionId == null || subscriptionId.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            initStripe();
+            com.stripe.model.Subscription sub = com.stripe.model.Subscription.retrieve(subscriptionId);
+            if (sub == null) {
+                return Optional.empty();
+            }
+            Map<String, String> metadata = sub.getMetadata();
+            String orderId = (metadata == null) ? null : metadata.get("order_id");
+            if (orderId == null || orderId.isBlank()) {
+                logger.warn("Stripe 订阅未携带 order_id 元数据，无法自动重修：subId={}", subscriptionId);
+                return Optional.empty();
+            }
+            String status = sub.getStatus();
+            return Optional.of(SubscriptionLookup.builder()
+                    .subscriptionId(subscriptionId)
+                    .orderId(orderId)
+                    .active("active".equals(status) || "trialing".equals(status))
+                    .currentPeriodStart(sub.getCurrentPeriodStart() != null
+                            ? parseEpoch(sub.getCurrentPeriodStart()) : null)
+                    .currentPeriodEnd(sub.getCurrentPeriodEnd() != null
+                            ? parseEpoch(sub.getCurrentPeriodEnd()) : null)
+                    .build());
+        } catch (Exception e) {
+            logger.error("Stripe 订阅查询失败，转人工补录：subId={}", subscriptionId, e);
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * 订阅自助取消（期末生效）：置 Stripe 订阅的 {@code cancel_at_period_end=true}，
+     * 用户已付到期的权益保留到 {@code current_period_end}，到期后由渠道发
+     * {@code customer.subscription.deleted} 走 {@code SubscriptionService} 的期末失效链路。
+     *
+     * <p>只认渠道明确确认：{@code cancelAtPeriodEnd} 回读为 true 才算成功。
+     * 未配置 / 订阅不存在 / 渠道报错一律返回 false（不抛），由调用方转成明确业务错误——
+     * 谎报成功会让用户以为停了续费却仍被扣下一期。
+     */
+    @Override
+    public boolean cancelSubscriptionAtPeriodEnd(String subscriptionId) {
+        if (apiKey == null || apiKey.isEmpty()) {
+            logger.warn("Stripe 未配置，无法取消订阅：subId={}", subscriptionId);
+            return false;
+        }
+        if (subscriptionId == null || subscriptionId.isBlank()) {
+            return false;
+        }
+        try {
+            initStripe();
+            com.stripe.model.Subscription sub = com.stripe.model.Subscription.retrieve(subscriptionId);
+            if (sub == null) {
+                return false;
+            }
+            com.stripe.model.Subscription updated = sub.update(
+                com.stripe.param.SubscriptionUpdateParams.builder().setCancelAtPeriodEnd(true).build());
+            boolean confirmed = updated != null && Boolean.TRUE.equals(updated.getCancelAtPeriodEnd());
+            if (!confirmed) {
+                logger.error("Stripe 订阅取消未被渠道确认，不落库：subId={}", subscriptionId);
+            }
+            return confirmed;
+        } catch (Exception e) {
+            logger.error("Stripe 订阅取消失败：subId={}", subscriptionId, e);
             return false;
         }
     }

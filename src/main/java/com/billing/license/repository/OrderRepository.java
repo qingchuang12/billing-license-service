@@ -29,6 +29,24 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     @Query("SELECT o FROM Order o WHERE o.orderNumber = :orderNumber")
     Optional<Order> findByOrderNumberForUpdate(@Param("orderNumber") String orderNumber);
 
+    /**
+     * #12：OSIV 关闭后事务外不得再触发懒加载，故「要在事务外读行项」的链路必须预加载。
+     *
+     * <p>命中两条链路（都是按硬约束 16 必须留在事务外、不能靠加事务解决的）：
+     * <ul>
+     *   <li>收银台选渠道：{@code selectProvider} 要按行项查套餐周期做渠道能力校验，
+     *       随后支付策略的 {@code resolveRecurringProduct} 也要读行项；</li>
+     *   <li>用户自助退款：{@code RefundPolicy#isSubscriptionOrder} 要读行项判定是否订阅订单。</li>
+     * </ul>
+     * 这里一次性 join fetch 出行项与其产品，而不是让它们随后各自懒加载。
+     */
+    @Query("SELECT DISTINCT o FROM Order o LEFT JOIN FETCH o.orderItems oi LEFT JOIN FETCH oi.product WHERE o.id = :id")
+    Optional<Order> findWithItemsById(@Param("id") UUID id);
+
+    /** 同 {@link #findWithItemsById}，按业务订单号取（自助退款链路用）。 */
+    @Query("SELECT DISTINCT o FROM Order o LEFT JOIN FETCH o.orderItems oi LEFT JOIN FETCH oi.product WHERE o.orderNumber = :orderNumber")
+    Optional<Order> findWithItemsByOrderNumber(@Param("orderNumber") String orderNumber);
+
     java.util.List<Order> findByStatus(Order.OrderStatus status);
 
     /** #9（管理端分页）：按状态过滤并分页，替代「无过滤即 findAll() 全表入内存」。 */

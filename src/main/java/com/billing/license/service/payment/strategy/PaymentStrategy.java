@@ -97,4 +97,37 @@ public interface PaymentStrategy {
     default boolean refundPayment(Order order, String paymentId, java.math.BigDecimal amount) {
         return false;
     }
+
+    /**
+     * #26：按渠道侧订阅 ID 反查订阅（首充回调丢失后的自动重修入口）。
+     *
+     * <p>默认值返回 empty，表示「该渠道不支持查询」——重修路径随即退回人工告警，
+     * 不会误判成「渠道确认无此订阅」。只有能从渠道 API 取回 {@code order_id} 的实现
+     * （Stripe / Paddle）才需要覆写。
+     *
+     * <p>实现要求：查询失败、凭据缺失、订阅不存在一律返回 empty（不抛异常），
+     * 让调用方能安全地把「查不到」统一当作「需人工」处理。
+     *
+     * @param subscriptionId 渠道侧订阅 ID
+     * @return 查到的订阅信息；查不到或不支持时为 empty
+     */
+    default java.util.Optional<SubscriptionLookup> lookupSubscription(String subscriptionId) {
+        return java.util.Optional.empty();
+    }
+
+    /**
+     * 订阅自助取消：通知渠道「本周期结束后不再续费」（期末取消，权益保留到 {@code currentPeriodEnd}）。
+     *
+     * <p>默认值返回 false，表示「该渠道不支持自助取消」；调用方据此拒绝请求，
+     * **不得把 false 当成已取消**——用户以为停了却仍被扣下一期，等同于静默资损（与 #25 缺 price id 拒单同理）。
+     *
+     * <p>实现要求（承继硬约束 16）：渠道 HTTP 一律有超时且在事务外调用；
+     * 渠道返回未确认时返回 false（不抛异常），由调用方转成明确的业务错误。
+     *
+     * @param subscriptionId 渠道侧订阅 ID
+     * @return true 表示渠道已确认期末取消；false 表示渠道未确认 / 不支持
+     */
+    default boolean cancelSubscriptionAtPeriodEnd(String subscriptionId) {
+        return false;
+    }
 }

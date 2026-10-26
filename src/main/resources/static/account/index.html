@@ -76,6 +76,7 @@
 
         <p class="form-note">
           <button type="button" class="linklike" id="showResetBtn" data-i18n="auth.toReset">忘记密码？用邮箱验证码重新设置</button>
+          <button type="button" class="linklike" id="showRegisterBtn" data-i18n="auth.toRegister">还没有账号？注册一个</button>
         </p>
 
         <!-- 二次验证第二步（仅开启 MFA 的账号；密码已过，凭一次性票据换令牌） -->
@@ -129,6 +130,45 @@
             <button type="button" class="linklike" id="backLoginBtn" data-i18n="auth.toLogin">返回登录</button>
           </p>
         </form>
+
+        <!-- 注册（A2）：邮箱验证码 + 密码，成功即返回令牌直接登录 -->
+        <form id="registerForm" hidden novalidate>
+          <p class="panel__desc" data-i18n="reg.desc">
+            用邮箱注册一个账号，即可在这里查看名下的许可证、订阅与订单。注册成功后自动登录。
+          </p>
+          <div class="field">
+            <label class="field__label" for="regEmail" data-i18n="auth.emailLabel">电子邮箱</label>
+            <input class="field__input" id="regEmail" name="email" type="email" inputmode="email"
+                   autocomplete="email" spellcheck="false" required>
+          </div>
+          <div class="field">
+            <label class="field__label" for="regCode" data-i18n="auth.codeLabel">邮箱验证码</label>
+            <div class="field__row">
+              <input class="field__input" id="regCode" name="code" type="text" inputmode="numeric"
+                     maxlength="6" autocomplete="one-time-code" spellcheck="false" required>
+              <button class="btn btn--ghost" id="regSendBtn" type="button" data-i18n="auth.sendCode">发送验证码</button>
+            </div>
+            <p class="field__error" id="regCodeError" role="alert" hidden></p>
+          </div>
+          <div class="field">
+            <label class="field__label" for="regPassword" data-i18n="auth.passwordLabel">密码</label>
+            <input class="field__input" id="regPassword" name="password" type="password"
+                   autocomplete="new-password" required>
+            <p class="field__hint" data-i18n="auth.regPwdHint">8–72 位，须同时包含字母与数字。</p>
+          </div>
+          <div class="field">
+            <label class="field__label" for="regPasswordConfirm" data-i18n="auth.regConfirmLabel">确认密码</label>
+            <input class="field__input" id="regPasswordConfirm" name="passwordConfirm" type="password"
+                   autocomplete="new-password" required>
+          </div>
+          <p class="form-error" id="regError" role="alert" hidden></p>
+          <div class="panel__actions">
+            <button class="btn btn--primary" id="regBtn" type="submit" data-i18n="reg.submit">注册并登录</button>
+          </div>
+          <p class="panel__actions">
+            <button type="button" class="linklike" id="regBackBtn" data-i18n="auth.toLogin">返回登录</button>
+          </p>
+        </form>
       </div>
 
       <!-- ======================= 已登录视图：三个资产区块 ======================= -->
@@ -164,7 +204,10 @@
         <!-- 我的订阅 -->
         <section class="panel asset-panel" id="subPanel" aria-labelledby="subTitle">
           <h2 class="panel__title" id="subTitle" data-i18n="sub.title">我的订阅</h2>
-          <p class="panel__desc" data-i18n="sub.desc">订阅由支付渠道托管续费；取消后本周期结束即失效。</p>
+          <p class="panel__desc">
+            <span data-i18n="sub.desc">订阅由支付渠道托管续费；</span>
+            <b data-i18n="sub.cancelNoteLong">取消是「本周期结束即停」，已付到期的权益会保留到那天，不会当场失效。</b>
+          </p>
           <p class="asset-error" id="subError" role="alert" hidden></p>
           <div class="table-wrap">
             <table class="asset-table">
@@ -174,6 +217,9 @@
                   <th data-i18n="sub.channel">渠道</th>
                   <th data-i18n="sub.status">状态</th>
                   <th data-i18n="sub.period">当前周期</th>
+                  <th data-i18n="sub.nextCharge">下次扣费</th>
+                  <th data-i18n="sub.action">操作</th>
+                  <th data-i18n="order.action">操作</th>
                 </tr>
               </thead>
               <tbody id="subBody"></tbody>
@@ -267,6 +313,23 @@
         </div>
       </div>
 
+      <!-- 取消订阅确认弹层：期末生效，须明示「已付到期的权益不会当场失效」 -->
+      <div class="modal" id="cancelSubModal" hidden>
+        <div class="modal__backdrop" id="cancelSubBackdrop"></div>
+        <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="cancelSubTitle">
+          <h2 class="modal__title" id="cancelSubTitle" data-i18n="cancelSub.title">取消订阅</h2>
+          <p class="modal__desc" id="cancelSubDesc"></p>
+          <p class="form-note" data-i18n="cancelSub.note">
+            取消后本周期不会再自动扣费，当前已付到期的权益保留到周期结束那天。已取消的订阅无法恢复，如需继续使用请重新购买。
+          </p>
+          <p class="form-error" id="cancelSubError" role="alert" hidden></p>
+          <div class="modal__actions">
+            <button class="btn btn--ghost" id="cancelSubCancelBtn" type="button" data-i18n="cancelSub.cancel">暂不取消</button>
+            <button class="btn btn--primary" id="cancelSubConfirmBtn" type="button" data-i18n="cancelSub.confirm">确认取消</button>
+          </div>
+        </div>
+      </div>
+
       <!-- 屏幕阅读器状态播报区 -->
       <p class="sr-only" id="liveRegion" role="status" aria-live="polite"></p>
     </div>
@@ -281,6 +344,6 @@
     </div>
   </footer>
 
-  <script src="account.js?v=20260925-1"></script>
+  <script src="account.js?v=20261026-1"></script>
 </body>
 </html>

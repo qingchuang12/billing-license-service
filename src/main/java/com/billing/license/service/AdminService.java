@@ -76,6 +76,7 @@ public class AdminService {
      * 状态过滤走 {@code findByStatus} 的 SQL 条件而不是内存过滤。
      * 按订单号 / 订单 ID 精确命中时最多一行，分页参数只影响返回切片的元数据。
      */
+    @Transactional(readOnly = true)
     public Page<OrderResponse> listOrders(Order.OrderStatus status, String orderNumber, String orderId,
                                           Pageable pageable) {
         Pageable sorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
@@ -120,6 +121,7 @@ public class AdminService {
      * <p>#9：分页 + 状态下推。原先无过滤走 {@code findAll()} 全表入内存、有过滤也在内存里按状态筛；
      * 现状态与主体条件一并下推到 SQL，并按签发时间倒序分页（与 {@code /api/admin/users} 同口径）。
      */
+    @Transactional(readOnly = true)
     public Page<LicenseResponse> listLicenses(String customerEmail, String orderNumber, String status,
                                               Pageable pageable) {
         License.LicenseStatus target = null;
@@ -172,7 +174,17 @@ public class AdminService {
     /**
      * 全额退款（管理端既有入口）：委托 {@link #refundOrder(String, String, BigDecimal)} 并传 null 金额，
      * 行为与 plan-4.1 引入部分退款之前完全一致。
+     *
+     * <p>#12 顺带坐实的既有隐患：本方法原先**没有事务注解**，而对 3 参版本的调用是同类内部调用
+     * （不经过 AOP 代理），故整条管理端退款链路实际一直跑在无事务状态下——
+     * 全靠 OSIV 撑着不报错。关掉 OSIV 后 {@code findByOrderNumber} 一类的查询随即失去会话语义，
+     * 且「渠道退款成功但落库失败」本就没有回滚可言。在此显式开事务。
+     *
+     * <p>⚠️ 仍守硬约束 15：本事务**不锁订单行**（串行化令牌是 {@code payments} 行，
+     * 由 3 参版本内的 {@code findByOrderIdStrForUpdate} 取），否则会与
+     * {@code persistRefundFailed} 的 REQUIRES_NEW 内层事务形成互相等锁的永久挂起。
      */
+    @Transactional
     public OrderResponse refundOrder(String orderNumber, String reason) {
         return refundOrder(orderNumber, reason, null);
     }
@@ -394,6 +406,7 @@ public class AdminService {
      * EXPIRED / REVOKED / REISSUED 会直接抛业务异常（400），而售后排查恰恰要看**失效件**
      * （为何失效、何时被吊销、换机重发到哪条）。本方法**不过滤状态**，返回脱敏管理视图。
      */
+    @Transactional(readOnly = true)
     public LicenseResponse getLicenseDetail(String licenseKey) {
         License license = licenseRepository.findByLicenseKey(licenseKey)
             .orElseThrow(() -> new BusinessException("LICENSE_NOT_FOUND", "License not found: " + licenseKey));

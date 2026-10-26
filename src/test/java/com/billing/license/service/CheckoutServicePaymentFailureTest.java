@@ -66,6 +66,7 @@ class CheckoutServicePaymentFailureTest {
 
         when(checkoutSessionRepository.findByCheckoutId("chk_1")).thenReturn(Optional.of(session));
         when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+        when(orderRepository.findWithItemsById(order.getId())).thenReturn(Optional.of(order));
         when(paymentServiceFactory.getStrategy(PaymentMethod.ALIPAY)).thenReturn(mock(PaymentStrategy.class));
 
         PaymentResponse failed = new PaymentResponse();
@@ -88,6 +89,7 @@ class CheckoutServicePaymentFailureTest {
 
         when(checkoutSessionRepository.findByCheckoutId("chk_1")).thenReturn(Optional.of(session));
         when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+        when(orderRepository.findWithItemsById(order.getId())).thenReturn(Optional.of(order));
         when(paymentServiceFactory.getStrategy(PaymentMethod.ALIPAY)).thenReturn(mock(PaymentStrategy.class));
 
         PaymentResponse ok = new PaymentResponse();

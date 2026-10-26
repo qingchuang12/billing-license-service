@@ -2,7 +2,9 @@ package com.billing.license.infrastructure.crypto;
 
 import com.billing.license.entity.License;
 import com.billing.license.entity.Product;
+import com.billing.license.entity.ProductProfile;
 import com.billing.license.infrastructure.kms.KmsService;
+import com.billing.license.repository.ProductProfileRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +28,7 @@ import java.util.Map;
 public class LicenseIssuer {
 
     private final KmsService kmsService;
+    private final ProductProfileRepository productProfileRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
@@ -60,13 +63,14 @@ public class LicenseIssuer {
                 if (product.getTier() != null) {
                     payload.put("plan", product.getTier().name());
                 }
-                if (product.getFeatures() != null && !product.getFeatures().isEmpty()) {
+                String features = resolveFeatures(product);
+                if (features != null && !features.isEmpty()) {
                     try {
-                        payload.put("feat", objectMapper.readValue(product.getFeatures(), List.class));
+                        payload.put("feat", objectMapper.readValue(features, List.class));
                     } catch (Exception e) {
                         // A4：非法 JSON 不再静默丢弃——明确告警且不写入 feat 键；签发流程继续（不因权益描述异常阻断售卖）
-                        log.warn("产品 features 非合法 JSON 数组，已跳过 feat 键：sku={}, features={}",
-                            product.getSku(), product.getFeatures(), e);
+                        log.warn("产品档案 features 非合法 JSON 数组，已跳过 feat 键：sku={}, features={}",
+                            product.getSku(), features, e);
                     }
                 }
                 // A3：更新门槛——键缺失即「不限制」，故为 null 或 <= 0 时均不写入；
@@ -184,6 +188,16 @@ public class LicenseIssuer {
         }
     }
     
+    /** 权益属于产品档案：按产品的 product_code 读取，缺失档案则不写 feat 键。 */
+    private String resolveFeatures(Product product) {
+        String code = product.getProductCode();
+        if (code == null || code.isBlank()) {
+            return null;
+        }
+        ProductProfile profile = productProfileRepository.findByProductCodeIgnoreCase(code).orElse(null);
+        return profile != null ? profile.getFeatures() : null;
+    }
+
     private String getJwsAlgorithm() {
         String alg = kmsService.getAlgorithm();
         return switch (alg) {

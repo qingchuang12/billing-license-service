@@ -21,7 +21,7 @@
 （`application.yml` 中 `spring.flyway.enabled=true`，`locations=classpath:db/migration`）。
 **无需手动执行 SQL**；重新部署即自动增量迁移。
 
-### 迁移清单（V1–V11，禁止合并、禁止首次部署后修改）
+### 迁移清单（V1–V13，禁止合并、禁止首次部署后修改）
 
 | 版本 | 主题 | 关键内容 |
 |---|---|---|
@@ -36,8 +36,10 @@
 | V9 | 机器码索引（S1） | `licenses.machine_code` / `orders.machine_code` 查询索引；`license_events.event_type` 注释补 `BOUND_BY_REPORT` / `PENDING_QUERIED` |
 | V10 | 产品维度（D2） | `products.product_code`（收银台按产品码过滤目录，现有商品回填 `ai-tools`） |
 | V11 | 机器码唯一真相回填（E4 审计丙） | **数据回填、不动 schema**：把「机器码只落在 `orders.machine_code`」的历史签发件抄平到 `licenses.machine_code`，并改写该列注释为唯一真相口径。配套退役了 `License#getMachineCode()` 的订单回落 |
+| V12 | 热路径查询索引 | 4 条审计点名的查询索引（详见 `V12__hot_path_query_indexes.sql`） |
+| V13 | 产品档案（产品 → 套餐两层） | 建 `product_profiles`（按 `product_code` 唯一，含名称/描述/权益）；按 `product_code` 从 `products` 回填后删除 `products.features`；`products` 新增 `recommended`。⚠ `gen_random_uuid()` 需 PostgreSQL 13+ |
 
-> ⚠️ **迁移文件一经首次部署即被 Flyway 校验和锁定**：之后不得再编辑内容（变更请新建版本号，下一个可用 **V12**）。
+> ⚠️ **迁移文件一经首次部署即被 Flyway 校验和锁定**：之后不得再编辑内容（变更请新建版本号，下一个可用 **V14**）。
 > 上线前如需补充头注释可直接修改；上线后修改会导致启动失败。
 
 查看已执行迁移：

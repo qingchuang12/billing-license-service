@@ -7,6 +7,7 @@ import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.*;
 import com.billing.license.service.*;
 import com.billing.license.service.payment.strategy.PaymentMethod;
+import com.billing.license.service.payment.strategy.PaymentStrategy;
 import com.billing.license.service.risk.RateLimitService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,6 +15,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -41,11 +45,20 @@ class AccountAssetControllerTest {
     private final AdminService adminService = mock(AdminService.class);
     private final RateLimitService rateLimitService = mock(RateLimitService.class);
     private final BillingProperties billingProperties = new BillingProperties();
+    /** 订阅自助取消用的策略表（可变，按用例塞桩） */
+    private final List<PaymentStrategy> paymentStrategies = new java.util.ArrayList<>();
+    /** 单测内直接执行回调，不做真实事务管理 */
+    private final TransactionOperations transactionOperations = new TransactionOperations() {
+        @Override
+        public <T> T execute(TransactionCallback<T> action) {
+            return action.doInTransaction(new SimpleTransactionStatus());
+        }
+    };
 
     private final AccountAssetService service = new AccountAssetService(
             licenseRepository, subscriptionRepository, orderRepository,
             productRepository, userRepository, new OrderService(orderRepository),
-            billingProperties);
+            billingProperties, paymentStrategies, transactionOperations);
     private final AccountRefundService accountRefundService = new AccountRefundService(
             orderRepository, licenseRepository, adminService, rateLimitService, billingProperties);
     /** plan-7.0 决策 B6：账号页自助解绑（换机恢复路径） */
@@ -244,7 +257,8 @@ class AccountAssetControllerTest {
     void refund_returnsActualRefundedAmount() {
         Order order = sampleOrder();
         order.setCustomerId(USER_ID);
-        when(orderRepository.findByOrderNumber("ORD20260901100000123")).thenReturn(Optional.of(order));
+        // #12：自助退款链路改用预加载行项的查询（事务外不得懒加载）
+        when(orderRepository.findWithItemsByOrderNumber("ORD20260901100000123")).thenReturn(Optional.of(order));
         when(licenseRepository.findByOrderId(order.getId())).thenReturn(List.of(sampleLicense()));
         when(adminService.refundOrder(eq("ORD20260901100000123"), eq("买错了"), any(BigDecimal.class)))
                 .thenReturn(OrderResponse.builder()
@@ -300,5 +314,105 @@ class AccountAssetControllerTest {
                 () -> controller.unbindMyLicense("LIC-FOREIGN"));
 
         assertEquals("LICENSE_NOT_FOUND", ex.getErrorCode());
+    }
+
+    /* ==================== 订阅自助取消（期末生效） ==================== */
+
+    private static final UUID SUB_ID = UUID.fromString("33333333-3333-3333-3333-333333333333");
+
+    private Subscription ownedSubscription(Subscription.SubscriptionStatus status, boolean cancelAtPeriodEnd) {
+        Subscription sub = sampleSubscription();
+        sub.setId(SUB_ID);
+        sub.setProviderSubscriptionId("sub_channel_1");
+        sub.setStatus(status);
+        sub.setCancelAtPeriodEnd(cancelAtPeriodEnd);
+        return sub;
+    }
+
+    /** 桩策略：按 provider 匹配，取消结果由 confirmed 决定 */
+    private PaymentStrategy stripeStub(boolean confirmed) {
+        PaymentStrategy strategy = mock(PaymentStrategy.class);
+        when(strategy.getPaymentMethod()).thenReturn(PaymentMethod.STRIPE);
+        when(strategy.cancelSubscriptionAtPeriodEnd("sub_channel_1")).thenReturn(confirmed);
+        return strategy;
+    }
+
+    @Test
+    void cancelMySubscription_persistsFlag_whenChannelConfirms() {
+        paymentStrategies.add(stripeStub(true));
+        when(subscriptionRepository.findById(SUB_ID))
+                .thenReturn(Optional.of(ownedSubscription(Subscription.SubscriptionStatus.ACTIVE, false)));
+
+        ResponseEntity<SubscriptionView> resp = controller.cancelMySubscription(SUB_ID);
+
+        assertEquals(200, resp.getStatusCode().value());
+        assertTrue(resp.getBody().getCancelAtPeriodEnd());
+        verify(subscriptionRepository).save(any(Subscription.class));
+    }
+
+    @Test
+    void cancelMySubscription_doesNotPersist_whenChannelRejects() {
+        paymentStrategies.add(stripeStub(false));
+        when(subscriptionRepository.findById(SUB_ID))
+                .thenReturn(Optional.of(ownedSubscription(Subscription.SubscriptionStatus.ACTIVE, false)));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> controller.cancelMySubscription(SUB_ID));
+
+        assertEquals("SUBSCRIPTION_CANCEL_FAILED", ex.getErrorCode());
+        /* 渠道没确认就绝不能落库：界面显示已取消而渠道仍在扣款＝资损 */
+        verify(subscriptionRepository, never()).save(any(Subscription.class));
+    }
+
+    @Test
+    void cancelMySubscription_notFound_forForeignSubscription() {
+        Subscription foreign = ownedSubscription(Subscription.SubscriptionStatus.ACTIVE, false);
+        foreign.setCustomerId(UUID.fromString("99999999-9999-9999-9999-999999999999"));
+        when(subscriptionRepository.findById(SUB_ID)).thenReturn(Optional.of(foreign));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> controller.cancelMySubscription(SUB_ID));
+
+        assertEquals("SUBSCRIPTION_NOT_FOUND", ex.getErrorCode());
+        /* 越权一律不落库、不触达渠道 */
+        verify(subscriptionRepository, never()).save(any(Subscription.class));
+    }
+
+    @Test
+    void cancelMySubscription_isIdempotent_whenAlreadyCanceled() {
+        paymentStrategies.add(stripeStub(true));
+        when(subscriptionRepository.findById(SUB_ID))
+                .thenReturn(Optional.of(ownedSubscription(Subscription.SubscriptionStatus.CANCELED, true)));
+
+        ResponseEntity<SubscriptionView> resp = controller.cancelMySubscription(SUB_ID);
+
+        assertEquals(200, resp.getStatusCode().value());
+        /* 终态幂等：不再打扰渠道、不再写库 */
+        verify(subscriptionRepository, never()).save(any(Subscription.class));
+        verify(paymentStrategies.get(0), never()).cancelSubscriptionAtPeriodEnd(anyString());
+    }
+
+    @Test
+    void cancelMySubscription_rejectsPendingSubscription() {
+        paymentStrategies.add(stripeStub(true));
+        when(subscriptionRepository.findById(SUB_ID))
+                .thenReturn(Optional.of(ownedSubscription(Subscription.SubscriptionStatus.PENDING, false)));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> controller.cancelMySubscription(SUB_ID));
+
+        assertEquals("SUBSCRIPTION_NOT_CANCELABLE", ex.getErrorCode());
+        verify(subscriptionRepository, never()).save(any(Subscription.class));
+    }
+
+    @Test
+    void cancelMySubscription_rejectsWhenProviderUnsupported() {
+        when(subscriptionRepository.findById(SUB_ID))
+                .thenReturn(Optional.of(ownedSubscription(Subscription.SubscriptionStatus.ACTIVE, false)));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> controller.cancelMySubscription(SUB_ID));
+
+        assertEquals("SUBSCRIPTION_PROVIDER_UNSUPPORTED", ex.getErrorCode());
     }
 }

@@ -2,6 +2,7 @@ package com.billing.license.service;
 
 import com.billing.license.dto.RedeemCodeRequest;
 import com.billing.license.entity.License;
+import com.billing.license.entity.Order;
 import com.billing.license.entity.Product;
 import com.billing.license.entity.RedeemCode;
 import com.billing.license.exception.BusinessException;
@@ -17,6 +18,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
@@ -80,6 +82,29 @@ class RedeemCodeServiceTest {
             return l;
         });
         when(redeemCodeRepository.save(any(RedeemCode.class))).thenAnswer(i -> i.getArgument(0));
+    }
+
+    @Test
+    void redeemCode_fromOrder_shouldLinkLicenseToOrder() {
+        RedeemCode redeemCode = RedeemCode.builder()
+            .code("CODE-ORDER")
+            .status(RedeemCode.RedeemCodeStatus.UNUSED)
+            .product(Product.builder().sku("pro-sub").licenseDurationDays(31).build())
+            .orderId("ORD-SUB-1")
+            .maxUses(1).currentUses(0)
+            .build();
+        when(redeemCodeRepository.findByCode("CODE-ORDER")).thenReturn(Optional.of(redeemCode));
+        when(licenseService.bindToMachine(any(License.class), any(), any())).thenAnswer(i -> i.getArgument(0));
+        when(redeemCodeRepository.save(any(RedeemCode.class))).thenAnswer(i -> i.getArgument(0));
+        when(customerIdentityService.resolveOrCreate("member@example.com")).thenReturn(UUID.randomUUID());
+        Order order = Order.builder().id(UUID.randomUUID()).orderNumber("ORD-SUB-1").build();
+        when(orderRepository.findByOrderNumber("ORD-SUB-1")).thenReturn(Optional.of(order));
+
+        License license = redeemCodeService.redeemCode(RedeemCodeRequest.builder()
+            .code("CODE-ORDER").customerEmail("member@example.com").build());
+
+        // 订单发货生成的兑换码：License 必须挂回原订单，订阅续费/取消才能按订单找到这张证
+        assertSame(order, license.getOrder());
     }
 
     @Test

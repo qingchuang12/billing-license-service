@@ -5,6 +5,7 @@ import com.billing.license.dto.CheckoutResponse;
 import com.billing.license.dto.OrderResponse;
 import com.billing.license.dto.SelectProviderRequest;
 import com.billing.license.entity.*;
+import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.*;
 import com.billing.license.service.payment.PaymentService;
 import com.billing.license.service.payment.impl.PaymentServiceFactory;
@@ -87,7 +88,8 @@ class CheckoutServiceTest {
     @Test
     void createCheckout_domestic_shouldReturnDomesticMethods() {
         when(productRepository.findBySku("pro")).thenReturn(Optional.of(product));
-        when(paymentServiceFactory.getDomesticMethods()).thenReturn(List.of(PaymentMethod.ALIPAY, PaymentMethod.WECHAT_PAY));
+        when(paymentServiceFactory.getEnabledMethods(eq(true), any()))
+            .thenReturn(List.of(PaymentMethod.ALIPAY, PaymentMethod.WECHAT_PAY));
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
         when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
 
@@ -104,7 +106,8 @@ class CheckoutServiceTest {
     @Test
     void createCheckout_international_shouldReturnInternationalMethods() {
         when(productRepository.findBySku("pro")).thenReturn(Optional.of(product));
-        when(paymentServiceFactory.getInternationalMethods()).thenReturn(List.of(PaymentMethod.STRIPE, PaymentMethod.PADDLE, PaymentMethod.PAYPAL));
+        when(paymentServiceFactory.getEnabledMethods(eq(false), any()))
+            .thenReturn(List.of(PaymentMethod.STRIPE, PaymentMethod.PADDLE, PaymentMethod.PAYPAL));
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
         when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
 
@@ -134,8 +137,8 @@ class CheckoutServiceTest {
             .name("Pro").price(new BigDecimal("99.00"))
             .priceCny(new BigDecimal("712.80")).priceUsd(new BigDecimal("99.00")).active(true).build();
         when(productRepository.findBySku("pro")).thenReturn(Optional.of(dual));
-        when(paymentServiceFactory.getDomesticMethods()).thenReturn(List.of(PaymentMethod.ALIPAY));
-        when(paymentServiceFactory.getInternationalMethods()).thenReturn(List.of(PaymentMethod.STRIPE));
+        when(paymentServiceFactory.getEnabledMethods(eq(true), any())).thenReturn(List.of(PaymentMethod.ALIPAY));
+        when(paymentServiceFactory.getEnabledMethods(eq(false), any())).thenReturn(List.of(PaymentMethod.STRIPE));
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
         when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
 
@@ -168,7 +171,7 @@ class CheckoutServiceTest {
         UUID resolvedUserId = UUID.randomUUID();
         when(customerIdentityService.resolveOrCreate("only@email.com")).thenReturn(resolvedUserId);
         when(productRepository.findBySku("pro")).thenReturn(Optional.of(product));
-        when(paymentServiceFactory.getDomesticMethods()).thenReturn(List.of(PaymentMethod.ALIPAY));
+        when(paymentServiceFactory.getEnabledMethods(eq(true), any())).thenReturn(List.of(PaymentMethod.ALIPAY));
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
         when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
 
@@ -203,6 +206,7 @@ class CheckoutServiceTest {
 
         when(checkoutSessionRepository.findByCheckoutId("chk_1")).thenReturn(Optional.of(session));
         when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+        when(orderRepository.findWithItemsById(order.getId())).thenReturn(Optional.of(order));
         when(paymentServiceFactory.getStrategy(PaymentMethod.ALIPAY)).thenReturn(mock(com.billing.license.service.payment.strategy.PaymentStrategy.class));
         PaymentResponse pr = new PaymentResponse();
         pr.setPayUrl("https://pay.example.com/x");
@@ -214,6 +218,96 @@ class CheckoutServiceTest {
 
         assertEquals("redirect", resp.getPaymentMode());
         assertEquals("https://pay.example.com/x", resp.getPayUrl());
+    }
+
+    @Test
+    void createCheckout_shouldRejectWhenNoChannelSupportsPlanCycle() {
+        Product monthly = Product.builder().id(UUID.randomUUID()).sku("pro-monthly")
+            .name("Pro 月付").priceCny(new BigDecimal("19.00")).priceUsd(new BigDecimal("2.99"))
+            .billingCycle(Product.BillingCycle.MONTHLY).active(true).build();
+        when(productRepository.findBySku("pro-monthly")).thenReturn(Optional.of(monthly));
+        when(paymentServiceFactory.getEnabledMethods(true, Product.BillingCycle.MONTHLY)).thenReturn(List.of());
+
+        BusinessException ex = assertThrows(BusinessException.class, () ->
+            checkoutService.createCheckout(CheckoutRequest.builder()
+                .productId("pro-monthly").currency(Currency.CNY).locale("zh-CN")
+                .customerEmail("buyer@example.com").build()));
+
+        assertEquals("NO_PAYMENT_METHOD", ex.getErrorCode(), "国内渠道不支持订阅周期时应拒绝下单");
+    }
+
+    @Test
+    void selectProvider_shouldRejectChannelThatCannotSellPlanCycle() {
+        Product monthly = Product.builder().id(UUID.randomUUID()).sku("pro-monthly")
+            .name("Pro 月付").billingCycle(Product.BillingCycle.MONTHLY).active(true).build();
+        Order order = Order.builder().id(UUID.randomUUID()).orderNumber("ORD-M")
+            .totalAmount(new BigDecimal("19.00")).currency(Currency.CNY).build();
+        order.setOrderItems(List.of(OrderItem.builder().order(order).product(monthly).quantity(1).build()));
+        CheckoutSession session = CheckoutSession.builder()
+            .checkoutId("chk_m").orderId(order.getId()).orderNumber("ORD-M").build();
+
+        when(checkoutSessionRepository.findByCheckoutId("chk_m")).thenReturn(Optional.of(session));
+        when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+        when(orderRepository.findWithItemsById(order.getId())).thenReturn(Optional.of(order));
+
+        BusinessException ex = assertThrows(BusinessException.class, () ->
+            checkoutService.selectProvider("chk_m",
+                SelectProviderRequest.builder().provider("alipay").build()));
+
+        assertEquals("PROVIDER_NOT_SUPPORTED_FOR_PLAN", ex.getErrorCode());
+        verify(paymentService, never()).requestPayment(any(), any());
+    }
+
+    /**
+     * #19：同一 checkoutId 的并发重复选择必须串行化——后到者复用既有支付入口，不得各建一个收银台。
+     */
+    @Test
+    void selectProvider_concurrentDuplicateClicks_shouldCreatePaymentOnlyOnce() throws Exception {
+        Order order = Order.builder().id(UUID.randomUUID()).orderNumber("ORD-1")
+            .totalAmount(new BigDecimal("99.00")).currency(Currency.CNY).build();
+        CheckoutSession session = CheckoutSession.builder()
+            .checkoutId("chk_1").orderId(order.getId()).orderNumber("ORD-1").build();
+
+        when(checkoutSessionRepository.findByCheckoutId("chk_1")).thenReturn(Optional.of(session));
+        when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+        when(orderRepository.findWithItemsById(order.getId())).thenReturn(Optional.of(order));
+        when(paymentServiceFactory.getStrategy(PaymentMethod.ALIPAY))
+            .thenReturn(mock(com.billing.license.service.payment.strategy.PaymentStrategy.class));
+        when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
+
+        java.util.concurrent.CountDownLatch inChannel = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        when(paymentService.requestPayment(any(Order.class), eq(PaymentMethod.ALIPAY))).thenAnswer(inv -> {
+            calls.incrementAndGet();
+            inChannel.countDown();
+            release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            PaymentResponse pr = new PaymentResponse();
+            pr.setPaymentId("pay_1");
+            pr.setPayUrl("https://pay.example.com/x");
+            return pr;
+        });
+
+        SelectProviderRequest sel = SelectProviderRequest.builder().provider("alipay").build();
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.Future<CheckoutResponse> first =
+                pool.submit(() -> checkoutService.selectProvider("chk_1", sel));
+            assertTrue(inChannel.await(5, java.util.concurrent.TimeUnit.SECONDS), "首个请求应已进入渠道调用");
+            java.util.concurrent.Future<CheckoutResponse> second =
+                pool.submit(() -> checkoutService.selectProvider("chk_1", sel));
+            release.countDown();
+            CheckoutResponse r1 = first.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            CheckoutResponse r2 = second.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertEquals("https://pay.example.com/x", r1.getPayUrl());
+            assertEquals("https://pay.example.com/x", r2.getPayUrl(), "后到者应复用既有支付入口，不新建收银台");
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+
+        assertEquals(1, calls.get(), "并发连点只能创建一个真实收银台（两笔都付即双收）");
+        assertTrue(checkoutLockTable().isEmpty(), "临界区退出后 checkout 锁条目必须摘除");
     }
 
     /**
@@ -253,6 +347,7 @@ class CheckoutServiceTest {
 
         when(checkoutSessionRepository.findByCheckoutId("chk_1")).thenReturn(Optional.of(session));
         when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+        when(orderRepository.findWithItemsById(order.getId())).thenReturn(Optional.of(order));
         when(paymentServiceFactory.getStrategy(PaymentMethod.ALIPAY)).thenReturn(mock(com.billing.license.service.payment.strategy.PaymentStrategy.class));
         PaymentResponse pr = new PaymentResponse();
         pr.setPayUrl("https://pay.example.com/x");
@@ -305,6 +400,12 @@ class CheckoutServiceTest {
     @SuppressWarnings("unchecked")
     private java.util.Map<String, ?> lockTable() throws Exception {
         java.lang.reflect.Field f = CheckoutService.class.getDeclaredField("fulfillmentLocks");
+        f.setAccessible(true);
+        return (java.util.Map<String, ?>) f.get(checkoutService);
+    }
+
+    private java.util.Map<String, ?> checkoutLockTable() throws Exception {
+        java.lang.reflect.Field f = CheckoutService.class.getDeclaredField("checkoutLocks");
         f.setAccessible(true);
         return (java.util.Map<String, ?>) f.get(checkoutService);
     }

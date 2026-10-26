@@ -2,6 +2,9 @@ package com.billing.license.service.payment.impl;
 
 import com.billing.license.entity.Currency;
 import com.billing.license.entity.Order;
+import com.billing.license.entity.OrderItem;
+import com.billing.license.entity.Product;
+import com.billing.license.exception.BusinessException;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentStatus;
 import com.billing.license.service.payment.strategy.WebhookPayload;
@@ -172,5 +175,80 @@ class PaddleStrategyTest {
         assertEquals("sub_abc", result.getSubscriptionId());
         assertEquals(LocalDateTime.of(2023, 1, 1, 0, 0), result.getCurrentPeriodStart());
         assertEquals(LocalDateTime.of(2023, 2, 1, 0, 0), result.getCurrentPeriodEnd());
+    }
+
+    // ===== #25 收银台真订阅（Paddle 侧） =====
+
+    private static Order orderWithProduct(Product product) {
+        Order order = new Order();
+        order.setOrderNumber("ORD-PADDLE-SUB");
+        order.setTitle("Pro 月付");
+        order.setTotalAmount(new BigDecimal("9.99"));
+        order.setCurrency(Currency.USD);
+        order.setOrderItems(List.of(OrderItem.builder().product(product).quantity(1).build()));
+        return order;
+    }
+
+    @Test
+    void buildCreateTransactionBody_shouldUseCatalogPriceId_whenRecurringCycle() {
+        // #25：Paddle 只认 catalog price_id，带 price_id 的交易由 Paddle 自动建订阅；
+        // 此时不得再带 ad-hoc price（两者互斥，同传会 422），也不再声明 tax_mode（订阅由 Paddle 计税）。
+        Product monthly = Product.builder()
+                .sku("ai-tools-pro-monthly")
+                .billingCycle(Product.BillingCycle.MONTHLY)
+                .paddlePriceId("pri_01h123")
+                .build();
+
+        Map<String, Object> body = strategy.buildCreateTransactionBody(orderWithProduct(monthly));
+        Map<String, Object> item = ((List<Map<String, Object>>) body.get("items")).get(0);
+
+        assertEquals("pri_01h123", item.get("price_id"));
+        assertNull(item.get("price"), "订阅下单不得再带 ad-hoc price");
+        assertNull(body.get("tax_mode"), "订阅由 Paddle 计税，不应声明 tax_mode");
+        // custom_data.order_id 是后续 subscription.* 事件回查订单的唯一依据
+        assertEquals("ORD-PADDLE-SUB", ((Map<?, ?>) body.get("custom_data")).get("order_id"));
+    }
+
+    @Test
+    void buildCreateTransactionBody_shouldReject_whenRecurringCycleWithoutPriceId() {
+        // #25：缺 catalog price id 必须拒单——静默回退 ad-hoc 会让用户付了钱却没有自动续费
+        Product yearly = Product.builder()
+                .sku("ai-tools-pro-yearly")
+                .billingCycle(Product.BillingCycle.YEARLY)
+                .build();
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> strategy.buildCreateTransactionBody(orderWithProduct(yearly)));
+        assertEquals("PADDLE_PRICE_ID_MISSING", ex.getErrorCode());
+    }
+
+    @Test
+    void buildCreateTransactionBody_shouldKeepAdHocPrice_whenOneTimeCycle() {
+        // 一次性买断维持原行为：ad-hoc price + tax_mode=external
+        Product buyout = Product.builder()
+                .sku("ai-tools-pro-buyout")
+                .billingCycle(Product.BillingCycle.ONE_TIME)
+                .paddlePriceId("pri_unused")
+                .build();
+
+        Map<String, Object> body = strategy.buildCreateTransactionBody(orderWithProduct(buyout));
+        Map<String, Object> item = ((List<Map<String, Object>>) body.get("items")).get(0);
+
+        assertNull(item.get("price_id"), "一次性下单不得带 price_id");
+        assertEquals("999", ((Map<?, ?>) ((Map<?, ?>) item.get("price")).get("unit_price")).get("amount"));
+        assertEquals("external", body.get("tax_mode"));
+    }
+
+    @Test
+    void resolveRecurringProduct_shouldIgnoreLifetimeAndNullItems() {
+        // LIFETIME 属买断口径；无行项（老订单/直建订单）视为一次性，不进订阅分支
+        assertNull(strategy.resolveRecurringProduct(orderWithProduct(
+                Product.builder().billingCycle(Product.BillingCycle.LIFETIME).build())));
+
+        Order noItems = new Order();
+        noItems.setOrderNumber("ORD-NO-ITEM");
+        noItems.setTotalAmount(new BigDecimal("1"));
+        noItems.setCurrency(Currency.USD);
+        assertNull(strategy.resolveRecurringProduct(noItems));
     }
 }

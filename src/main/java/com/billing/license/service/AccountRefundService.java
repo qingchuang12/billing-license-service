@@ -43,7 +43,9 @@ public class AccountRefundService {
      * @return 实退金额与退款后状态（若发生降级全额退，回报的是实际全额）
      */
     public UserRefundResponse requestRefund(UUID userId, String orderNumber, String reason) {
-        Order order = orderRepository.findByOrderNumber(orderNumber)
+        // #12：退款折算要读订单行项判定是否订阅订单（RefundPolicy#isSubscriptionOrder），
+        // 而本方法不开事务（OSIV 已关闭），故取订单时一并 join fetch 出行项。
+        Order order = orderRepository.findWithItemsByOrderNumber(orderNumber)
             .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "Order not found: " + orderNumber));
 
         // 归属校验（安全关键）：非本人订单一律按「不存在」返回，不泄露他人订单的存在性

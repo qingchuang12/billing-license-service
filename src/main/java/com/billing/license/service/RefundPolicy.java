@@ -2,7 +2,6 @@ package com.billing.license.service;
 
 import com.billing.license.entity.License;
 import com.billing.license.entity.Order;
-import com.billing.license.entity.Product;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -10,7 +9,6 @@ import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 
 /**
  * 用户端退款折算内核（plan-4.1）：**全周期线性折算** + 资格判定。
@@ -32,13 +30,6 @@ import java.util.Set;
  * <p>纯计算、无 Spring 依赖，便于直接单测。
  */
 public final class RefundPolicy {
-
-    /**
-     * 订阅类计费周期：渠道侧无「发起取消订阅」的调用能力（仅处理入向 webhook 的 canceled 事件），
-     * 退款而不取消订阅会让用户拿回本期费用、渠道继续扣款，属资损，故不开放自助退款。
-     */
-    private static final Set<Product.BillingCycle> SUBSCRIPTION_CYCLES = Set.of(
-        Product.BillingCycle.MONTHLY, Product.BillingCycle.QUARTERLY, Product.BillingCycle.YEARLY);
 
     /** 可退额小数位：与当前支持币种（CNY / USD）小数位一致 */
     private static final int AMOUNT_SCALE = 2;
@@ -137,6 +128,7 @@ public final class RefundPolicy {
         }
         return order.getOrderItems().stream()
             .filter(item -> item != null && item.getProduct() != null)
-            .anyMatch(item -> SUBSCRIPTION_CYCLES.contains(item.getProduct().getBillingCycle()));
+            .anyMatch(item -> item.getProduct().getBillingCycle() != null
+                && item.getProduct().getBillingCycle().isRecurring());
     }
 }

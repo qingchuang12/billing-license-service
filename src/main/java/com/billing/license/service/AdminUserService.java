@@ -8,7 +8,6 @@ import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.LicenseRepository;
 import com.billing.license.repository.OrderRepository;
 import com.billing.license.repository.UserRepository;
-import com.billing.license.security.AdminStepUpService;
 import com.billing.license.security.PasswordPolicy;
 import com.billing.license.service.notification.EmailNotificationService;
 import jakarta.persistence.criteria.Predicate;
@@ -64,7 +63,6 @@ public class AdminUserService {
     private final OrderRepository orderRepository;
     private final PasswordEncoder passwordEncoder;
     private final EmailNotificationService emailNotificationService;
-    private final AdminStepUpService stepUpService;
     private final AccountProperties properties;
 
     // ==================== 列表查询 ====================
@@ -118,14 +116,11 @@ public class AdminUserService {
     // ==================== 角色 / 状态 ====================
 
     /**
-     * 变更角色（USER ↔ ADMIN）。
-     *
-     * <p>操作者已开启 MFA 时须携带与 {@code CHANGE_USER_ROLE} 绑定的二次确认令牌（P2 step-up）。
+     * 变更角色（USER ↔ ADMIN）。数据修改只在前端确认一次，不再要求第二因子（MFA 仅用于登录）。
      */
     @Transactional
-    public AdminUserView changeRole(UUID operatorId, UUID targetUserId, User.UserRole newRole, String stepUpToken) {
+    public AdminUserView changeRole(UUID operatorId, UUID targetUserId, User.UserRole newRole) {
         User target = requireTarget(targetUserId, operatorId);
-        requireStepUp(operatorId, AdminStepUpService.ACTION_CHANGE_USER_ROLE, stepUpToken);
         if (target.getRole() == newRole) {
             return AdminUserView.from(target); // 幂等：无变化直接返回，不刷新令牌
         }
@@ -141,14 +136,11 @@ public class AdminUserService {
     }
 
     /**
-     * 变更状态（ACTIVE ↔ DISABLED）。
-     *
-     * <p>操作者已开启 MFA 时须携带与 {@code CHANGE_USER_STATUS} 绑定的二次确认令牌（P2 step-up）。
+     * 变更状态（ACTIVE ↔ DISABLED）。数据修改只在前端确认一次，不再要求第二因子（MFA 仅用于登录）。
      */
     @Transactional
-    public AdminUserView changeStatus(UUID operatorId, UUID targetUserId, User.UserStatus newStatus, String stepUpToken) {
+    public AdminUserView changeStatus(UUID operatorId, UUID targetUserId, User.UserStatus newStatus) {
         User target = requireTarget(targetUserId, operatorId);
-        requireStepUp(operatorId, AdminStepUpService.ACTION_CHANGE_USER_STATUS, stepUpToken);
         if (target.getStatus() == newStatus) {
             return AdminUserView.from(target); // 幂等
         }
@@ -172,14 +164,13 @@ public class AdminUserService {
      * 置 {@code mustChangePassword = true}（用户下次登录必须先改密）。
      * <b>不能先返回成功再失效旧会话</b>——那中间的窗口里旧令牌仍可用。
      *
-     * <p>操作者已开启 MFA 时须携带与 {@code ADMIN_RESET_USER_PASSWORD} 绑定的二次确认令牌
-     * （P2 step-up）。新密码只过 {@link PasswordPolicy} 校验与 {@link PasswordEncoder} 编码，
+     * <p>数据修改只在前端确认一次，不再要求第二因子（MFA 仅用于登录）。
+     * 新密码只过 {@link PasswordPolicy} 校验与 {@link PasswordEncoder} 编码，
      * 不写日志、不进审计 detail、不回显给响应体。
      */
     @Transactional
-    public void resetPassword(UUID operatorId, UUID targetUserId, String newPassword, String stepUpToken) {
+    public void resetPassword(UUID operatorId, UUID targetUserId, String newPassword) {
         User target = requireTarget(targetUserId, operatorId);
-        requireStepUp(operatorId, AdminStepUpService.ACTION_RESET_USER_PASSWORD, stepUpToken);
         PasswordPolicy.validate(newPassword, properties);
         target.setPasswordHash(passwordEncoder.encode(newPassword));
         target.setMustChangePassword(true);
@@ -258,22 +249,6 @@ public class AdminUserService {
     }
 
     // ==================== 内部护栏 ====================
-
-    /**
-     * 敏感动作二次确认（P2 step-up）：操作者开启 MFA 时，三类敏感动作
-     * （代重置 / 改角色 / 启停）必须携带与动作绑定的短时效一次性确认令牌。
-     *
-     * <p>未开启 MFA 的操作者直接放行——MFA 默认关（B8），没有可验证的第二因子，
-     * 不因增强项改变默认口径。令牌缺失 / 无效 / 已用 / 动作不符均拒绝。
-     */
-    private void requireStepUp(UUID operatorId, String action, String stepUpToken) {
-        User operator = userRepository.findById(operatorId)
-            .orElseThrow(() -> new BusinessException("USER_NOT_FOUND", "操作者不存在: " + operatorId));
-        if (!operator.isMfaEnabled()) {
-            return;
-        }
-        stepUpService.consume(operatorId, operator.getTokenVersion(), action, stepUpToken);
-    }
 
     private User requireTarget(UUID targetUserId, UUID operatorId) {
         // 护栏一：禁止操作自身（防误操作自锁管理台）

@@ -88,7 +88,7 @@ class AccountRefundServiceTest {
     @Test
     void requestRefund_passesProratedAmountToAdminService_andReportsPartial() {
         Order order = paidOrder(USER_ID);
-        when(orderRepository.findByOrderNumber(ORDER_NO)).thenReturn(Optional.of(order));
+        when(orderRepository.findWithItemsByOrderNumber(ORDER_NO)).thenReturn(Optional.of(order));
         when(licenseRepository.findByOrderId(order.getId())).thenReturn(List.of(activeLicense()));
         when(adminService.refundOrder(eq(ORDER_NO), eq("买错了版本"), any(BigDecimal.class)))
             .thenReturn(refundResult("PARTIALLY_REFUNDED"));
@@ -111,7 +111,7 @@ class AccountRefundServiceTest {
     @Test
     void requestRefund_reportsFullRefund_whenAdminServiceDegradedToFull() {
         Order order = paidOrder(USER_ID);
-        when(orderRepository.findByOrderNumber(ORDER_NO)).thenReturn(Optional.of(order));
+        when(orderRepository.findWithItemsByOrderNumber(ORDER_NO)).thenReturn(Optional.of(order));
         when(licenseRepository.findByOrderId(order.getId())).thenReturn(List.of(activeLicense()));
         // 降级：申请的是折算额，实际退了全额
         when(adminService.refundOrder(eq(ORDER_NO), any(), any(BigDecimal.class)))
@@ -127,7 +127,7 @@ class AccountRefundServiceTest {
 
     @Test
     void requestRefund_throwsOrderNotFound_forForeignOrder_andSkipsRateLimit() {
-        when(orderRepository.findByOrderNumber(ORDER_NO)).thenReturn(Optional.of(paidOrder(OTHER_ID)));
+        when(orderRepository.findWithItemsByOrderNumber(ORDER_NO)).thenReturn(Optional.of(paidOrder(OTHER_ID)));
 
         BusinessException ex = assertThrows(BusinessException.class,
             () -> service.requestRefund(USER_ID, ORDER_NO, null));
@@ -140,7 +140,7 @@ class AccountRefundServiceTest {
 
     @Test
     void requestRefund_throwsOrderNotFound_whenCustomerIdNull() {
-        when(orderRepository.findByOrderNumber(ORDER_NO)).thenReturn(Optional.of(paidOrder(null)));
+        when(orderRepository.findWithItemsByOrderNumber(ORDER_NO)).thenReturn(Optional.of(paidOrder(null)));
 
         BusinessException ex = assertThrows(BusinessException.class,
             () -> service.requestRefund(USER_ID, ORDER_NO, null));
@@ -150,7 +150,7 @@ class AccountRefundServiceTest {
 
     @Test
     void requestRefund_throwsRefundLimit_whenRateLimited() {
-        when(orderRepository.findByOrderNumber(ORDER_NO)).thenReturn(Optional.of(paidOrder(USER_ID)));
+        when(orderRepository.findWithItemsByOrderNumber(ORDER_NO)).thenReturn(Optional.of(paidOrder(USER_ID)));
         when(rateLimitService.checkUserRefund(USER_ID))
             .thenThrow(new RateLimitService.RateLimitExceededException("user-refund", USER_ID.toString(), 6, 5));
 
@@ -165,7 +165,7 @@ class AccountRefundServiceTest {
     void requestRefund_throwsAlreadyRefunded_forPartiallyRefundedOrder() {
         Order order = paidOrder(USER_ID);
         order.markPartiallyRefunded();
-        when(orderRepository.findByOrderNumber(ORDER_NO)).thenReturn(Optional.of(order));
+        when(orderRepository.findWithItemsByOrderNumber(ORDER_NO)).thenReturn(Optional.of(order));
 
         BusinessException ex = assertThrows(BusinessException.class,
             () -> service.requestRefund(USER_ID, ORDER_NO, null));
@@ -177,7 +177,7 @@ class AccountRefundServiceTest {
     @Test
     void requestRefund_throwsNotRefundable_whenNoLicenseIssued() {
         Order order = paidOrder(USER_ID);
-        when(orderRepository.findByOrderNumber(ORDER_NO)).thenReturn(Optional.of(order));
+        when(orderRepository.findWithItemsByOrderNumber(ORDER_NO)).thenReturn(Optional.of(order));
         when(licenseRepository.findByOrderId(order.getId())).thenReturn(List.of());
 
         BusinessException ex = assertThrows(BusinessException.class,

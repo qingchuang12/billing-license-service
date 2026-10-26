@@ -2,8 +2,12 @@ package com.billing.license.controller;
 
 import com.billing.license.config.BillingProperties;
 import com.billing.license.dto.ProductPublicDto;
+import com.billing.license.dto.ProviderCapability;
 import com.billing.license.entity.Product;
+import com.billing.license.entity.ProductProfile;
+import com.billing.license.repository.ProductProfileRepository;
 import com.billing.license.repository.ProductRepository;
+import com.billing.license.service.payment.impl.PaymentServiceFactory;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.annotations.Operation;
@@ -18,6 +22,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -33,8 +39,15 @@ public class ProductController {
 
     private static final Logger log = LoggerFactory.getLogger(ProductController.class);
 
+    /** 目录顺序：推荐位优先，其余按 SKU 升序——保证接入方每次拿到相同顺序，不依赖数据库返回序。 */
+    private static final Comparator<Product> CATALOG_ORDER = Comparator
+        .comparing((Product p) -> Boolean.TRUE.equals(p.getRecommended())).reversed()
+        .thenComparing(Product::getSku);
+
     private final ProductRepository productRepository;
+    private final ProductProfileRepository productProfileRepository;
     private final BillingProperties billingProperties;
+    private final PaymentServiceFactory paymentServiceFactory;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Operation(summary = "列出在售产品",
@@ -49,13 +62,44 @@ public class ProductController {
         List<Product> catalog = productCode.isEmpty()
                 ? productRepository.findByActiveTrue()
                 : productRepository.findByActiveTrueAndProductCodeIgnoreCase(productCode);
+        catalog = catalog.stream().sorted(CATALOG_ORDER).toList();
+        Map<String, String> profileFeatures = loadProfileFeatures(catalog);
         return ResponseEntity.ok(catalog.stream()
                 .map(p -> {
-                    ProductPublicDto dto = ProductPublicDto.from(p);
-                    dto.setFeatureViews(buildFeatureViews(p.getFeatures(), labels));
+                    String features = profileFeatures.getOrDefault(normalizeCode(p.getProductCode()), null);
+                    ProductPublicDto dto = ProductPublicDto.from(p, features);
+                    dto.setFeatureViews(buildFeatureViews(features, labels));
+                    dto.setProviders(providerCapabilities(p.getBillingCycle()));
                     return dto;
                 })
                 .toList());
+    }
+
+    /** 一次性载入本批 SKU 对应的产品档案权益，避免逐行查库。 */
+    private Map<String, String> loadProfileFeatures(List<Product> catalog) {
+        Map<String, String> features = new HashMap<>();
+        for (Product product : catalog) {
+            String code = normalizeCode(product.getProductCode());
+            if (code == null || features.containsKey(code)) {
+                continue;
+            }
+            ProductProfile profile = productProfileRepository.findByProductCodeIgnoreCase(code).orElse(null);
+            features.put(code, profile != null ? profile.getFeatures() : null);
+        }
+        return features;
+    }
+
+    private static String normalizeCode(String productCode) {
+        return productCode == null || productCode.isBlank()
+            ? null
+            : productCode.trim().toLowerCase();
+    }
+
+    /** 当前部署下可售该套餐的渠道：按渠道能力矩阵过滤（未启用渠道不展示）。 */
+    private List<ProviderCapability> providerCapabilities(Product.BillingCycle cycle) {
+        return paymentServiceFactory.getEnabledMethods(cycle).stream()
+            .map(ProviderCapability::from)
+            .toList();
     }
 
     /**

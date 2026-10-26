@@ -36,9 +36,12 @@
     txTotalPages: 0,
     userPage: 0,
     userTotalPages: 0,
+    /* #10：订单处置分区的翻页状态（后端返回 Page，按 content + totalElements 渲染） */
+    orderPage: 0,
+    orderTotalPages: 0,
     /** 当前管理员自己的 userId：仅用于前端禁用「对自己的操作」（服务端 requireTarget 才是安全边界） */
     meId: '',
-    /** 当前管理员是否已开启二次验证：决定敏感动作前是否走 step-up 弹层（P2） */
+    /** 当前管理员是否已开启二次验证：仅用于 MFA 引导横幅显隐 */
     meMfa: false,
     /** 本次会话是否已忽略 MFA 引导横幅（SEC-4）：忽略后不再弹出，重新登录复位 */
     mfaBannerDismissed: false
@@ -106,6 +109,10 @@
       'tabs.discrepancies': '对账差异',
       'tabs.license': 'License 处置',
       'tabs.users': '用户管理',
+      'tabs.products': '产品配置',
+      'tabs.orders': '订单处置',
+      'tabs.codes': '兑换码',
+      'tabs.channels': '渠道自查',
       'tabs.security': '安全设置',
       'panel.overview': '收入总览',
       'panel.channel': '分渠道统计',
@@ -115,7 +122,85 @@
       'panel.discrepancies': '对账差异',
       'panel.license': 'License 处置',
       'panel.users': '用户管理',
+      'panel.products': '产品配置',
       'panel.security': '安全设置 · 二次验证（MFA）',
+      'panel.orders': '订单处置',
+      'panel.codes': '兑换码',
+      'panel.channels': '渠道自查',
+      'desc.orders1': '按订单号或状态查询订单，可对已支付订单补签许可证，或对订单发起退款。',
+      'desc.ordersBold': '退款会立即作废该订单下的全部许可证',
+      'desc.orders2': '；渠道退款失败时订单标记 REFUND_FAILED（钱没退成，不会谎报成功）。',
+      'desc.codes1': '按套餐 SKU 与状态检索兑换码，用于批量导出与对账；也可批量生成新码。',
+      'desc.codes2': '生成结果只在这一次以明文返回，离开页面后不再保留。',
+      'desc.channels': '各支付渠道的启用状态与配置齐全情况，缺失项只回显配置项名，不显示任何密钥值。填好密钥后先来这里确认配得对不对，再去做真实下单验证。',
+      'orders.number': '订单号',
+      'orders.status': '订单状态',
+      'orders.search': '查询',
+      'orders.issue': '补签许可证',
+      'orders.refund': '退款',
+      'empty.orders': '没有符合条件的订单。',
+      'empty.codes': '没有符合条件的兑换码。',
+      'empty.channels': '没有可自查的渠道。',
+      'th.orderNumber': '订单号',
+      'th.amount': '金额',
+      'th.orderStatus': '订单状态',
+      'th.paymentStatus': '支付状态',
+      'th.customer': '客户邮箱',
+      'refund.title': '退款：',
+      'refund.note': '退款成功后该订单名下的许可证会立即作废且不可恢复，请确认金额与订单无误后再执行。',
+      'refund.reason': '退款原因（写入审计留痕）',
+      'refund.submit': '确认退款',
+      'confirm.issue': '为订单 {no} 补签许可证？\n（用于渠道回调丢失时的补偿，重复调用返回已签发记录，不会重复发证）',
+      'confirm.refund': '确认对订单 {no} 发起退款？此操作不可撤销。',
+      'result.issued': '已签发 {count} 张许可证（重复调用返回既有记录）。',
+      'result.refunded': '退款成功，订单当前支付状态：{status}',
+      'result.refundFailed': '渠道未受理退款，订单已标记 REFUND_FAILED（保留已支付），需到渠道控制台人工退款。',
+      'codes.queryTitle': '检索',
+      'codes.sku': '套餐 SKU',
+      'codes.status': '状态',
+      'codes.search': '查询',
+      'codes.export': '导出 CSV',
+      'codes.unused': '未使用',
+      'codes.used': '已使用',
+      'codes.expired': '已过期',
+      'codes.revoked': '已撤销',
+      'codes.generateTitle': '批量生成',
+      'codes.genSku': '套餐 SKU',
+      'codes.count': '生成数量',
+      'codes.expiresAt': '过期时间（留空=不过期）',
+      'codes.generate': '生成',
+      'codes.outputLabel': '生成结果（明文）',
+      'codes.revoke': '撤销',
+      'codes.resultRevoked': '兑换码 {code} 已撤销。',
+      'codes.resultGenerated': '已生成 {count} 个兑换码，明文见下方（只显示这一次）。',
+      'confirm.revokeCode': '确认撤销兑换码 {code}？撤销后无法再用于激活。',
+      'th.code': '兑换码',
+      'th.codeStatus': '状态',
+      'th.codeUsedAt': '使用时间',
+      'th.codeExpires': '过期时间',
+      'channels.check': '立即自查',
+      'th.enabled': '已启用',
+      'th.configured': '配置齐全',
+      'th.missingKeys': '缺失配置项',
+      'th.note': '说明',
+      'channels.ok': '配置齐全',
+      'channels.missing': '缺 {count} 项',
+      'channels.disabled': '未启用',
+      'badge.configured': '齐全',
+      'productForm.stripePriceId': 'Stripe 价目 ID',
+      'productForm.paddlePriceId': 'Paddle 价目 ID',
+      'productForm.priceIdHintRecurring': '订阅周期套餐：Stripe 可留空（服务端按周期自动生成循环价目）；Paddle 必须填渠道后台的价目 ID，留空时订阅下单会被直接拒绝（不会静默降级成一次性收款）。',
+      'productForm.priceIdHintOneTime': '一次性 / 永久套餐：两家价目 ID 都不需要，留空即可。',
+      'err.codesSkuRequired': '请填写套餐 SKU。',
+      'err.codesCount': '生成数量须为 1 以上的整数。',
+      'err.refundFailed': '退款失败，请稍后重试或到渠道控制台人工处理。',
+      'title.issuePaidOnly': '仅已支付订单可补签许可证',
+      'title.alreadyRefunded': '该订单已退款，不可重复退款',
+      'desc.products': '产品 → 套餐两层：产品档案定义名称、描述与权益；套餐定义支付周期、价格与授权参数。同一产品下的月付 / 半年 / 年付 / 永久套餐共享产品权益。保存与上下架前会弹出确认框。',
+      'profiles.title': '产品档案（名称 / 描述 / 权益）',
+      'plans.title': '套餐（支付周期 / 价格 / 上下架）',
+      'empty.products': '没有符合条件的套餐。',
+      'empty.profiles': '没有符合条件的产品档案。',
       'desc.channel': '按支付渠道 × 币种汇总；历史订单无渠道时归入「未知渠道」。',
       'desc.product': '按产品 × 币种汇总，金额取自订单明细，按订单级支付状态归类。',
       'desc.transactions': '每条支付记录一行（一次资金变动）；管理端退款成功也会写入 REFUNDED 流水。',
@@ -163,6 +248,10 @@
       'th.product': '产品',
       'th.plan': '档位',
       'th.billingCycle': '计费周期',
+      'th.providers': '可售渠道',
+      'products.noChannel': '无可售渠道',
+      'productForm.channelHint': '该周期可由以下渠道售卖：{channels}',
+      'productForm.noChannelHint': '该周期当前没有已启用的可售渠道，客户端将无法下单',
       'th.time': '时间',
       'th.status': '状态',
       'th.amount': '金额',
@@ -260,6 +349,94 @@
       'users.enable': '启用',
       'users.resetPwd': '重置密码',
       'users.detail': '详情',
+      'products.keyword': '关键字',
+      'products.keywordPlaceholder': 'SKU / 套餐名 / 产品码',
+      'products.statusFilter': '状态',
+      'products.onSale': '已上架',
+      'products.offSale': '已下架',
+      'products.search': '查询',
+      'products.createPlan': '新增套餐',
+      'products.edit': '编辑',
+      'products.putOn': '上架',
+      'products.takeOff': '下架',
+      'products.recommended': '推荐',
+      'products.priceCell': '¥{cny} / ${usd}',
+      'products.daysCell': '授权 {license} 天 · 更新 {update} · 大版本 {major}',
+      'products.updateUnlimited': '不限',
+      'products.resultCreated': '已创建套餐 {sku}。',
+      'products.resultUpdated': '已保存套餐 {sku}。',
+      'products.resultOn': '已上架 {sku}。',
+      'products.resultOff': '已下架 {sku}（仅影响新订单）。',
+      'profiles.keyword': '关键字',
+      'profiles.keywordPlaceholder': '产品码 / 名称',
+      'profiles.search': '查询',
+      'profiles.create': '新增产品档案',
+      'profiles.edit': '编辑',
+      'profiles.resultCreated': '已创建产品档案 {code}。',
+      'profiles.resultUpdated': '已保存产品档案 {code}。',
+      'profileForm.createTitle': '新增产品档案',
+      'profileForm.editTitle': '编辑产品档案：{code}',
+      'profileForm.note': '权益特性按产品定义，同一产品下的月付 / 半年 / 年付 / 永久套餐共享；产品码创建后不可修改。保存前会再确认一次。',
+      'profileForm.code': '产品码',
+      'profileForm.codePlaceholder': '如 ai-tools',
+      'profileForm.name': '产品名称（中文）',
+      'profileForm.nameEn': '产品名称（英文）',
+      'profileForm.description': '产品描述（中文）',
+      'profileForm.descriptionEn': '产品描述（英文）',
+      'profileForm.features': '权益特性',
+      'profileForm.featuresEmpty': '未配置权益标签',
+      'profileForm.save': '保存',
+      'profileForm.codeLocked': '产品码创建后不可修改',
+      'productForm.createTitle': '新增套餐',
+      'productForm.editTitle': '编辑套餐：{sku}',
+      'productForm.note': '双币价均为必填：缺任一区域价格时该区域下单会被拒绝。SKU 创建后锁定，编辑时不可修改。权益与产品级名称/描述在产品档案上维护，保存前会再确认一次。',
+      'productForm.sku': 'SKU',
+      'productForm.skuPlaceholder': '如 pro-half-year',
+      'productForm.profile': '所属产品档案',
+      'productForm.name': '套餐名称（中文）',
+      'productForm.nameEn': '套餐名称（英文）',
+      'productForm.priceCny': '人民币价格',
+      'productForm.priceUsd': '美元价格',
+      'productForm.licenseDays': '授权有效天数',
+      'productForm.updateDays': '更新权益天数（留空=不限制）',
+      'productForm.maxMajor': '大版本上限（留空=不限制）',
+      'productForm.active': '初始状态',
+      'productForm.description': '套餐描述（中文）',
+      'productForm.descriptionEn': '套餐描述（英文）',
+      'productForm.recommended': '在收银台展示「推荐」标记',
+      'productForm.save': '保存',
+      'productForm.skuLocked': 'SKU 创建后不可修改',
+      'err.productSkuRequired': '请输入 SKU。',
+      'err.productSkuPattern': 'SKU 须为 2–64 位字母/数字/短横线。',
+      'err.productProfileRequired': '请选择所属产品档案。',
+      'err.productNameRequired': '请输入套餐名称。',
+      'err.productPrice': '双币价均为必填且须大于 0，最多 2 位小数。',
+      'err.productDays': '授权有效天数须为正整数；更新天数与大版本上限留空或填正整数。',
+      'err.productSaveFailed': '保存失败，请重试。',
+      'err.profileCodeRequired': '请输入产品码。',
+      'err.profileCodePattern': '产品码须为 1–64 位字母/数字/短横线。',
+      'err.profileNameRequired': '请输入产品名称。',
+      'err.profileSaveFailed': '保存失败，请重试。',
+      'err.profileRequiredForPlan': '请先创建产品档案，再新增套餐。',
+      'confirm.takeOffProduct': '确认下架 {sku}？下架后收银台不再展示，但不影响历史订单与已签发许可证。',
+      'confirm.putOnProduct': '确认上架 {sku}？上架后收银台立即可售。',
+      'confirm.saveProduct': '确认保存套餐 {sku}（¥{cny} / ${usd}）？',
+      'confirm.saveProfile': '确认保存产品档案 {code}？该产品下所有套餐将共享此权益。',
+      'th.sku': 'SKU',
+      'th.productCode': '产品码',
+      'th.name': '名称',
+      'th.price': '双币价',
+      'th.features': '权益',
+      'th.licenseUpdate': '授权 / 更新 / 版本',
+      'th.planCount': '套餐数',
+      'cycle.ONE_TIME': '一次性',
+      'cycle.MONTHLY': '按月',
+      'cycle.HALF_YEAR': '半年',
+      'cycle.QUARTERLY': '按季',
+      'cycle.YEARLY': '按年',
+      'cycle.LIFETIME': '永久',
+      'tier.PRO': '基础版（PRO）',
+      'tier.PRO_PLUS': '高级版（PRO PLUS）',
       'role.user': '普通用户',
       'role.admin': '管理员',
       'status.active': '正常',
@@ -286,14 +463,6 @@
       'result.enabled': '已启用该用户。',
       'result.resetDone': '已重置 {email} 的密码。其旧会话已失效，下次登录须先修改密码；请通过可靠渠道把新密码告知本人（本页不再显示）。',
       'result.selfPwdChanged': '密码已修改，请用新密码重新登录。',
-      'stepUp.title': '敏感操作二次确认',
-      'stepUp.note': '该操作影响账号安全，请输入认证器动态码完成二次确认（6 位数字）。认证器不可用时可用邮箱验证码兜底。确认令牌 120 秒内有效且仅可使用一次。',
-      'stepUp.codeLabel': '动态码',
-      'stepUp.label.resetPassword': '重置该用户的密码',
-      'stepUp.label.changeRole': '变更该用户的角色',
-      'stepUp.label.changeStatus': '启用 / 停用该用户',
-      'stepUp.actionPrefix': '即将执行：{action}。',
-      'stepUp.noteSent': '验证码已发送，请查收邮箱。',
       'detail.title': '用户详情',
       'detail.titleWithEmail': '用户详情：{email}',
       'detail.email': '邮箱',
@@ -342,9 +511,6 @@
       'err.selfPwdRequired': '请填写当前密码与新密码。',
       'err.selfPwdFailed': '修改失败，请稍后重试。',
       'err.enterEmailPassword': '请输入管理员邮箱与密码。',
-      'err.codeRequired': '请输入动态码。',
-      'err.stepUpFailed': '二次确认失败，请重试。',
-      'err.sendFailed': '发送失败，请稍后重试。',
       'err.detailBad': '详情数据异常。',
       'err.resetFailed': '重置失败，请稍后重试。'
     },
@@ -400,6 +566,10 @@
       'tabs.discrepancies': 'Reconciliation',
       'tabs.license': 'License Actions',
       'tabs.users': 'Users',
+      'tabs.products': 'Products',
+      'tabs.orders': 'Orders',
+      'tabs.codes': 'Redeem codes',
+      'tabs.channels': 'Channel check',
       'tabs.security': 'Security',
       'panel.overview': 'Revenue Overview',
       'panel.channel': 'Per-channel Stats',
@@ -409,7 +579,85 @@
       'panel.discrepancies': 'Reconciliation',
       'panel.license': 'License Actions',
       'panel.users': 'User Management',
+      'panel.products': 'Product Configuration',
       'panel.security': 'Security · Two-Factor (MFA)',
+      'panel.orders': 'Order operations',
+      'panel.codes': 'Redeem codes',
+      'panel.channels': 'Payment channel check',
+      'desc.orders1': 'Look up orders by number or status; re-issue licenses for a paid order, or refund it.',
+      'desc.ordersBold': 'A refund immediately revokes every license under that order',
+      'desc.orders2': '; if the channel rejects the refund, the order is flagged REFUND_FAILED (money not returned — never reported as success).',
+      'desc.codes1': 'Search codes by plan SKU and status for export and reconciliation; new codes can be generated in bulk.',
+      'desc.codes2': 'Plain codes are returned only this once and are not kept after leaving the page.',
+      'desc.channels': 'Enabled state and config completeness per channel. Missing entries show config key names only, never secret values. Check this right after filling in keys, before running a real order.',
+      'orders.number': 'Order number',
+      'orders.status': 'Order status',
+      'orders.search': 'Search',
+      'orders.issue': 'Issue licenses',
+      'orders.refund': 'Refund',
+      'empty.orders': 'No orders match these filters.',
+      'empty.codes': 'No redeem codes match these filters.',
+      'empty.channels': 'No channels to check.',
+      'th.orderNumber': 'Order',
+      'th.amount': 'Amount',
+      'th.orderStatus': 'Order status',
+      'th.paymentStatus': 'Payment status',
+      'th.customer': 'Customer',
+      'refund.title': 'Refund: ',
+      'refund.note': 'Licenses under this order are revoked immediately and cannot be restored. Verify the amount and order before proceeding.',
+      'refund.reason': 'Reason (recorded in the audit trail)',
+      'refund.submit': 'Confirm refund',
+      'confirm.issue': 'Issue licenses for order {no}?\n(Compensation for a lost channel callback; repeat calls return existing records and never issue duplicates.)',
+      'confirm.refund': 'Refund order {no}? This cannot be undone.',
+      'result.issued': 'Issued {count} license(s); repeat calls return existing records.',
+      'result.refunded': 'Refunded. Current payment status: {status}',
+      'result.refundFailed': 'Channel rejected the refund; order flagged REFUND_FAILED (stays paid). Refund manually in the channel console.',
+      'codes.queryTitle': 'Search',
+      'codes.sku': 'Plan SKU',
+      'codes.status': 'Status',
+      'codes.search': 'Search',
+      'codes.export': 'Export CSV',
+      'codes.unused': 'Unused',
+      'codes.used': 'Used',
+      'codes.expired': 'Expired',
+      'codes.revoked': 'Revoked',
+      'codes.generateTitle': 'Generate in bulk',
+      'codes.genSku': 'Plan SKU',
+      'codes.count': 'Quantity',
+      'codes.expiresAt': 'Expires at (blank = never)',
+      'codes.generate': 'Generate',
+      'codes.outputLabel': 'Result (plain text)',
+      'codes.revoke': 'Revoke',
+      'codes.resultRevoked': 'Code {code} revoked.',
+      'codes.resultGenerated': 'Generated {count} code(s); plain text below (shown only once).',
+      'confirm.revokeCode': 'Revoke code {code}? It can no longer be used to activate.',
+      'th.code': 'Code',
+      'th.codeStatus': 'Status',
+      'th.codeUsedAt': 'Used at',
+      'th.codeExpires': 'Expires at',
+      'channels.check': 'Run check',
+      'th.enabled': 'Enabled',
+      'th.configured': 'Configured',
+      'th.missingKeys': 'Missing keys',
+      'th.note': 'Note',
+      'channels.ok': 'Complete',
+      'channels.missing': '{count} missing',
+      'channels.disabled': 'Disabled',
+      'badge.configured': 'OK',
+      'productForm.stripePriceId': 'Stripe price ID',
+      'productForm.paddlePriceId': 'Paddle price ID',
+      'productForm.priceIdHintRecurring': 'Subscription plan: Stripe can be blank (a recurring price is generated from the billing cycle); Paddle requires the price ID from its dashboard — leaving it blank rejects subscription checkout outright rather than silently falling back to a one-time charge.',
+      'productForm.priceIdHintOneTime': 'One-time / lifetime plan: neither price ID is needed — leave both blank.',
+      'err.codesSkuRequired': 'Plan SKU is required.',
+      'err.codesCount': 'Quantity must be a positive integer.',
+      'err.refundFailed': 'Refund failed. Retry later or refund manually in the channel console.',
+      'title.issuePaidOnly': 'Only paid orders can have licenses issued',
+      'title.alreadyRefunded': 'This order is already refunded',
+      'desc.products': 'Two layers: product profiles define name, description and features; plans define billing cycle, prices and license parameters. All plans of the same product share its features. Saves and activation changes ask for confirmation.',
+      'profiles.title': 'Product Profiles (name / description / features)',
+      'plans.title': 'Plans (billing cycle / price / availability)',
+      'empty.products': 'No plans match these filters.',
+      'empty.profiles': 'No product profiles match these filters.',
       'desc.channel': 'Aggregated by payment channel × currency; orders without a channel fall into "Unknown".',
       'desc.product': 'Aggregated by product × currency from order items, grouped by order-level payment status.',
       'desc.transactions': 'One row per payment record (one fund movement); admin refunds also write REFUNDED entries.',
@@ -457,6 +705,10 @@
       'th.product': 'Product',
       'th.plan': 'Plan',
       'th.billingCycle': 'Billing Cycle',
+      'th.providers': 'Channels',
+      'products.noChannel': 'None',
+      'productForm.channelHint': 'This cycle can be sold via: {channels}',
+      'productForm.noChannelHint': 'No enabled channel supports this cycle; clients cannot check out.',
       'th.time': 'Time',
       'th.status': 'Status',
       'th.amount': 'Amount',
@@ -554,6 +806,94 @@
       'users.enable': 'Enable',
       'users.resetPwd': 'Reset password',
       'users.detail': 'Details',
+      'products.keyword': 'Keyword',
+      'products.keywordPlaceholder': 'SKU / plan name / product code',
+      'products.statusFilter': 'Status',
+      'products.onSale': 'Active',
+      'products.offSale': 'Inactive',
+      'products.search': 'Search',
+      'products.createPlan': 'New plan',
+      'products.edit': 'Edit',
+      'products.putOn': 'Activate',
+      'products.takeOff': 'Deactivate',
+      'products.recommended': 'Recommended',
+      'products.priceCell': '¥{cny} / ${usd}',
+      'products.daysCell': 'License {license} days · Updates {update} · Major {major}',
+      'products.updateUnlimited': 'Unlimited',
+      'products.resultCreated': 'Plan {sku} created.',
+      'products.resultUpdated': 'Plan {sku} saved.',
+      'products.resultOn': 'Plan {sku} activated.',
+      'products.resultOff': 'Plan {sku} deactivated (new orders only).',
+      'profiles.keyword': 'Keyword',
+      'profiles.keywordPlaceholder': 'Product code / name',
+      'profiles.search': 'Search',
+      'profiles.create': 'New product profile',
+      'profiles.edit': 'Edit',
+      'profiles.resultCreated': 'Product profile {code} created.',
+      'profiles.resultUpdated': 'Product profile {code} saved.',
+      'profileForm.createTitle': 'New product profile',
+      'profileForm.editTitle': 'Edit product profile: {code}',
+      'profileForm.note': 'Features are defined per product and shared by all plans (monthly / half-year / yearly / lifetime). The product code is immutable after creation. You will be asked to confirm before saving.',
+      'profileForm.code': 'Product code',
+      'profileForm.codePlaceholder': 'e.g. ai-tools',
+      'profileForm.name': 'Name (Chinese)',
+      'profileForm.nameEn': 'Name (English)',
+      'profileForm.description': 'Description (Chinese)',
+      'profileForm.descriptionEn': 'Description (English)',
+      'profileForm.features': 'Features',
+      'profileForm.featuresEmpty': 'No feature labels configured',
+      'profileForm.save': 'Save',
+      'profileForm.codeLocked': 'Product code is immutable after creation',
+      'productForm.createTitle': 'New plan',
+      'productForm.editTitle': 'Edit plan: {sku}',
+      'productForm.note': 'Both prices are required: a missing regional price blocks orders from that region. SKUs are immutable once created. Product names/descriptions and features live on the product profile. You will be asked to confirm before saving.',
+      'productForm.sku': 'SKU',
+      'productForm.skuPlaceholder': 'e.g. pro-half-year',
+      'productForm.profile': 'Product profile',
+      'productForm.name': 'Plan name (Chinese)',
+      'productForm.nameEn': 'Plan name (English)',
+      'productForm.priceCny': 'Price (CNY)',
+      'productForm.priceUsd': 'Price (USD)',
+      'productForm.licenseDays': 'License duration (days)',
+      'productForm.updateDays': 'Update entitlement days (blank = unlimited)',
+      'productForm.maxMajor': 'Max major version (blank = unlimited)',
+      'productForm.active': 'Initial status',
+      'productForm.description': 'Plan description (Chinese)',
+      'productForm.descriptionEn': 'Plan description (English)',
+      'productForm.recommended': 'Show "Recommended" badge on checkout',
+      'productForm.save': 'Save',
+      'productForm.skuLocked': 'SKU is immutable after creation',
+      'err.productSkuRequired': 'Please enter a SKU.',
+      'err.productSkuPattern': 'SKU must be 2–64 characters of letters / digits / hyphens.',
+      'err.productProfileRequired': 'Please choose a product profile.',
+      'err.productNameRequired': 'Please enter the plan name.',
+      'err.productPrice': 'Both prices are required and must be greater than 0 with at most 2 decimals.',
+      'err.productDays': 'License duration must be a positive integer; update days and max major must be blank or positive integers.',
+      'err.productSaveFailed': 'Save failed, please retry.',
+      'err.profileCodeRequired': 'Please enter the product code.',
+      'err.profileCodePattern': 'Product code must be 1–64 characters of letters / digits / hyphens.',
+      'err.profileNameRequired': 'Please enter the product name.',
+      'err.profileSaveFailed': 'Save failed, please retry.',
+      'err.profileRequiredForPlan': 'Create a product profile before adding plans.',
+      'confirm.takeOffProduct': 'Deactivate {sku}? It will disappear from checkout; historical orders and issued licenses are unaffected.',
+      'confirm.putOnProduct': 'Activate {sku}? It will be purchasable on checkout immediately.',
+      'confirm.saveProduct': 'Save plan {sku} (¥{cny} / ${usd})?',
+      'confirm.saveProfile': 'Save product profile {code}? All plans under this product will share these features.',
+      'th.sku': 'SKU',
+      'th.productCode': 'Product Code',
+      'th.name': 'Name',
+      'th.price': 'Prices',
+      'th.features': 'Features',
+      'th.licenseUpdate': 'License / Updates / Major',
+      'th.planCount': 'Plans',
+      'cycle.ONE_TIME': 'One-time',
+      'cycle.MONTHLY': 'Monthly',
+      'cycle.HALF_YEAR': 'Half-year',
+      'cycle.QUARTERLY': 'Quarterly',
+      'cycle.YEARLY': 'Yearly',
+      'cycle.LIFETIME': 'Lifetime',
+      'tier.PRO': 'Pro',
+      'tier.PRO_PLUS': 'Pro Plus',
       'role.user': 'User',
       'role.admin': 'Admin',
       'status.active': 'Active',
@@ -580,14 +920,6 @@
       'result.enabled': 'User enabled.',
       'result.resetDone': 'Password reset for {email}. Old sessions are dead; the user must set a new password at next sign-in. Deliver the new password via a trusted channel (it is not shown here again).',
       'result.selfPwdChanged': 'Password changed. Please sign in with the new password.',
-      'stepUp.title': 'Confirm Sensitive Action',
-      'stepUp.note': 'This action affects account security. Enter the authenticator code to confirm (6 digits); an emailed code is the fallback. The confirmation token is valid for 120 seconds and single-use.',
-      'stepUp.codeLabel': 'Code',
-      'stepUp.label.resetPassword': 'reset this user\'s password',
-      'stepUp.label.changeRole': 'change this user\'s role',
-      'stepUp.label.changeStatus': 'enable / disable this user',
-      'stepUp.actionPrefix': 'About to: {action}',
-      'stepUp.noteSent': 'Code sent. Please check your inbox.',
       'detail.title': 'User Details',
       'detail.titleWithEmail': 'User details: {email}',
       'detail.email': 'Email',
@@ -636,9 +968,6 @@
       'err.selfPwdRequired': 'Please fill in the current and new password.',
       'err.selfPwdFailed': 'Change failed, please retry.',
       'err.enterEmailPassword': 'Please enter the admin email and password.',
-      'err.codeRequired': 'Please enter the code.',
-      'err.stepUpFailed': 'Confirmation failed, please retry.',
-      'err.sendFailed': 'Failed to send, please retry later.',
       'err.detailBad': 'Unexpected detail payload.',
       'err.resetFailed': 'Reset failed, please retry.'
     }
@@ -931,7 +1260,6 @@
     var banner = $('mfaBanner');
     if (banner) banner.hidden = true;
     closeResetModal();
-    closeStepUpModal();
     closeUserDetail();
     pending.mfaTicket = null;
     pending.remember = false;
@@ -984,7 +1312,7 @@
    * @param withAuth     需要访问令牌时传 true。登录与半认证的 /api/account/mfa/** 端点不带令牌——
    *                     此时 401/403 的语义是「凭据错误」而非「登录失效」，故不触发 handleAuthFailure，
    *                     否则会把「密码错」误报成「登录已失效」。
-   * @param extraHeaders 额外请求头（P2：敏感动作携带 X-Step-Up-Token）；可选
+   * @param extraHeaders 额外请求头；可选
    */
   function apiRequest(method, url, body, withAuth, extraHeaders) {
     var headers = { 'Accept': 'application/json' };
@@ -1130,8 +1458,9 @@
     for (var j = 0; j < sections.length; j++) {
       sections[j].hidden = sections[j].id !== TAB_PANEL_PREFIX + tab;
     }
-    /* 时间范围工具栏只服务于统计类分区；安全设置、License 处置与用户管理都与时间无关 */
-    $('rangePanel').hidden = (tab === 'security' || tab === 'license' || tab === 'users');
+    /* 时间范围工具栏只服务于统计类分区；处置类分区（安全设置 / License / 用户 / 产品 / 订单 / 兑换码 / 渠道）都与时间无关 */
+    $('rangePanel').hidden = (tab === 'security' || tab === 'license' || tab === 'users'
+        || tab === 'products' || tab === 'orders' || tab === 'codes' || tab === 'channels');
   }
 
   function loadTab(tab) {
@@ -1144,6 +1473,10 @@
     else if (tab === 'discrepancies') loadDiscrepancies();
     else if (tab === 'license') loadLicense();
     else if (tab === 'users') loadUsers();
+    else if (tab === 'products') loadProductConfig();
+    else if (tab === 'orders') loadOrders();
+    else if (tab === 'codes') loadRedeemCodes();
+    else if (tab === 'channels') loadChannelCheck();
     else if (tab === 'security') loadMfa();
   }
 
@@ -1288,15 +1621,15 @@
       var content = page.content || [];
       var rows = '';
       for (var i = 0; i < content.length; i++) {
-        var t = content[i];
+        var tx = content[i];
         rows += '<tr>'
-          + '<td>' + escapeHtml(fmtDateTime(t.createdAt)) + '</td>'
-          + '<td>' + none(t.channelName || t.channel) + '</td>'
-          + '<td>' + statusBadge(t.status, t.statusDesc) + '</td>'
-          + '<td class="num strong-amount">' + escapeHtml(money(t.amount, t.currency)) + '</td>'
-          + '<td class="mono">' + none(t.orderId) + '</td>'
-          + '<td class="mono">' + none(t.transactionId) + '</td>'
-          + '<td>' + escapeHtml(fmtDateTime(t.paidAt)) + '</td>'
+          + '<td>' + escapeHtml(fmtDateTime(tx.createdAt)) + '</td>'
+          + '<td>' + none(tx.channelName || tx.channel) + '</td>'
+          + '<td>' + statusBadge(tx.status, tx.statusDesc) + '</td>'
+          + '<td class="num strong-amount">' + escapeHtml(money(tx.amount, tx.currency)) + '</td>'
+          + '<td class="mono">' + none(tx.orderId) + '</td>'
+          + '<td class="mono">' + none(tx.transactionId) + '</td>'
+          + '<td>' + escapeHtml(fmtDateTime(tx.paidAt)) + '</td>'
           + '</tr>';
       }
       var rowsHtml = content.length ? table([
@@ -1817,88 +2150,7 @@
     loadUsers();
   }
 
-  /* ---- 敏感动作二次确认（P2 step-up） ---- */
-
-  var ACTION_RESET_PASSWORD = 'ADMIN_RESET_USER_PASSWORD';
-  var ACTION_CHANGE_ROLE = 'CHANGE_USER_ROLE';
-  var ACTION_CHANGE_STATUS = 'CHANGE_USER_STATUS';
-
-  /** 待确认的敏感动作（仅弹层打开期间存在）；确认令牌只随单次请求发出，不落任何存储 */
-  var stepUpPending = null;
-
-  function stepUpActionLabel(action) {
-    if (action === ACTION_RESET_PASSWORD) { return t('stepUp.label.resetPassword'); }
-    if (action === ACTION_CHANGE_ROLE) { return t('stepUp.label.changeRole'); }
-    if (action === ACTION_CHANGE_STATUS) { return t('stepUp.label.changeStatus'); }
-    return action;
-  }
-
-  function stepUpHeaders(token) {
-    return token ? { 'X-Step-Up-Token': token } : null;
-  }
-
-  function isStepUpError(err) {
-    return !!err && (err.code === 'MFA_STEP_UP_REQUIRED' || err.code === 'MFA_STEP_UP_INVALID');
-  }
-
-  /**
-   * 敏感动作统一入口：操作者已开启 MFA 时先弹二次确认，验证通过后才执行 onConfirmed(token)。
-   * 未开启 MFA 的操作者直接执行（服务端口径一致：无第二因子可验证）。
-   */
-  function withStepUp(action, onConfirmed) {
-    if (!state.meMfa) { onConfirmed(null); return; }
-    stepUpPending = { action: action, onConfirmed: onConfirmed };
-    $('stepUpAction').textContent = t('stepUp.actionPrefix', { action: stepUpActionLabel(action) });
-    $('stepUpCode').value = '';
-    hideError('stepUpError');
-    $('stepUpNote').hidden = true;
-    $('stepUpModal').hidden = false;
-    $('stepUpCode').focus();
-  }
-
-  function closeStepUpModal() {
-    stepUpPending = null;
-    $('stepUpModal').hidden = true;
-    $('stepUpCode').value = '';
-    hideError('stepUpError');
-    $('stepUpNote').hidden = true;
-  }
-
-  /** 校验动态码换确认令牌，随后立刻发起原动作（令牌只在这一条请求里使用）。 */
-  function submitStepUp() {
-    if (!stepUpPending) { closeStepUpModal(); return; }
-    var code = $('stepUpCode').value.trim();
-    if (!code) { showError('stepUpError', t('err.codeRequired')); return; }
-    var pending = stepUpPending;
-    $('stepUpSubmit').disabled = true;
-    apiPost('/api/admin/mfa/step-up/verify', { action: pending.action, code: code }, true)
-      .then(function (data) {
-        $('stepUpSubmit').disabled = false;
-        closeStepUpModal();
-        pending.onConfirmed(data && data.stepUpToken);
-      })
-      .catch(function (err) {
-        $('stepUpSubmit').disabled = false;
-        showError('stepUpError', err && err.message ? err.message : t('err.stepUpFailed'));
-      });
-  }
-
-  /** 认证器不可用时的邮箱兜底：让服务端发一枚验证码（复用第二因子发送通道）。 */
-  function sendStepUpEmailCode() {
-    if (!stepUpPending) { return; }
-    var btn = $('stepUpSendBtn');
-    btn.disabled = true;
-    apiPost('/api/admin/mfa/step-up/challenge', { action: stepUpPending.action }, true)
-      .then(function () {
-        btn.disabled = false;
-        $('stepUpNote').textContent = t('stepUp.noteSent');
-        $('stepUpNote').hidden = false;
-      })
-      .catch(function (err) {
-        btn.disabled = false;
-        showError('stepUpError', err && err.message ? err.message : t('err.sendFailed'));
-      });
-  }
+  /* 敏感动作不再要求第二因子：MFA 仅用于登录，数据修改只在前端确认一次 */
 
   function changeUserRole(userId, role) {
     var label = role === 'ADMIN' ? t('role.admin') : t('role.user');
@@ -1907,22 +2159,17 @@
       return;
     }
     hideError('userError');
-    var send = function (token) {
-      apiPatch('/api/admin/users/' + encodeURIComponent(userId) + '/role?role=' + encodeURIComponent(role),
-          null, true, stepUpHeaders(token))
-        .then(function () {
-          hideUserResult();
-          showUserResult(t('result.roleChanged', { role: label }));
-          reloadUsersAfterAction();
-        })
-        .catch(function (err) {
-          if (isStepUpError(err)) { withStepUp(ACTION_CHANGE_ROLE, send); return; }
-          var text = errorTextOf(err);
-          if (text) { showError('userError', text); }
-          reloadUsersAfterAction();
-        });
-    };
-    withStepUp(ACTION_CHANGE_ROLE, send);
+    apiPatch('/api/admin/users/' + encodeURIComponent(userId) + '/role?role=' + encodeURIComponent(role), null, true)
+      .then(function () {
+        hideUserResult();
+        showUserResult(t('result.roleChanged', { role: label }));
+        reloadUsersAfterAction();
+      })
+      .catch(function (err) {
+        var text = errorTextOf(err);
+        if (text) { showError('userError', text); }
+        reloadUsersAfterAction();
+      });
   }
 
   function changeUserStatus(userId, next) {
@@ -1932,21 +2179,16 @@
       return;
     }
     hideError('userError');
-    var send = function (token) {
-      apiPatch('/api/admin/users/' + encodeURIComponent(userId) + '/status?status=' + encodeURIComponent(next),
-          null, true, stepUpHeaders(token))
-        .then(function () {
-          showUserResult(disabling ? t('result.disabled') : t('result.enabled'));
-          reloadUsersAfterAction();
-        })
-        .catch(function (err) {
-          if (isStepUpError(err)) { withStepUp(ACTION_CHANGE_STATUS, send); return; }
-          var text = errorTextOf(err);
-          if (text) { showError('userError', text); }
-          reloadUsersAfterAction();
-        });
-    };
-    withStepUp(ACTION_CHANGE_STATUS, send);
+    apiPatch('/api/admin/users/' + encodeURIComponent(userId) + '/status?status=' + encodeURIComponent(next), null, true)
+      .then(function () {
+        showUserResult(disabling ? t('result.disabled') : t('result.enabled'));
+        reloadUsersAfterAction();
+      })
+      .catch(function (err) {
+        var text = errorTextOf(err);
+        if (text) { showError('userError', text); }
+        reloadUsersAfterAction();
+      });
   }
 
   function openResetModal(userId, email) {
@@ -1990,24 +2232,20 @@
 
     var userId = resetTarget.id;
     var email = resetTarget.email;
-    var send = function (token) {
-      $('resetPwdSubmit').disabled = true;
-      apiPost('/api/admin/users/' + encodeURIComponent(userId) + '/password/reset',
-          { newPassword: pwd }, true, stepUpHeaders(token))
-        .then(function () {
-          $('resetPwdSubmit').disabled = false;
-          closeResetModal();
-          /* 只提示成功：密码不回显、不复制、不留存 */
-          showUserResult(t('result.resetDone', { email: email }));
-          reloadUsersAfterAction();
-        })
-        .catch(function (err) {
-          $('resetPwdSubmit').disabled = false;
-          if (isStepUpError(err)) { withStepUp(ACTION_RESET_PASSWORD, send); return; }
-          showError('resetPwdError', err && err.message ? err.message : t('err.resetFailed'));
-        });
-    };
-    withStepUp(ACTION_RESET_PASSWORD, send);
+    $('resetPwdSubmit').disabled = true;
+    apiPost('/api/admin/users/' + encodeURIComponent(userId) + '/password/reset',
+        { newPassword: pwd }, true)
+      .then(function () {
+        $('resetPwdSubmit').disabled = false;
+        closeResetModal();
+        /* 只提示成功：密码不回显、不复制、不留存 */
+        showUserResult(t('result.resetDone', { email: email }));
+        reloadUsersAfterAction();
+      })
+      .catch(function (err) {
+        $('resetPwdSubmit').disabled = false;
+        showError('resetPwdError', err && err.message ? err.message : t('err.resetFailed'));
+      });
   }
 
   function showUserResult(text) {
@@ -2096,6 +2334,615 @@
     hideError('userDetailError');
   }
 
+  /* ---- 产品配置（目录维护） ---- */
+
+  /** 表单元数据（周期 / 档位 / 权益标签）；首次进入分区时拉取后缓存 */
+  var productMeta = null;
+  /** 产品档案 / 套餐列表快照：行内「编辑」按 id 取回完整对象 */
+  var profileList = [];
+  var productList = [];
+  var profileEditing = null;
+  var productEditing = null;
+
+  var PROFILE_CODE = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
+  var PRODUCT_SKU = /^[A-Za-z0-9][A-Za-z0-9-]{1,63}$/;
+  var PRODUCT_AMOUNT = /^\d+(\.\d{1,2})?$/;
+  var PRODUCT_POSITIVE_INT = /^\d+$/;
+
+  function findProfile(profileId) {
+    for (var i = 0; i < profileList.length; i++) {
+      if (String(profileList[i].id) === String(profileId)) { return profileList[i]; }
+    }
+    return null;
+  }
+
+  function findProduct(productId) {
+    for (var i = 0; i < productList.length; i++) {
+      if (String(productList[i].id) === String(productId)) { return productList[i]; }
+    }
+    return null;
+  }
+
+  /** 进入分区：先载入产品档案（套餐表格要显示档案名），再载套餐列表 */
+  function loadProductConfig() {
+    renderPanel('profiles', '', '');
+    renderPanel('products', '', '');
+    hideProfilesResult();
+    hideProductsResult();
+    ensureProductMeta().then(function () {
+      return loadProductProfiles();
+    }).then(function () {
+      return loadProducts();
+    }).catch(function (err) {
+      var text = errorTextOf(err);
+      if (text) { renderPanel('products', text, ''); }
+    });
+  }
+
+  function loadProductProfiles() {
+    var keyword = $('profileKeyword').value.trim();
+    var url = '/api/admin/product-profiles' + (keyword ? '?keyword=' + encodeURIComponent(keyword) : '');
+    return requestJson(url).then(function (list) {
+      profileList = list || [];
+      renderProfilesTable(profileList);
+    });
+  }
+
+  function loadProducts() {
+    var keyword = $('productKeyword').value.trim();
+    var active = $('productActiveFilter').value;
+    var parts = [];
+    if (keyword) { parts.push('keyword=' + encodeURIComponent(keyword)); }
+    if (active) { parts.push('active=' + encodeURIComponent(active)); }
+    var url = '/api/admin/products' + (parts.length ? '?' + parts.join('&') : '');
+    return requestJson(url).then(function (list) {
+      productList = list || [];
+      renderProductsTable(productList);
+    }).catch(function (err) {
+      var text = errorTextOf(err);
+      if (text) { renderPanel('products', text, ''); }
+    });
+  }
+
+  /** 渠道展示名（与收银台一致；未知渠道直接显示枚举名） */
+  var PROVIDER_LABELS = {
+    ALIPAY: { zh: '支付宝', en: 'Alipay' },
+    WECHAT_PAY: { zh: '微信支付', en: 'WeChat Pay' },
+    STRIPE: { zh: 'Stripe', en: 'Stripe' },
+    PADDLE: { zh: 'Paddle', en: 'Paddle' },
+    PAYPAL: { zh: 'PayPal', en: 'PayPal' }
+  };
+
+  /** 元数据只取一次；语言切换后再次打开表单时按当前语言重填下拉项 */
+  function ensureProductMeta() {
+    if (productMeta) {
+      applyProductMetaOptions();
+      return Promise.resolve(productMeta);
+    }
+    return requestJson('/api/admin/products/meta').then(function (data) {
+      productMeta = data || { billingCycles: [], tiers: [], features: [], channels: [] };
+      applyProductMetaOptions();
+      return productMeta;
+    });
+  }
+
+  function applyProductMetaOptions() {
+    if (!productMeta) { return; }
+    fillEnumSelect('productBillingCycle', productMeta.billingCycles || [], 'cycle.');
+    fillEnumSelect('productTier', productMeta.tiers || [], 'tier.');
+    updateProductChannelHint();
+  }
+
+  function providerLabel(method) {
+    var meta = PROVIDER_LABELS[method];
+    if (!meta) { return method; }
+    return lang === 'en' ? meta.en : meta.zh;
+  }
+
+  /** 已启用且支持该计费周期的渠道（渠道能力矩阵来自 /api/admin/products/meta） */
+  function channelsForCycle(cycle) {
+    var channels = (productMeta && productMeta.channels) || [];
+    var names = [];
+    for (var i = 0; i < channels.length; i++) {
+      var channel = channels[i];
+      var cycles = channel.supportedBillingCycles || [];
+      if (channel.enabled && cycle && cycles.indexOf(cycle) >= 0) {
+        names.push(providerLabel(channel.method));
+      }
+    }
+    return names;
+  }
+
+  /** 套餐表单里提示「当前选择的周期能由哪些渠道售卖」；无渠道时告警。 */
+  function updateProductChannelHint() {
+    var hint = $('productChannelHint');
+    var cycleEl = $('productBillingCycle');
+    if (!hint || !cycleEl) { return; }
+    var cycle = cycleEl.value;
+    if (!cycle) {
+      hint.hidden = true;
+      return;
+    }
+    var names = channelsForCycle(cycle);
+    hint.hidden = false;
+    hint.textContent = names.length
+      ? t('productForm.channelHint', { channels: names.join(' · ') })
+      : t('productForm.noChannelHint');
+    hint.classList.toggle('form-note--warn', names.length === 0);
+    updatePriceIdHint(cycle);
+  }
+
+  /**
+   * #25：按计费周期提示两家价目 ID 的填写要求——
+   * 订阅周期（月/季/半年/年）才需要，且 Paddle 必填（缺 id 会被直接拒单）；
+   * 一次性 / 永久套餐两家都不需要。提示只讲规则，不代替服务端校验。
+   */
+  function updatePriceIdHint(cycle) {
+    var el = $('priceIdHint');
+    if (!el) { return; }
+    if (!cycle) { el.hidden = true; return; }
+    var recurring = !(cycle === 'ONE_TIME' || cycle === 'LIFETIME');
+    el.hidden = false;
+    el.textContent = recurring
+      ? t('productForm.priceIdHintRecurring')
+      : t('productForm.priceIdHintOneTime');
+    el.classList.toggle('form-note--warn', recurring);
+  }
+
+  function fillEnumSelect(id, values, labelPrefix) {
+    var el = $(id);
+    if (!el) { return; }
+    var html = '';
+    for (var i = 0; i < values.length; i++) {
+      var value = String(values[i]);
+      html += '<option value="' + escapeHtml(value) + '">' + escapeHtml(t(labelPrefix + value)) + '</option>';
+    }
+    el.innerHTML = html;
+  }
+
+  function renderProfilesTable(list) {
+    var rows = '';
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i];
+      var features = (p.features && p.features.length) ? p.features.join(', ') : '—';
+      rows += '<tr>'
+        + '<td class="mono">' + escapeHtml(p.productCode) + '</td>'
+        + '<td>' + escapeHtml(p.name) + (p.nameEn ? '<br>' + escapeHtml(p.nameEn) : '') + '</td>'
+        + '<td>' + escapeHtml(features) + '</td>'
+        + '<td class="num">' + escapeHtml(String(p.planCount == null ? 0 : p.planCount)) + '</td>'
+        + '<td><div class="row-actions">'
+        + '<button class="btn btn--ghost btn--sm" type="button" data-act="edit"'
+          + ' data-id="' + escapeHtml(p.id) + '">' + t('profiles.edit') + '</button>'
+        + '</div></td>'
+        + '</tr>';
+    }
+    renderPanel('profiles', '', list.length ? table([
+      { label: t('th.productCode') }, { label: t('th.name') }, { label: t('th.features') },
+      { label: t('th.planCount'), num: true }, { label: t('th.action') }
+    ], rows) : '');
+  }
+
+  function fillProfileSelect(selectedCode) {
+    var el = $('productCode');
+    var html = '';
+    for (var i = 0; i < profileList.length; i++) {
+      var profile = profileList[i];
+      html += '<option value="' + escapeHtml(profile.productCode) + '">'
+        + escapeHtml(profile.productCode + ' · ' + profile.name) + '</option>';
+    }
+    el.innerHTML = html;
+    if (selectedCode) { el.value = selectedCode; }
+  }
+
+  function profileNameOf(code) {
+    for (var i = 0; i < profileList.length; i++) {
+      if (String(profileList[i].productCode).toLowerCase() === String(code || '').toLowerCase()) {
+        return profileList[i].name;
+      }
+    }
+    return '';
+  }
+
+  function renderProductsTable(list) {
+    var rows = '';
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i];
+      var onSale = !!p.active;
+      var updateDays = (p.updateUntilDays == null) ? t('products.updateUnlimited') : String(p.updateUntilDays);
+      var maxMajor = (p.maxMajorVersion == null) ? t('products.updateUnlimited') : String(p.maxMajorVersion);
+      var priceText = t('products.priceCell', { cny: money(p.priceCny), usd: money(p.priceUsd) });
+      var daysText = t('products.daysCell', {
+        license: p.licenseDurationDays == null ? '—' : String(p.licenseDurationDays),
+        update: updateDays,
+        major: maxMajor
+      });
+      var profileName = profileNameOf(p.productCode);
+      var profileCell = p.productCode
+        ? escapeHtml(p.productCode) + (profileName ? '<br>' + escapeHtml(profileName) : '')
+        : '—';
+      rows += '<tr>'
+        + '<td class="mono">' + escapeHtml(p.sku) + '</td>'
+        + '<td class="mono">' + profileCell + '</td>'
+        + '<td>' + escapeHtml(p.name) + (p.nameEn ? '<br>' + escapeHtml(p.nameEn) : '') + '</td>'
+        + '<td class="num strong-amount">' + escapeHtml(priceText) + '</td>'
+        + '<td>' + escapeHtml(t('cycle.' + p.billingCycle)) + '</td>'
+        + '<td>' + escapeHtml(channelsForCycle(p.billingCycle).join(' · ') || t('products.noChannel')) + '</td>'
+        + '<td>' + escapeHtml(t('tier.' + p.tier)) + '</td>'
+        + '<td>' + escapeHtml(daysText) + '</td>'
+        + '<td>' + (p.recommended
+            ? '<span class="badge badge--ok">' + t('products.recommended') + '</span>'
+            : '—') + '</td>'
+        + '<td>' + (onSale
+            ? '<span class="badge badge--ok">' + t('products.onSale') + '</span>'
+            : '<span class="badge badge--muted">' + t('products.offSale') + '</span>') + '</td>'
+        + '<td><div class="row-actions">'
+        + '<button class="btn btn--ghost btn--sm" type="button" data-act="edit"'
+          + ' data-id="' + escapeHtml(p.id) + '">' + t('products.edit') + '</button>'
+        + '<button class="btn btn--ghost btn--sm" type="button" data-act="toggle"'
+          + ' data-id="' + escapeHtml(p.id) + '" data-next="' + (onSale ? 'false' : 'true') + '"'
+          + ' data-sku="' + escapeHtml(p.sku) + '">' + (onSale ? t('products.takeOff') : t('products.putOn'))
+          + '</button>'
+        + '</div></td>'
+        + '</tr>';
+    }
+    renderPanel('products', '', list.length ? table([
+      { label: t('th.sku') }, { label: t('th.productCode') }, { label: t('th.name') },
+      { label: t('th.price'), num: true }, { label: t('th.billingCycle') }, { label: t('th.providers') },
+      { label: t('th.plan') }, { label: t('th.licenseUpdate') }, { label: t('products.recommended') },
+      { label: t('th.status') }, { label: t('th.action') }
+    ], rows) : '');
+  }
+
+  function resetProfileForm() {
+    $('profileCode').value = '';
+    $('profileName').value = '';
+    $('profileNameEn').value = '';
+    $('profileDescription').value = '';
+    $('profileDescriptionEn').value = '';
+    hideError('profileFormError');
+  }
+
+  /** 档案列表为空时先拉一次：套餐表单要靠它填产品档案下拉 */
+  function ensureProfilesLoaded() {
+    if (profileList.length) { return Promise.resolve(); }
+    return loadProductProfiles();
+  }
+
+  function openProfileCreate() {
+    ensureProductMeta().then(function () {
+      profileEditing = null;
+      $('profileModalTitle').textContent = t('profileForm.createTitle');
+      resetProfileForm();
+      $('profileCode').disabled = false;
+      $('profileCode').title = '';
+      renderFeatureOptions('profileFeatures', []);
+      $('profileModal').hidden = false;
+      $('profileCode').focus();
+    }).catch(function (err) {
+      var text = errorTextOf(err);
+      if (text) { showError('profilesError', text); }
+    });
+  }
+
+  function openProfileEdit(profileId) {
+    var profile = findProfile(profileId);
+    if (!profile) { return; }
+    ensureProductMeta().then(function () {
+      profileEditing = profile;
+      $('profileModalTitle').textContent = t('profileForm.editTitle', { code: profile.productCode });
+      resetProfileForm();
+      $('profileCode').value = profile.productCode;
+      $('profileCode').disabled = true;
+      $('profileCode').title = t('profileForm.codeLocked');
+      $('profileName').value = profile.name || '';
+      $('profileNameEn').value = profile.nameEn || '';
+      $('profileDescription').value = profile.description || '';
+      $('profileDescriptionEn').value = profile.descriptionEn || '';
+      renderFeatureOptions('profileFeatures', profile.features || []);
+      $('profileModal').hidden = false;
+      $('profileName').focus();
+    }).catch(function (err) {
+      var text = errorTextOf(err);
+      if (text) { showError('profilesError', text); }
+    });
+  }
+
+  function closeProfileModal() {
+    profileEditing = null;
+    $('profileModal').hidden = true;
+    hideError('profileFormError');
+  }
+
+  function submitProfile() {
+    hideError('profileFormError');
+    var creating = !profileEditing;
+    var code = $('profileCode').value.trim();
+    var name = $('profileName').value.trim();
+    if (creating && !code) { showError('profileFormError', t('err.profileCodeRequired')); return; }
+    if (creating && !PROFILE_CODE.test(code)) { showError('profileFormError', t('err.profileCodePattern')); return; }
+    if (!name) { showError('profileFormError', t('err.profileNameRequired')); return; }
+
+    var resultCode = creating ? code : profileEditing.productCode;
+    if (!window.confirm(t('confirm.saveProfile', { code: resultCode }))) { return; }
+
+    var body = {
+      productCode: resultCode,
+      name: name,
+      nameEn: $('profileNameEn').value.trim(),
+      description: $('profileDescription').value.trim(),
+      descriptionEn: $('profileDescriptionEn').value.trim(),
+      features: collectFeatures('profileFeatures')
+    };
+    $('profileSubmit').disabled = true;
+    var url = creating
+      ? '/api/admin/product-profiles'
+      : '/api/admin/product-profiles/' + encodeURIComponent(profileEditing.id);
+    var call = creating ? apiPost(url, body, true) : apiPatch(url, body, true);
+    call.then(function (saved) {
+      $('profileSubmit').disabled = false;
+      closeProfileModal();
+      showProfilesResult(t(creating ? 'profiles.resultCreated' : 'profiles.resultUpdated',
+        { code: (saved && saved.productCode) || resultCode }));
+      loadProductConfig();
+    }).catch(function (err) {
+      $('profileSubmit').disabled = false;
+      showError('profileFormError', err && err.message ? err.message : t('err.profileSaveFailed'));
+    });
+  }
+
+  function resetProductForm() {
+    $('productSku').value = '';
+    $('productName').value = '';
+    $('productNameEn').value = '';
+    $('productPriceCny').value = '';
+    $('productPriceUsd').value = '';
+    $('productLicenseDays').value = '365';
+    $('productUpdateDays').value = '';
+    $('productMaxMajor').value = '';
+    $('productDescription').value = '';
+    $('productDescriptionEn').value = '';
+    $('productStripePriceId').value = '';
+    $('productPaddlePriceId').value = '';
+    $('productRecommended').checked = false;
+    hideError('productFormError');
+  }
+
+  function openProductCreate() {
+    ensureProductMeta().then(ensureProfilesLoaded).then(function () {
+      if (!profileList.length) {
+        showError('productsError', t('err.profileRequiredForPlan'));
+        return;
+      }
+      productEditing = null;
+      $('productModalTitle').textContent = t('productForm.createTitle');
+      resetProductForm();
+      $('productSku').disabled = false;
+      $('productSku').title = '';
+      $('productActiveField').hidden = false;
+      $('productActive').value = 'true';
+      fillProfileSelect(profileList[0].productCode);
+      $('productBillingCycle').value = productMeta.billingCycles && productMeta.billingCycles.length
+        ? productMeta.billingCycles[0] : '';
+      $('productTier').value = productMeta.tiers && productMeta.tiers.length ? productMeta.tiers[0] : '';
+      updateProductChannelHint();
+      $('productModal').hidden = false;
+      $('productSku').focus();
+    }).catch(function (err) {
+      var text = errorTextOf(err);
+      if (text) { showError('productsError', text); }
+    });
+  }
+
+  function openProductEdit(productId) {
+    var p = findProduct(productId);
+    if (!p) { return; }
+    ensureProductMeta().then(ensureProfilesLoaded).then(function () {
+      productEditing = p;
+      $('productModalTitle').textContent = t('productForm.editTitle', { sku: p.sku });
+      resetProductForm();
+      $('productSku').value = p.sku;
+      $('productSku').disabled = true;
+      $('productSku').title = t('productForm.skuLocked');
+      $('productActiveField').hidden = true;
+      fillProfileSelect(p.productCode || '');
+      $('productName').value = p.name || '';
+      $('productNameEn').value = p.nameEn || '';
+      $('productPriceCny').value = p.priceCny == null ? '' : String(p.priceCny);
+      $('productPriceUsd').value = p.priceUsd == null ? '' : String(p.priceUsd);
+      $('productBillingCycle').value = p.billingCycle || '';
+      $('productTier').value = p.tier || '';
+      updateProductChannelHint();
+      $('productLicenseDays').value = p.licenseDurationDays == null ? '' : String(p.licenseDurationDays);
+      $('productUpdateDays').value = p.updateUntilDays == null ? '' : String(p.updateUntilDays);
+      $('productMaxMajor').value = p.maxMajorVersion == null ? '' : String(p.maxMajorVersion);
+      $('productDescription').value = p.description || '';
+      $('productDescriptionEn').value = p.descriptionEn || '';
+      $('productStripePriceId').value = p.stripePriceId || '';
+      $('productPaddlePriceId').value = p.paddlePriceId || '';
+      $('productRecommended').checked = !!p.recommended;
+      $('productModal').hidden = false;
+      $('productName').focus();
+    }).catch(function (err) {
+      var text = errorTextOf(err);
+      if (text) { showError('productsError', text); }
+    });
+  }
+
+  function closeProductModal() {
+    productEditing = null;
+    $('productModal').hidden = true;
+    hideError('productFormError');
+  }
+
+  /** 权益多选：配置里的标签 + 已有但配置缺失的键（保留可勾选，避免编辑时被动丢失） */
+  function renderFeatureOptions(containerId, selectedKeys) {
+    var selected = {};
+    for (var i = 0; i < (selectedKeys || []).length; i++) {
+      var raw = selectedKeys[i];
+      if (raw !== null && raw !== undefined && String(raw).trim() !== '') {
+        selected[String(raw).trim().toUpperCase()] = true;
+      }
+    }
+    var html = '';
+    var options = (productMeta && productMeta.features) || [];
+    for (var j = 0; j < options.length; j++) {
+      var option = options[j];
+      var key = String(option.key).toUpperCase();
+      var label = lang === 'en'
+        ? (option.labelEn || option.key)
+        : (option.labelZh || option.key);
+      html += featureCheckbox(key, label + ' (' + key + ')', !!selected[key]);
+      if (selected[key]) { delete selected[key]; }
+    }
+    for (var extra in selected) {
+      if (Object.prototype.hasOwnProperty.call(selected, extra)) {
+        html += featureCheckbox(extra, extra, true);
+      }
+    }
+    $(containerId).innerHTML = html
+      || '<span class="form-note">' + escapeHtml(t('profileForm.featuresEmpty')) + '</span>';
+  }
+
+  function featureCheckbox(key, label, checked) {
+    return '<label class="check-label"><input type="checkbox" value="' + escapeHtml(key) + '"'
+      + (checked ? ' checked' : '') + '><span>' + escapeHtml(label) + '</span></label>';
+  }
+
+  function collectFeatures(containerId) {
+    var inputs = $(containerId).querySelectorAll('input[type="checkbox"]:checked');
+    var list = [];
+    for (var i = 0; i < inputs.length; i++) {
+      list.push(inputs[i].value);
+    }
+    return list;
+  }
+
+  function isPositiveAmount(text) {
+    return PRODUCT_AMOUNT.test(text) && Number(text) > 0;
+  }
+
+  function isPositiveInt(text) {
+    return PRODUCT_POSITIVE_INT.test(text) && Number(text) > 0;
+  }
+
+  function submitProduct() {
+    hideError('productFormError');
+    var creating = !productEditing;
+    var sku = $('productSku').value.trim();
+    var name = $('productName').value.trim();
+    var priceCnyText = $('productPriceCny').value.trim();
+    var priceUsdText = $('productPriceUsd').value.trim();
+    var licenseDaysText = $('productLicenseDays').value.trim();
+    var updateDaysText = $('productUpdateDays').value.trim();
+    var maxMajorText = $('productMaxMajor').value.trim();
+
+    if (creating && !sku) { showError('productFormError', t('err.productSkuRequired')); return; }
+    if (creating && !PRODUCT_SKU.test(sku)) { showError('productFormError', t('err.productSkuPattern')); return; }
+    if (!name) { showError('productFormError', t('err.productNameRequired')); return; }
+    var productCode = $('productCode').value;
+    if (!productCode) { showError('productFormError', t('err.productProfileRequired')); return; }
+    if (!isPositiveAmount(priceCnyText) || !isPositiveAmount(priceUsdText)) {
+      showError('productFormError', t('err.productPrice'));
+      return;
+    }
+    if (!isPositiveInt(licenseDaysText)
+        || (updateDaysText && !isPositiveInt(updateDaysText))
+        || (maxMajorText && !isPositiveInt(maxMajorText))) {
+      showError('productFormError', t('err.productDays'));
+      return;
+    }
+
+    var body = {
+      name: name,
+      nameEn: $('productNameEn').value.trim(),
+      description: $('productDescription').value.trim(),
+      descriptionEn: $('productDescriptionEn').value.trim(),
+      productCode: productCode,
+      priceCny: priceCnyText,
+      priceUsd: priceUsdText,
+      billingCycle: $('productBillingCycle').value,
+      tier: $('productTier').value,
+      recommended: $('productRecommended').checked,
+      licenseDurationDays: Number(licenseDaysText),
+      updateUntilDays: updateDaysText ? Number(updateDaysText) : null,
+      maxMajorVersion: maxMajorText ? Number(maxMajorText) : null,
+      /* #25：订阅周期套餐靠渠道价目开出真订阅；两家规则不同，空串由服务端按「未配置」处理 */
+      stripePriceId: $('productStripePriceId').value.trim(),
+      paddlePriceId: $('productPaddlePriceId').value.trim()
+    };
+    if (creating) {
+      body.sku = sku;
+      body.active = $('productActive').value === 'true';
+    }
+
+    var resultSku = creating ? sku : productEditing.sku;
+    if (!window.confirm(t('confirm.saveProduct', {
+      sku: resultSku,
+      cny: money(priceCnyText),
+      usd: money(priceUsdText)
+    }))) {
+      return;
+    }
+
+    $('productSubmit').disabled = true;
+    var url = creating
+      ? '/api/admin/products'
+      : '/api/admin/products/' + encodeURIComponent(productEditing ? productEditing.id : '');
+    var call = creating ? apiPost(url, body, true) : apiPatch(url, body, true);
+    call.then(function (saved) {
+      $('productSubmit').disabled = false;
+      closeProductModal();
+      showProductsResult(t(creating ? 'products.resultCreated' : 'products.resultUpdated',
+        { sku: (saved && saved.sku) || resultSku }));
+      loadProductConfig();
+    }).catch(function (err) {
+      $('productSubmit').disabled = false;
+      showError('productFormError', err && err.message ? err.message : t('err.productSaveFailed'));
+    });
+  }
+
+  function toggleProductActive(productId, nextActive, sku) {
+    var confirmText = nextActive
+      ? t('confirm.putOnProduct', { sku: sku })
+      : t('confirm.takeOffProduct', { sku: sku });
+    if (!window.confirm(confirmText)) { return; }
+    hideError('productsError');
+
+    apiPatch('/api/admin/products/' + encodeURIComponent(productId)
+        + '/active?active=' + (nextActive ? 'true' : 'false'), null, true)
+      .then(function (saved) {
+        showProductsResult(t(nextActive ? 'products.resultOn' : 'products.resultOff',
+          { sku: (saved && saved.sku) || sku }));
+        loadProductConfig();
+      })
+      .catch(function (err) {
+        var text = errorTextOf(err);
+        if (text) { showError('productsError', text); }
+      });
+  }
+
+  function showProfilesResult(text) {
+    hideError('profilesError');
+    $('profilesResult').textContent = text;
+    $('profilesResult').hidden = false;
+  }
+
+  function hideProfilesResult() {
+    $('profilesResult').hidden = true;
+    $('profilesResult').textContent = '';
+  }
+
+  function showProductsResult(text) {
+    hideError('productsError');
+    $('productsResult').textContent = text;
+    $('productsResult').hidden = false;
+  }
+
+  function hideProductsResult() {
+    $('productsResult').hidden = true;
+    $('productsResult').textContent = '';
+  }
+
   /* ---- 本人改密（P1）：复用既有 /api/account/password/change，成功即退出重登 ---- */
 
   function submitSelfPasswordChange() {
@@ -2137,6 +2984,346 @@
           showError('selfPwdError', err && err.message ? err.message : t('err.selfPwdFailed'));
         }
       });
+  }
+
+  /* ======================= 4.7 订单处置（#10） ======================= */
+
+  /** 订单列表每页条数（与后端默认口径一致：20 条/页、上限 200） */
+  var ORDER_PAGE_SIZE = 20;
+
+  function showOrderResult(text) {
+    hideError('orderError');
+    $('orderResult').textContent = text;
+    $('orderResult').hidden = false;
+  }
+
+  function hideOrderResult() {
+    $('orderResult').hidden = true;
+    $('orderResult').textContent = '';
+  }
+
+  function orderFilterParams() {
+    var parts = [];
+    var no = $('orderNumberInput').value.trim();
+    if (no) { parts.push('orderNumber=' + encodeURIComponent(no)); }
+    var status = $('orderStatusFilter').value;
+    if (status) { parts.push('status=' + encodeURIComponent(status)); }
+    return parts;
+  }
+
+  function loadOrders() {
+    renderPanel('order', '', '');
+    hideOrderResult();
+    var parts = orderFilterParams();
+    parts.push('page=' + state.orderPage);
+    parts.push('size=' + ORDER_PAGE_SIZE);
+
+    /* #9：后端返回 Page，业务数组在 content，总数在 totalElements */
+    requestJson('/api/admin/orders?' + parts.join('&')).then(function (page) {
+      renderOrderTable(page);
+    }).catch(function (err) {
+      var text = errorTextOf(err);
+      if (text) { showError('orderError', text); }
+    });
+  }
+
+  /** 补签只对已支付订单开放：未支付的订单本就没有可签发的权益 */
+  function issueButtonHtml(o) {
+    var disabled = o.paymentStatus !== 'PAID';
+    return '<button class="btn btn--ghost btn--sm" type="button" data-act="issue"'
+      + ' data-no="' + escapeHtml(o.orderNumber) + '"'
+      + (disabled ? ' disabled title="' + t('title.issuePaidOnly') + '"' : '') + '>'
+      + t('orders.issue') + '</button>';
+  }
+
+  /** 已退款订单不再重复退款（服务端也是「一单只退一次」的口径） */
+  function refundButtonHtml(o) {
+    var done = o.paymentStatus === 'REFUNDED' || o.paymentStatus === 'PARTIALLY_REFUNDED';
+    return '<button class="btn btn--ghost btn--sm btn--danger" type="button" data-act="refund"'
+      + ' data-no="' + escapeHtml(o.orderNumber) + '"'
+      + (done ? ' disabled title="' + t('title.alreadyRefunded') + '"' : '') + '>'
+      + t('orders.refund') + '</button>';
+  }
+
+  function renderOrderTable(page) {
+    var list = (page && page.content) || [];
+    var rows = '';
+    for (var i = 0; i < list.length; i++) {
+      var o = list[i];
+      rows += '<tr>'
+        + '<td class="mono">' + escapeHtml(o.orderNumber || '') + '</td>'
+        + '<td class="num">' + escapeHtml(money(o.totalAmount, o.currency)) + '</td>'
+        + '<td>' + statusBadge(o.status) + '</td>'
+        + '<td>' + statusBadge(o.paymentStatus) + '</td>'
+        + '<td>' + none(o.customerEmail) + '</td>'
+        + '<td>' + escapeHtml(fmtDateTime(o.createdAt)) + '</td>'
+        + '<td><div class="row-actions">' + issueButtonHtml(o) + refundButtonHtml(o) + '</div></td>'
+        + '</tr>';
+    }
+    renderPanel('order', '', list.length ? table([
+      { label: t('th.orderNumber') }, { label: t('th.amount'), num: true },
+      { label: t('th.orderStatus') }, { label: t('th.paymentStatus') },
+      { label: t('th.customer') }, { label: t('th.createdAt') }, { label: t('th.action') }
+    ], rows) : '');
+
+    var pager = $('orderPager');
+    state.orderTotalPages = (page && page.totalPages) || 0;
+    pager.hidden = !(state.orderTotalPages > 1);
+    if (!pager.hidden) {
+      $('orderPageInfo').textContent = t('pager.info',
+        { page: ((page && page.number) || 0) + 1, total: page.totalPages, count: page.totalElements });
+      $('orderPrev').disabled = page.first === true;
+      $('orderNext').disabled = page.last === true;
+    }
+  }
+
+  /**
+   * I4：为已支付订单补签许可证（渠道回调丢失时的运维补偿）。
+   * 与自动发货复用同一服务方法，故天然幂等——重复点只是拿回已签发的记录。
+   */
+  function issueLicenses(orderNumber) {
+    if (!window.confirm(t('confirm.issue', { no: orderNumber }))) { return; }
+    hideError('orderError');
+    apiPost('/api/admin/orders/' + encodeURIComponent(orderNumber) + '/issue', {}, true)
+      .then(function (list) {
+        showOrderResult(t('result.issued', { count: (list && list.length) || 0 }));
+        loadOrders();
+      })
+      .catch(function (err) {
+        var text = errorTextOf(err);
+        if (text) { showError('orderError', text); }
+      });
+  }
+
+  /** 退款不可逆且会作废许可证，故走弹层要原因（原因进审计留痕）而不是行内直接触发 */
+  var refundTarget = { orderNumber: '' };
+
+  function openRefundModal(orderNumber) {
+    refundTarget.orderNumber = orderNumber;
+    $('refundOrderNo').textContent = orderNumber;
+    $('refundReason').value = '';
+    hideError('refundError');
+    $('refundModal').hidden = false;
+    $('refundReason').focus();
+  }
+
+  function closeRefundModal() {
+    $('refundModal').hidden = true;
+    refundTarget.orderNumber = '';
+    hideError('refundError');
+  }
+
+  function submitRefund() {
+    var no = refundTarget.orderNumber;
+    if (!no) { return; }
+    if (!window.confirm(t('confirm.refund', { no: no }))) { return; }
+    var reason = $('refundReason').value.trim();
+    $('refundSubmit').disabled = true;
+    apiPost('/api/admin/orders/' + encodeURIComponent(no) + '/refund'
+        + (reason ? '?reason=' + encodeURIComponent(reason) : ''), {}, true)
+      .then(function (saved) {
+        $('refundSubmit').disabled = false;
+        closeRefundModal();
+        var status = (saved && saved.paymentStatus) || '';
+        if (status === 'REFUND_FAILED') {
+          /* 渠道没退成：订单仍保留已支付，如实提示，绝不说「已退款」 */
+          showError('orderError', t('result.refundFailed'));
+        } else {
+          showOrderResult(t('result.refunded', { status: status }));
+        }
+        loadOrders();
+      })
+      .catch(function (err) {
+        $('refundSubmit').disabled = false;
+        showError('refundError', err && err.message ? err.message : t('err.refundFailed'));
+      });
+  }
+
+  /* ======================= 4.8 兑换码（#10） ======================= */
+
+  /** 当前检索结果，供「导出 CSV」复用（不再为导出单独打一次接口） */
+  var codeList = [];
+
+  function showCodeResult(text) {
+    hideError('codeError');
+    $('codeResult').textContent = text;
+    $('codeResult').hidden = false;
+  }
+
+  function hideCodeResult() {
+    $('codeResult').hidden = true;
+    $('codeResult').textContent = '';
+  }
+
+  function loadRedeemCodes() {
+    renderPanel('code', '', '');
+    hideCodeResult();
+    var parts = [];
+    var sku = $('codeSku').value.trim();
+    if (sku) { parts.push('productSku=' + encodeURIComponent(sku)); }
+    var st = $('codeStatus').value;
+    if (st) { parts.push('status=' + encodeURIComponent(st)); }
+
+    requestJson('/api/admin/redeem-codes' + (parts.length ? '?' + parts.join('&') : ''))
+      .then(function (list) {
+        codeList = list || [];
+        renderCodeTable(codeList);
+      })
+      .catch(function (err) {
+        var text = errorTextOf(err);
+        if (text) { showError('codeError', text); }
+      });
+  }
+
+  function codeStatusBadge(status) {
+    var clsMap = { UNUSED: 'ok', USED: 'muted', EXPIRED: 'warn', REVOKED: 'danger' };
+    var keyMap = { UNUSED: 'codes.unused', USED: 'codes.used', EXPIRED: 'codes.expired', REVOKED: 'codes.revoked' };
+    var label = keyMap[status] ? t(keyMap[status]) : status;
+    return '<span class="badge badge--' + (clsMap[status] || 'muted') + '">' + escapeHtml(label) + '</span>';
+  }
+
+  function renderCodeTable(list) {
+    var rows = '';
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      var revocable = c.status === 'UNUSED';
+      rows += '<tr>'
+        + '<td class="mono">' + escapeHtml(c.code || '') + '</td>'
+        + '<td class="mono">' + none(c.productSku) + '</td>'
+        + '<td>' + codeStatusBadge(c.status) + '</td>'
+        + '<td>' + escapeHtml(fmtDateTime(c.usedAt)) + '</td>'
+        + '<td>' + escapeHtml(fmtDateTime(c.expiresAt)) + '</td>'
+        + '<td><div class="row-actions">'
+        + '<button class="btn btn--ghost btn--sm btn--danger" type="button" data-act="revokeCode"'
+        + ' data-code="' + escapeHtml(c.code || '') + '"'
+        + (revocable ? '' : ' disabled title="' + t('title.alreadyRefunded') + '"') + '>'
+        + t('codes.revoke') + '</button>'
+        + '</div></td>'
+        + '</tr>';
+    }
+    renderPanel('code', '', list.length ? table([
+      { label: t('th.code') }, { label: t('codes.sku') }, { label: t('th.codeStatus') },
+      { label: t('th.codeUsedAt') }, { label: t('th.codeExpires') }, { label: t('th.action') }
+    ], rows) : '');
+  }
+
+  function revokeCode(code) {
+    if (!window.confirm(t('confirm.revokeCode', { code: code }))) { return; }
+    hideError('codeError');
+    apiPost('/api/admin/redeem-codes/revoke/' + encodeURIComponent(code), {}, true)
+      .then(function () {
+        showCodeResult(t('codes.resultRevoked', { code: code }));
+        loadRedeemCodes();
+      })
+      .catch(function (err) {
+        var text = errorTextOf(err);
+        if (text) { showError('codeError', text); }
+      });
+  }
+
+  function generateCodes() {
+    var sku = $('genSku').value.trim();
+    if (!sku) { showError('codeError', t('err.codesSkuRequired')); return; }
+    var countText = $('genCount').value.trim();
+    if (!isPositiveInt(countText)) { showError('codeError', t('err.codesCount')); return; }
+
+    var params = 'productSku=' + encodeURIComponent(sku) + '&count=' + encodeURIComponent(countText);
+    var expiresRaw = $('genExpires').value;
+    if (expiresRaw) {
+      /* datetime-local 缺秒，后端 LocalDateTime 解析需要补上 */
+      params += '&expiresAt=' + encodeURIComponent(expiresRaw.length === 16 ? expiresRaw + ':00' : expiresRaw);
+    }
+
+    hideError('codeError');
+    $('codeGenerate').disabled = true;
+    apiPost('/api/admin/redeem-codes/generate?' + params, {}, true)
+      .then(function (data) {
+        $('codeGenerate').disabled = false;
+        var codes = (data && data.codes) || [];
+        showCodeResult(t('codes.resultGenerated', { count: codes.length }));
+        if (codes.length) {
+          $('codeOutputText').value = codes.join('\n');
+          $('codeOutput').hidden = false;
+        } else {
+          $('codeOutput').hidden = true;
+        }
+        loadRedeemCodes();
+      })
+      .catch(function (err) {
+        $('codeGenerate').disabled = false;
+        var text = errorTextOf(err);
+        if (text) { showError('codeError', text); }
+      });
+  }
+
+  /** 导出当前检索结果（码明文 + 状态，供对账） */
+  function exportCodes() {
+    if (!codeList.length) { return; }
+    var rows = [t('th.code') + ',' + t('codes.sku') + ',' + t('th.codeStatus') + ','
+      + t('th.codeUsedAt') + ',' + t('th.codeExpires')];
+    for (var i = 0; i < codeList.length; i++) {
+      var c = codeList[i];
+      rows.push([c.code, c.productSku, c.status, c.usedAt || '', c.expiresAt || '']
+        .map(csvCell).join(','));
+    }
+    downloadCsv('redeem-codes.csv', rows.join('\r\n'));
+  }
+
+  function csvCell(value) {
+    var text = value == null ? '' : String(value);
+    return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  }
+
+  /** 走 Blob + 临时 <a> 下载，避免把码明文拼进 URL */
+  function downloadCsv(filename, content) {
+    var blob = new Blob(['\ufeff' + content], { type: 'text/csv;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  /* ======================= 4.9 渠道自查（#10） ======================= */
+
+  function loadChannelCheck() {
+    renderPanel('channelCheck', '', '');
+    requestJson('/api/admin/payment-channels').then(function (list) {
+      renderChannelTable(list || []);
+    }).catch(function (err) {
+      var text = errorTextOf(err);
+      if (text) { showError('channelCheckError', text); }
+    });
+  }
+
+  /**
+   * 只展示渠道名、启用态与缺失的**配置项名**——端点不回显任何密钥值，
+   * 这里也不会自己拼出密钥字段。缺失项为空即配置齐全。
+   */
+  function renderChannelTable(list) {
+    var rows = '';
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      var missing = c.missingConfig || [];
+      rows += '<tr>'
+        + '<td class="mono">' + escapeHtml(c.method || '') + '</td>'
+        + '<td>' + (c.enabled
+            ? '<span class="badge badge--ok">' + t('badge.on') + '</span>'
+            : '<span class="badge badge--muted">' + t('channels.disabled') + '</span>') + '</td>'
+        + '<td>' + (missing.length
+            ? '<span class="badge badge--danger">' + escapeHtml(t('channels.missing', { count: missing.length })) + '</span>'
+            : '<span class="badge badge--ok">' + t('channels.ok') + '</span>') + '</td>'
+        + '<td class="mono">' + (missing.length ? escapeHtml(missing.join(', ')) : '—') + '</td>'
+        + '<td>' + escapeHtml(c.note || '') + '</td>'
+        + '</tr>';
+    }
+    renderPanel('channelCheck', '', list.length ? table([
+      { label: t('th.channel') }, { label: t('th.enabled') }, { label: t('th.configured') },
+      { label: t('th.missingKeys') }, { label: t('th.note') }
+    ], rows) : '');
   }
 
   /* ======================= 5. 事件绑定与初始化 ======================= */
@@ -2241,6 +3428,44 @@
       if (state.userPage < state.userTotalPages - 1) { state.userPage += 1; loadUsers(); }
     });
 
+    /* 订单处置（#10）：查询、翻页、行内补签/退款与退款弹层 */
+    $('orderSearch').addEventListener('click', function () { state.orderPage = 0; loadOrders(); });
+    $('orderNumberInput').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); state.orderPage = 0; loadOrders(); }
+    });
+    $('orderStatusFilter').addEventListener('change', function () { state.orderPage = 0; loadOrders(); });
+    $('orderPrev').addEventListener('click', function () {
+      if (state.orderPage > 0) { state.orderPage -= 1; loadOrders(); }
+    });
+    $('orderNext').addEventListener('click', function () {
+      if (state.orderPage < state.orderTotalPages - 1) { state.orderPage += 1; loadOrders(); }
+    });
+    $('orderTableWrap').addEventListener('click', function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest('[data-act]') : null;
+      if (!btn) { return; }
+      var act = btn.getAttribute('data-act');
+      if (act === 'issue') { issueLicenses(btn.getAttribute('data-no')); }
+      else if (act === 'refund') { openRefundModal(btn.getAttribute('data-no')); }
+    });
+    $('refundSubmit').addEventListener('click', submitRefund);
+    $('refundCancel').addEventListener('click', closeRefundModal);
+
+    /* 兑换码（#10）：检索、导出、批量生成与行内撤销 */
+    $('codeSearch').addEventListener('click', loadRedeemCodes);
+    $('codeSku').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); loadRedeemCodes(); }
+    });
+    $('codeStatus').addEventListener('change', loadRedeemCodes);
+    $('codeExportBtn').addEventListener('click', exportCodes);
+    $('codeGenerate').addEventListener('click', generateCodes);
+    $('codeTableWrap').addEventListener('click', function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest('[data-act="revokeCode"]') : null;
+      if (btn) { revokeCode(btn.getAttribute('data-code')); }
+    });
+
+    /* 渠道自查（#10） */
+    $('channelCheck').addEventListener('click', loadChannelCheck);
+
     $('userTableWrap').addEventListener('change', function (e) {
       var sel = e.target && e.target.closest ? e.target.closest('[data-act="role"]') : null;
       if (sel) { changeUserRole(sel.getAttribute('data-id'), sel.value); }
@@ -2257,14 +3482,51 @@
     $('resetPwdSubmit').addEventListener('click', submitResetPassword);
     $('resetPwdCancel').addEventListener('click', closeResetModal);
 
-    /* 敏感动作二次确认（P2 step-up）：确认 / 取消 / 邮箱兜底发码 */
-    $('stepUpSubmit').addEventListener('click', submitStepUp);
-    $('stepUpCancel').addEventListener('click', closeStepUpModal);
-    $('stepUpSendBtn').addEventListener('click', sendStepUpEmailCode);
-
     /* 用户详情弹层：关闭 / 查看许可证（复用既有许可证查询） */
     $('userDetailClose').addEventListener('click', closeUserDetail);
     $('userDetailLicensesBtn').addEventListener('click', loadUserDetailLicenses);
+
+    /* 产品配置：产品档案 + 套餐两层 */
+    $('profileSearch').addEventListener('click', function () {
+      loadProductProfiles().catch(function (err) {
+        var text = errorTextOf(err);
+        if (text) { showError('profilesError', text); }
+      });
+    });
+    $('profileKeyword').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        $('profileSearch').click();
+      }
+    });
+    $('profileCreateBtn').addEventListener('click', openProfileCreate);
+    $('profilesTableWrap').addEventListener('click', function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest('[data-act]') : null;
+      if (btn) { openProfileEdit(btn.getAttribute('data-id')); }
+    });
+    $('profileSubmit').addEventListener('click', submitProfile);
+    $('profileCancel').addEventListener('click', closeProfileModal);
+
+    /* 套餐：查询、新增、行内编辑 / 上下架与表单弹层 */
+    $('productSearch').addEventListener('click', loadProductConfig);
+    $('productCreateBtn').addEventListener('click', openProductCreate);
+    $('productKeyword').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); loadProductConfig(); }
+    });
+    $('productActiveFilter').addEventListener('change', loadProductConfig);
+    $('productsTableWrap').addEventListener('click', function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest('[data-act]') : null;
+      if (!btn) { return; }
+      var act = btn.getAttribute('data-act');
+      if (act === 'edit') { openProductEdit(btn.getAttribute('data-id')); }
+      else if (act === 'toggle') {
+        toggleProductActive(btn.getAttribute('data-id'), btn.getAttribute('data-next') === 'true',
+          btn.getAttribute('data-sku'));
+      }
+    });
+    $('productSubmit').addEventListener('click', submitProduct);
+    $('productCancel').addEventListener('click', closeProductModal);
+    $('productBillingCycle').addEventListener('change', updateProductChannelHint);
 
     /* 本人改密（P1） */
     $('selfPwdSubmit').addEventListener('click', submitSelfPasswordChange);

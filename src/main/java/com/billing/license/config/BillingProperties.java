@@ -68,6 +68,14 @@ public class BillingProperties {
      */
     private Map<String, FeatureLabel> featureLabels = new HashMap<>();
 
+    /**
+     * 流水与审计表的保留期（#13）。
+     *
+     * <p>三张只增不减的表（{@code audit_logs} / {@code payment_events} / {@code license_events}）
+     * 按此处天数定期清理超期行。天数取合规口径，改动前须确认与业务/法务要求一致。
+     */
+    private Retention retention = new Retention();
+
     @Data
     public static class Risk {
         /** 同一邮箱在窗口期内最大下单/创建收银台次数 */
@@ -120,5 +128,27 @@ public class BillingProperties {
     public static class FeatureLabel {
         private String zh;
         private String en;
+    }
+
+    /**
+     * 流水与审计保留期（#13，川哥 2026-10-25 拍板天数）。
+     *
+     * <p>任一值 ≤ 0 表示**该表不清理**（保留期关掉），适合合规要求变化时临时停用，
+     * 不必改代码。批量大小控制单次事务的删除行数，避免长事务锁表。
+     */
+    @Data
+    public static class Retention {
+
+        /** 管理操作审计日志 {@code audit_logs} 保留天数 */
+        private int auditLogDays = 365;
+
+        /** 支付渠道事件 {@code payment_events} 保留天数（远大于渠道重投窗口，不影响幂等去重） */
+        private int paymentEventDays = 365;
+
+        /** 领证/核销事件 {@code license_events} 保留天数 */
+        private int licenseEventDays = 180;
+
+        /** 单批删除行数上限（每批一个短事务，避免长事务锁表） */
+        private int batchSize = 1000;
     }
 }

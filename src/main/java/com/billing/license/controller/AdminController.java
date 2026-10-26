@@ -31,7 +31,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 /**
  * 管理后台控制器（架构十一.6、十六；接口简化主题 I）
@@ -296,10 +295,8 @@ public class AdminController {
             @Parameter(description = "产品 SKU（可选）") @RequestParam(required = false) String productSku,
             @Parameter(description = "状态：UNUSED/USED/EXPIRED/REVOKED（可选）")
             @RequestParam(required = false) String status) {
-        List<RedeemCodeView> views = redeemCodeService.listCodes(productSku, status).stream()
-            .map(RedeemCodeView::from)
-            .collect(Collectors.toList());
-        return ResponseEntity.ok(views);
+        // #12：映射在服务层事务内完成（要读 LAZY 的 product），控制层只负责透传视图
+        return ResponseEntity.ok(redeemCodeService.listCodes(productSku, status));
     }
 
     @Operation(summary = "撤销兑换码（管理端）", description = "作废指定兑换码（需管理员 JWT）")
@@ -361,10 +358,8 @@ public class AdminController {
     @PostMapping("/users/{userId}/password/reset")
     public ResponseEntity<Void> resetUserPassword(
             @Parameter(description = "目标用户 ID", required = true) @PathVariable UUID userId,
-            @Valid @RequestBody AdminPasswordResetRequest request,
-            @RequestHeader(value = "X-Step-Up-Token", required = false) String stepUpToken) {
-        adminUserService.resetPassword(CurrentUserResolver.currentUserId(), userId,
-            request.getNewPassword(), stepUpToken);
+            @Valid @RequestBody AdminPasswordResetRequest request) {
+        adminUserService.resetPassword(CurrentUserResolver.currentUserId(), userId, request.getNewPassword());
         return ResponseEntity.ok().build();
     }
 
@@ -399,9 +394,8 @@ public class AdminController {
     @PatchMapping("/users/{userId}/role")
     public ResponseEntity<AdminUserView> changeUserRole(
             @Parameter(description = "目标用户 ID", required = true) @PathVariable UUID userId,
-            @Parameter(description = "新角色：USER / ADMIN", required = true) @RequestParam User.UserRole role,
-            @RequestHeader(value = "X-Step-Up-Token", required = false) String stepUpToken) {
-        return ResponseEntity.ok(adminUserService.changeRole(CurrentUserResolver.currentUserId(), userId, role, stepUpToken));
+            @Parameter(description = "新角色：USER / ADMIN", required = true) @RequestParam User.UserRole role) {
+        return ResponseEntity.ok(adminUserService.changeRole(CurrentUserResolver.currentUserId(), userId, role));
     }
 
     @Operation(summary = "变更用户状态（管理端）",
@@ -415,9 +409,8 @@ public class AdminController {
     @PatchMapping("/users/{userId}/status")
     public ResponseEntity<AdminUserView> changeUserStatus(
             @Parameter(description = "目标用户 ID", required = true) @PathVariable UUID userId,
-            @Parameter(description = "新状态：ACTIVE / DISABLED", required = true) @RequestParam User.UserStatus status,
-            @RequestHeader(value = "X-Step-Up-Token", required = false) String stepUpToken) {
-        return ResponseEntity.ok(adminUserService.changeStatus(CurrentUserResolver.currentUserId(), userId, status, stepUpToken));
+            @Parameter(description = "新状态：ACTIVE / DISABLED", required = true) @RequestParam User.UserStatus status) {
+        return ResponseEntity.ok(adminUserService.changeStatus(CurrentUserResolver.currentUserId(), userId, status));
     }
 
     // ==================== 用户管理参数解析 ====================
