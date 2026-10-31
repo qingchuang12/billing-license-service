@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="robots" content="noindex, nofollow">
+<title>支付已完成 · 晏宁科技</title>
+<link rel="stylesheet" href="/payment/result.css?v=1">
+</head>
+<body>
+<main class="result">
+  <section class="result__card" aria-labelledby="resultTitle">
+    <div class="result__mark result__mark--success" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 12.5 9.5 18 20 6.5"></path>
+      </svg>
+    </div>
+
+    <h1 class="result__title" id="resultTitle">支付已完成</h1>
+    <p class="result__subtitle">Payment completed</p>
+
+    <p class="result__text">
+      授权凭证已按下单时填写的邮箱发放。请返回下单的应用完成激活；如需查看订单与授权详情，可登录「我的授权」。
+    </p>
+
+    <div class="result__meta" id="meta" hidden>
+      <div class="result__meta-row">
+        <span class="result__meta-label">订单号</span>
+        <span class="result__meta-value" id="orderNo">—</span>
+      </div>
+    </div>
+
+    <div class="result__actions">
+      <a class="btn btn--primary" href="/account/">查看我的授权</a>
+      <a class="btn btn--ghost" href="/checkout/">返回收银台</a>
+    </div>
+
+    <p class="result__foot">
+      本页仅用于支付结果提示，不展示任何账户或支付隐私信息。若订单状态未更新，稍后刷新「我的授权」即可。
+    </p>
+  </section>
+</main>
+<script src="/payment/result.js?v=1"></script>
+</body>
+</html>

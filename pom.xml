@@ -16,18 +16,17 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.1</version>
+        <version>4.1.2</version>
         <relativePath/>
     </parent>
 
     <properties>
-        <java.version>21</java.version>
+        <java.version>25</java.version>
         <jjwt.version>0.13.0</jjwt.version>
         <stripe.version>24.9.0</stripe.version>
         <alipay.version>4.40.560.ALL</alipay.version>
         <wechatpay.version>0.2.14</wechatpay.version>
         <paypal.version>2.0.0</paypal.version>
-        <spring-security.version>7.0.7</spring-security.version>
         <dom4j.version>2.1.3</dom4j.version>
         <bouncycastle.version>1.86</bouncycastle.version>
         <!-- 仅用 core（本地仓已有 jar+pom+sha1，离线 -o 可解析）；
@@ -36,6 +35,14 @@
         <okhttp.version>5.3.2</okhttp.version>
         <!-- Lombok 需与 JDK 25 兼容，1.18.46 已实测可用 -->
         <lombok.version>1.18.46</lombok.version>
+        <!-- 安全基线：Boot 4.1.2 的 BOM 仍带 logback 1.5.38（受 CVE-2026-104721 影响），
+             1.6.x 是 1.5.x 的直接替代线，1.6.5 起修复 -->
+        <logback.version>1.6.6</logback.version>
+        <!-- 安全基线：BOM 自带 jackson 3.1.7 / 2.21.7，升到各自最新补丁线 -->
+        <jackson-bom.version>3.2.4</jackson-bom.version>
+        <jackson-2-bom.version>2.22.4</jackson-2-bom.version>
+        <!-- 测试作用域 asm（json-smart → accessors-smart），Boot 未托管，固定到最新 -->
+        <asm.version>9.11.1</asm.version>
     </properties>
 
     <dependencies>
@@ -44,8 +51,8 @@
             <artifactId>okhttp</artifactId>
             <version>${okhttp.version}</version>
         </dependency>
-        <!-- spring-security-core 与 jackson-core 由 Boot 4.1.1 parent BOM 统一管理版本，
-             故不写显式 <version>，避免与 Boot 4 内置 Security 7.x / Jackson 3 混搭 -->
+        <!-- spring-security-core 与 jackson-core 版本由 Boot 4.1.2 parent BOM 统一管理，
+             不写显式 <version>，避免与 Boot 4 内置 Security 7.x / Jackson 3 混搭 -->
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-core</artifactId>
@@ -206,9 +213,9 @@
             </exclusions>
         </dependency>
 
-        <!-- Jackson 2.x annotations：3.x databind 3.2.3 运行期所需（含 JsonApplyView），
-             显式声明确保进入 runtime classpath（版本由 dependencyManagement 统一钉 2.22；
-             jackson-annotations 2.x 线最高仅发布到 2.22，无 2.22.3，该版本才含 JsonApplyView） -->
+        <!-- Jackson 2.x annotations：3.x databind 运行期所需（含 JsonApplyView），
+             显式声明确保进入 runtime classpath；版本由 jackson-2-bom 统一管理
+             （2.x 的 annotations 只发布到 2.22 线，无 2.22.3 这类补丁号） -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-annotations</artifactId>
@@ -256,57 +263,14 @@
         </dependency>
     </dependencies>
 
+    <!-- Boot 4.1.2 已托管 tomcat 11.0.27 / jackson / logback（后者由上面 properties 覆盖），
+         故这里只需补 Boot 未托管的一项：测试链路上的 asm -->
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>tools.jackson.core</groupId>
-                <artifactId>jackson-databind</artifactId>
-                <version>3.2.3</version>
-            </dependency>
-            <dependency>
-                <groupId>tools.jackson.core</groupId>
-                <artifactId>jackson-core</artifactId>
-                <version>3.2.3</version>
-            </dependency>
-            <dependency>
-                <groupId>com.fasterxml.jackson.core</groupId>
-                <artifactId>jackson-databind</artifactId>
-                <version>2.22.3</version>
-            </dependency>
-            <dependency>
-                <groupId>com.fasterxml.jackson.core</groupId>
-                <artifactId>jackson-core</artifactId>
-                <version>2.22.3</version>
-            </dependency>
-            <dependency>
-                <groupId>com.fasterxml.jackson.core</groupId>
-                <artifactId>jackson-annotations</artifactId>
-                <version>2.22</version>
-            </dependency>
-            <dependency>
-                <groupId>org.apache.tomcat.embed</groupId>
-                <artifactId>tomcat-embed-core</artifactId>
-                <version>11.0.26</version>
-            </dependency>
-            <dependency>
-                <groupId>org.apache.tomcat.embed</groupId>
-                <artifactId>tomcat-embed-websocket</artifactId>
-                <version>11.0.26</version>
-            </dependency>
-            <dependency>
-                <groupId>org.apache.tomcat.embed</groupId>
-                <artifactId>tomcat-embed-el</artifactId>
-                <version>11.0.26</version>
-            </dependency>
-            <dependency>
-                <groupId>ch.qos.logback</groupId>
-                <artifactId>logback-classic</artifactId>
-                <version>1.6.3</version>
-            </dependency>
-            <dependency>
-                <groupId>ch.qos.logback</groupId>
-                <artifactId>logback-core</artifactId>
-                <version>1.6.3</version>
+                <groupId>org.ow2.asm</groupId>
+                <artifactId>asm</artifactId>
+                <version>${asm.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

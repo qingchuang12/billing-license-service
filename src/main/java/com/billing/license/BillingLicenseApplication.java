@@ -7,7 +7,6 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.Environment;
 import org.springframework.scheduling.annotation.EnableAsync;
-import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * 计费与 License 管理系统启动类
@@ -19,7 +18,6 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * 4. 兑换码管理 - 生成和兑换激活码
  */
 @Slf4j
-@EnableScheduling
 @EnableAsync
 @SpringBootApplication
 public class BillingLicenseApplication {

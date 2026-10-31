@@ -11,7 +11,7 @@
 |---|---|---|
 | `scripts/db/` | 数据库 / Flyway 迁移相关 | `show_migrations.sh`（查看已执行迁移）、`backup.sh`（pg_dump 备份）、`restore.sh`（pg_restore 恢复，带二次确认） |
 | `scripts/deploy/` | 构建与部署 | `package.sh`（打可执行 jar，**默认跑测试**，`SKIP_TESTS=1` 可跳过）、`run.sh`（本地运行 jar）、`build.sh` / `up.sh`（Docker 镜像构建与 compose 启动） |
-| `scripts/ops/` | 运行时运维 | `healthcheck.sh`（优先探测 `/actuator/health`，失败退化为端口连通性探测；默认端口 8000，`APP_PORT` 可覆盖） |
+| `scripts/ops/` | 运行时运维 | `healthcheck.sh`（优先探测 `/actuator/health`，失败退化为端口连通性探测；默认端口 8000，`APP_PORT` 可覆盖）、`account_erasure.sh`（账号数据导出 / 注销匿名化，SOP 见 `docs/账号注销与数据导出SOP.md`） |
 
 > ⚠️ `backup.sh` / `restore.sh` 于 2026-09-18 新增，仅做了语法检查与连接串解析自测（开发机无 psql/docker），**首次使用前请在目标环境确认 `pg_dump`/`pg_restore` 版本 ≥ 数据库版本**。
 
@@ -21,7 +21,7 @@
 （`application.yml` 中 `spring.flyway.enabled=true`，`locations=classpath:db/migration`）。
 **无需手动执行 SQL**；重新部署即自动增量迁移。
 
-### 迁移清单（V1–V13，禁止合并、禁止首次部署后修改）
+### 迁移清单（V1–V22，禁止合并、禁止首次部署后修改）
 
 | 版本 | 主题 | 关键内容 |
 |---|---|---|
@@ -37,9 +37,18 @@
 | V10 | 产品维度（D2） | `products.product_code`（收银台按产品码过滤目录，现有商品回填 `ai-tools`） |
 | V11 | 机器码唯一真相回填（E4 审计丙） | **数据回填、不动 schema**：把「机器码只落在 `orders.machine_code`」的历史签发件抄平到 `licenses.machine_code`，并改写该列注释为唯一真相口径。配套退役了 `License#getMachineCode()` 的订单回落 |
 | V12 | 热路径查询索引 | 4 条审计点名的查询索引（详见 `V12__hot_path_query_indexes.sql`） |
-| V13 | 产品档案（产品 → 套餐两层） | 建 `product_profiles`（按 `product_code` 唯一，含名称/描述/权益）；按 `product_code` 从 `products` 回填后删除 `products.features`；`products` 新增 `recommended`。⚠ `gen_random_uuid()` 需 PostgreSQL 13+ |
+| V13 | 产品档案（产品 → 套餐两层） | 建 `product_profiles`（按 `product_code` 唯一，含名称/描述/权益）；按 `product_code` 从 `products` 回填后删除 `products.features`；`products` 新增 `recommended`。⚠ `gen_random_uuid()` 需 PostgreSQL 13+。**该表已由 V22 删除** |
+| V14 | 渠道价目（订阅） | `products.stripe_price_id` / `paddle_price_id`（Stripe catalog price、Paddle 订阅必配） |
+| V15 | 保留期清理索引 | `audit_logs(created_at)` / `audit_logs(action, created_at)` / `payment_events(created_at)` / `license_events(created_at)`，配合 `RetentionCleanupService` 批删 |
+| V16 | Creem 商品号 | `products.creem_product_id`（Creem 下单必配，缺失即拒单） |
+| V17 | 收银台支付入口 | `checkout_sessions.qr_code` / `payment_mode`（二维码渠道与支付形态） |
+| V18 | 收款方式 | `products.charge_mode`（`ONE_TIME` / `AUTO_RECURRING`，按 `billing_cycle` 回填后 NOT NULL、默认 `ONE_TIME`） |
+| V19 | **支付模型重建** | 建 `payment_attempts`（渠道尝试，可多行）与 `payment_ledger_entries`（不可变资金账，`idempotency_key` 唯一）+ 4 条索引；回填历史 `payments` 后**删除旧 `payments` 表**。⚠ 执行前必须备份 |
+| V20 | 履约事件 | 建 `fulfillment_events`（订单 + 类型唯一）+ 状态/重试扫描索引：支付与交付解耦，失败保留 FAILED 由定时任务重试 |
+| V21 | 收银台关单 | `checkout_sessions.channel_closed_at` + 后台对账扫描索引（过期会话只在渠道确认未收款后关单） |
+| V22 | **单层套餐化** | 删除 `product_profiles`（权益配置下线，客户端按 SKU 解锁；产品名称/描述已在 `products` 行上），`products.product_code` 成为自由文本产品码 |
 
-> ⚠️ **迁移文件一经首次部署即被 Flyway 校验和锁定**：之后不得再编辑内容（变更请新建版本号，下一个可用 **V14**）。
+> ⚠️ **迁移文件一经首次部署即被 Flyway 校验和锁定**：之后不得再编辑内容（变更请新建版本号，下一个可用 **V23**）。
 > 上线前如需补充头注释可直接修改；上线后修改会导致启动失败。
 
 查看已执行迁移：
@@ -63,14 +72,14 @@
 export DB_URL=jdbc:postgresql://127.0.0.1:5432/license
 export DB_USERNAME=license
 export DB_PASSWORD='<强口令>'
-export APP_BASE_URL='http://localhost:8000'   # yml 默认就是该值；**生产必须显式填公网 HTTPS**（见 docs/上线准备工作.md §2.2）
+export APP_BASE_URL='http://localhost:8000'   # 本地联调值；**生产必须显式填公网 HTTPS**（缺失即拒启，见 docs/上线准备工作.md §2.2）
 # 各支付渠道密钥见 .env.example（ALIPAY_*/WECHAT_*/STRIPE_* 等）
 ./scripts/deploy/run.sh
 ```
 
 ### 容器化部署（Docker Compose）
 
-已提供 `Dockerfile`（多阶段构建：maven:21 构建 → temurin:21-jre 运行，非 root 用户）+
+已提供 `Dockerfile`（多阶段构建：maven:25 构建 → temurin:25-jre 运行，非 root 用户）+
 `docker-compose.yml`（app + postgres，网络隔离）。
 
 **首次启动完整流程：**
@@ -93,9 +102,10 @@ cp .env.example .env
 mkdir -p keys
 
 # 3. 构建并启动
-docker compose up -d --build
-# 或旧版 docker-compose（视本机 CLI 版本而定）：
-# docker-compose up -d --build
+#    生产必须叠加 docker-compose.prod.yml（启用 prod profile：关 Swagger、跑生产自检）：
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#    本地联调（沙箱/HTTP）用基础 compose 即可：
+# docker compose up -d --build
 
 # 4. 查看状态与日志
 docker compose ps
@@ -124,7 +134,7 @@ docker compose logs -f app
 | `ACCOUNT_JWT_SECRET` / `ACCOUNT_CODE_PEPPER` | 用户令牌签名密钥（≥32B）/ 验证码哈希 pepper（生产必配）；管理端鉴权复用同一账号体系（管理员 JWT） |
 | `ACCOUNT_MFA_KEY` | 二次因子主密钥（≥32B，**无默认值，缺失即拒启**）：派生半认证票据签名密钥与 TOTP 密钥加密密钥（B8）。轮换前须先跑 `db/reset-admin-mfa.sql` |
 | `MAIL_PASSWORD` | SMTP 口令（无默认值）；`MAIL_HOST` / `MAIL_PORT` / `MAIL_USERNAME` 有默认值 |
-| `APP_BASE_URL` | 对外基址，用于拼接各渠道回调/回跳地址（⚠️ yml 默认 `http://localhost:8000`，**不拒启** → 生产必须显式填公网 HTTPS） |
+| `APP_BASE_URL` | 对外基址，用于拼接各渠道回调/回跳地址（**无默认值，缺失即拒启**；生产必须是公网 HTTPS） |
 | `PAYMENT_ENABLED_CHANNELS` | 启用的支付渠道（逗号分隔；留空=按各渠道配置齐全度自动启用） |
 | `SPRING_PROFILES_ACTIVE` | `docker`（默认，schema 护栏）/ `prod`（关 Swagger、强制真发邮件）/ `prod,docker` |
 | `BILLING_TRUST_XFF` | 置于可信反代之后时置 `true`，否则限流会把所有用户当成同一 IP |

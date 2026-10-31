@@ -61,4 +61,10 @@ public class CheckoutResponse {
 
     @Schema(description = "已生成的兑换码明文；支付完成且未绑定机器码时返回", example = "RC-8F3C-1D2E-9A4B")
     private String redeemCode;
+
+    @Schema(description = "下单邮箱（状态查询时回填，用于会话恢复后的摘要展示）", example = "buyer@example.com")
+    private String email;
+
+    @Schema(description = "机器码（状态查询时回填，用于会话恢复后的摘要展示）", example = "5E01-7EB8-3661-E06A")
+    private String machineId;
 }

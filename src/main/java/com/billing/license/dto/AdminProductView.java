@@ -11,7 +11,7 @@ import java.util.UUID;
 /**
  * 管理端产品套餐视图。
  *
- * <p>返回套餐维护所需的售卖方字段；权益与产品级名称/描述见产品档案（{@code /api/admin/product-profiles}）。
+ * <p>返回套餐维护所需的全部字段；产品码、名称、描述均在套餐行上，权益配置已下线。
  * SKU 建后不可改，{@code active} 只经上下架端点变更。
  */
 @Value
@@ -28,12 +28,14 @@ public class AdminProductView {
     BigDecimal priceCny;
     BigDecimal priceUsd;
     String billingCycle;
+    String chargeMode;
     String tier;
     Integer licenseDurationDays;
     Integer updateUntilDays;
     Integer maxMajorVersion;
     String stripePriceId;
     String paddlePriceId;
+    String creemProductId;
     boolean active;
     boolean recommended;
     LocalDateTime createdAt;
@@ -51,12 +53,14 @@ public class AdminProductView {
             .priceCny(p.getPriceCny())
             .priceUsd(p.getPriceUsd())
             .billingCycle(p.getBillingCycle() != null ? p.getBillingCycle().name() : null)
+            .chargeMode(p.getChargeMode() != null ? p.getChargeMode().name() : null)
             .tier(p.getTier() != null ? p.getTier().name() : null)
             .licenseDurationDays(p.getLicenseDurationDays())
             .updateUntilDays(p.getUpdateUntilDays())
             .maxMajorVersion(p.getMaxMajorVersion())
             .stripePriceId(p.getStripePriceId())
             .paddlePriceId(p.getPaddlePriceId())
+            .creemProductId(p.getCreemProductId())
             .active(Boolean.TRUE.equals(p.getActive()))
             .recommended(Boolean.TRUE.equals(p.getRecommended()))
             .createdAt(p.getCreatedAt())

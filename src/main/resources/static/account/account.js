@@ -41,10 +41,74 @@
     mfaTicket: '',
     // 第二因子可用方式缓存：语言切换时据此重写 mfaStepDesc（含邮箱兜底可用性）
     mfaMethods: null,
-    mfaEmailReadyAt: 0
+    mfaEmailReadyAt: 0,
+    // P15：资产分区当前 Tab（license / sub / order / security）
+    assetTab: 'license'
   };
 
   function $(id) { return document.getElementById(id); }
+  function queryAll(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+
+  /* ======================= 1.1 动态码分格（P14） ======================= */
+
+  /** 6 格动态码输入：自动前进 / 退格回跳 / 粘贴分发 / 方向键移动；同步到隐藏输入供表单读取 */
+  function initOtp(boxId, hiddenId, onComplete) {
+    var box = $(boxId);
+    var hidden = $(hiddenId);
+    if (!box || !hidden) return { clear: function () {}, focus: function () {} };
+    var inputs = queryAll('.otp__inp', box);
+    function sync() {
+      hidden.value = inputs.map(function (input) { return input.value; }).join('');
+    }
+    function complete() {
+      sync();
+      if (hidden.value.length === 6) onComplete();
+    }
+    inputs.forEach(function (input, index) {
+      input.addEventListener('input', function () {
+        input.value = String(input.value || '').replace(/\D/g, '').slice(0, 1);
+        if (input.value && inputs[index + 1]) inputs[index + 1].focus();
+        complete();
+      });
+      input.addEventListener('keydown', function (event) {
+        if (event.key === 'Backspace' && !input.value && inputs[index - 1]) {
+          event.preventDefault();
+          inputs[index - 1].focus();
+          inputs[index - 1].value = '';
+          sync();
+        } else if (event.key === 'ArrowLeft' && inputs[index - 1]) {
+          event.preventDefault();
+          inputs[index - 1].focus();
+        } else if (event.key === 'ArrowRight' && inputs[index + 1]) {
+          event.preventDefault();
+          inputs[index + 1].focus();
+        }
+      });
+      input.addEventListener('paste', function (event) {
+        var text = (event.clipboardData || window.clipboardData).getData('text') || '';
+        var digits = text.replace(/\D/g, '').slice(0, 6);
+        if (!digits) return;
+        event.preventDefault();
+        inputs.forEach(function (boxInput, boxIndex) {
+          boxInput.value = digits.charAt(boxIndex) || '';
+        });
+        var last = Math.min(digits.length, inputs.length) - 1;
+        if (last >= 0) inputs[last].focus();
+        complete();
+      });
+    });
+    return {
+      clear: function () {
+        inputs.forEach(function (input) { input.value = ''; });
+        hidden.value = '';
+      },
+      focus: function () {
+        if (inputs[0]) inputs[0].focus();
+      }
+    };
+  }
+
+  var mfaOtp = { clear: function () {}, focus: function () {} };
 
   /* ======================= 2. i18n ======================= */
 
@@ -58,9 +122,16 @@
       'account.sub': '查看购买/兑换时所用邮箱名下的许可证、订阅与订单。',
       'auth.loginTitle': '登录查看我的授权',
       'auth.loginDesc': '使用购买或兑换时填写的邮箱登录；当时未注册的邮箱，可用「设置密码」认领账户。',
+      'auth.step1': '第 1 步 · 输入密码',
+      'auth.step2': '第 2 步 · 二次验证',
       'auth.emailLabel': '电子邮箱',
       'auth.passwordLabel': '密码',
       'auth.login': '登录',
+      'legal.consentPrefix': '我已阅读并同意',
+      'legal.privacy': '《隐私政策》',
+      'legal.and': '与',
+      'legal.terms': '《服务条款》',
+      'legal.consentRequired': '请先阅读并勾选同意《隐私政策》与《服务条款》。',
       'auth.loginBusy': '登录中…',
       'auth.toReset': '忘记密码？用邮箱验证码重新设置',
       'auth.toRegister': '还没有账号？注册一个',
@@ -90,6 +161,7 @@
       'mfa.sendEmailCountdown': '{s} 秒后重发',
       'mfa.verify': '验证并登录',
       'mfa.verifyBusy': '验证中…',
+      'mfa.autoHint': '输满 6 位将自动验证',
       'mfa.back': '返回重新输入密码',
       'mfa.descWithFallback': '密码已通过。请输入认证器 App 显示的 6 位动态码；认证器不可用时可点击「发送邮箱验证码」改用邮箱码。',
       'mfa.descTotpOnly': '密码已通过。请输入认证器 App 显示的 6 位动态码。',
@@ -121,6 +193,7 @@
       'err.changePwdLimit': '改密操作过于频繁，请稍后再试',
       'err.mustChangePassword': '请先修改密码后再使用其他功能',
       'license.title': '我的许可证（License）',
+      'license.tab': '许可证',
       'license.desc': '激活软件所用的许可证；点击「复制」后粘贴到客户端激活框。',
       'license.key': '许可证',
       'license.product': '产品',
@@ -129,7 +202,25 @@
       'license.expiresAt': '有效期至',
       'license.machine': '绑定机器码',
       'license.error': '证书加载失败',
+      'status.ACTIVE': '正常',
+      'status.PAID': '已支付',
+      'status.COMPLETED': '已完成',
+      'status.PENDING': '待支付',
+      'status.CONFIRMED': '已确认',
+      'status.PROCESSING': '处理中',
+      'status.EXPIRED': '已过期',
+      'status.PAST_DUE': '欠费',
+      'status.UNPAID': '未支付',
+      'status.REVOKED': '已作废',
+      'status.REISSUED': '已重发',
+      'status.REFUNDED': '已退款',
+      'status.PARTIALLY_REFUNDED': '部分退款',
+      'status.REFUND_FAILED': '退款失败',
+      'status.FAILED': '失败',
+      'status.CANCELED': '已取消',
+      'status.CANCELLED': '已取消',
       'sub.title': '我的订阅',
+      'sub.tab': '订阅',
       'sub.desc': '订阅由支付渠道托管续费；取消后本周期结束即失效。',
       'sub.product': '产品',
       'sub.channel': '渠道',
@@ -149,6 +240,8 @@
       'cancelSub.busy': '提交中…',
       'cancelSub.ok': '已提交取消，本周期结束后停用。',
       'order.title': '我的订单',
+      'order.tab': '订单',
+      'order.continuePay': '继续支付',
       'order.desc': '购买与兑换产生的订单记录。',
       'order.number': '订单号',
       'order.amount': '金额',
@@ -187,9 +280,11 @@
       'err.emailNotPurchased': '该邮箱暂无购买记录，请先购买或兑换',
       'common.empty': '暂无记录',
       'common.copy': '复制',
-      'common.copied': '已复制',
+      'common.retry': '重试',
       'common.none': '—',
       'common.forever': '永久',
+      'security.tab': '安全',
+      'toast.copied': '已复制到剪贴板',
       'footer.contact': '如有疑问请联系 '
     },
     en: {
@@ -201,9 +296,16 @@
       'account.sub': 'View the licenses, subscriptions and orders under the email used at purchase or redemption.',
       'auth.loginTitle': 'Sign in to view your licenses',
       'auth.loginDesc': 'Sign in with the email used at purchase or redemption. If that email was never registered, claim the account via "Set password".',
+      'auth.step1': 'Step 1 · Password',
+      'auth.step2': 'Step 2 · Verification',
       'auth.emailLabel': 'Email',
       'auth.passwordLabel': 'Password',
       'auth.login': 'Sign in',
+      'legal.consentPrefix': 'I have read and agree to the',
+      'legal.privacy': 'Privacy Policy',
+      'legal.and': 'and',
+      'legal.terms': 'Terms of Service',
+      'legal.consentRequired': 'Please read and accept the Privacy Policy and Terms of Service first.',
       'auth.loginBusy': 'Signing in…',
       'auth.toReset': 'Forgot password? Set a new one with an email code',
       'auth.toRegister': 'No account yet? Register one',
@@ -233,6 +335,7 @@
       'mfa.sendEmailCountdown': 'Resend in {s}s',
       'mfa.verify': 'Verify & sign in',
       'mfa.verifyBusy': 'Verifying…',
+      'mfa.autoHint': 'Verification starts automatically at 6 digits',
       'mfa.back': 'Back to password',
       'mfa.descWithFallback': 'Password accepted. Enter the 6-digit code from your authenticator app; if unavailable, click "Email me a code".',
       'mfa.descTotpOnly': 'Password accepted. Enter the 6-digit code from your authenticator app.',
@@ -267,6 +370,7 @@
       'err.invalidCredentials': 'Incorrect email or password',
       'err.emailNotPurchased': 'No purchase found for this email. Please buy or redeem first',
       'license.title': 'My Licenses',
+      'license.tab': 'Licenses',
       'license.desc': 'Licenses used to activate the software; click "Copy" and paste into the activation box.',
       'license.key': 'License',
       'license.product': 'Product',
@@ -275,7 +379,25 @@
       'license.expiresAt': 'Expires',
       'license.machine': 'Machine',
       'license.error': 'Failed to load licenses',
+      'status.ACTIVE': 'Active',
+      'status.PAID': 'Paid',
+      'status.COMPLETED': 'Completed',
+      'status.PENDING': 'Awaiting payment',
+      'status.CONFIRMED': 'Confirmed',
+      'status.PROCESSING': 'Processing',
+      'status.EXPIRED': 'Expired',
+      'status.PAST_DUE': 'Past due',
+      'status.UNPAID': 'Unpaid',
+      'status.REVOKED': 'Revoked',
+      'status.REISSUED': 'Reissued',
+      'status.REFUNDED': 'Refunded',
+      'status.PARTIALLY_REFUNDED': 'Partially refunded',
+      'status.REFUND_FAILED': 'Refund failed',
+      'status.FAILED': 'Failed',
+      'status.CANCELED': 'Canceled',
+      'status.CANCELLED': 'Canceled',
       'sub.title': 'My Subscriptions',
+      'sub.tab': 'Subscriptions',
       'sub.desc': 'Subscriptions are billed by the payment provider; after cancellation they end with the current period.',
       'sub.product': 'Product',
       'sub.channel': 'Channel',
@@ -295,6 +417,8 @@
       'cancelSub.busy': 'Submitting…',
       'cancelSub.ok': 'Cancelled. The subscription ends when the current period ends.',
       'order.title': 'My Orders',
+      'order.tab': 'Orders',
+      'order.continuePay': 'Continue payment',
       'order.desc': 'Orders created by purchase or redemption.',
       'order.number': 'Order No.',
       'order.amount': 'Amount',
@@ -330,9 +454,11 @@
       'err.licenseRevoked': 'This license has been revoked and cannot be unbound',
       'common.empty': 'No records yet',
       'common.copy': 'Copy',
-      'common.copied': 'Copied',
+      'common.retry': 'Retry',
       'common.none': '—',
       'common.forever': 'Lifetime',
+      'security.tab': 'Security',
+      'toast.copied': 'Copied to clipboard',
       'footer.contact': 'Questions? Contact us at '
     }
   };
@@ -371,6 +497,8 @@
       }
     });
     // 订单区为脚本渲染且含插值文案（可退金额），静态 data-i18n 覆盖不到 → 按缓存重渲染
+    if (state.licenses.length) renderLicenses(state.licenses);
+    if (state.subscriptions.length) renderSubscriptions(state.subscriptions);
     if (state.orders.length) renderOrders(state.orders);
     // 第二因子说明文案按当前可用方式重写（mfaMethods 在第二步表单打开期间有值）
     if (state.mfaMethods) renderMfaStepDesc();
@@ -497,6 +625,8 @@
     // 清掉上一个账号的订单缓存，避免换账号后语言切换重渲染出他人数据
     state.orders = [];
     state.subscriptions = [];
+    state.licenses = [];
+    state.assetTab = 'license';
     try {
       localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(EMAIL_KEY);
@@ -517,14 +647,28 @@
   /**
    * 强制改密模式（plan-7.0 / Q3）：管理员代重置后 must_change_password=true，
    * 服务端过滤器只放行「读自己 / 改密 / 登出」——资产区块必然全部 403，
-   * 故直接隐藏、只留改密区块，避免一排报错。改密成功后回到登录态。
+   * 故直接隐藏分区导航、只留改密区块，避免一排报错。改密成功后回到登录态。
    */
   function setForcedChangeMode(on) {
     state.mustChangePassword = !!on;
-    $('licensePanel').hidden = state.mustChangePassword;
-    $('subPanel').hidden = state.mustChangePassword;
-    $('orderPanel').hidden = state.mustChangePassword;
+    $('assetTabs').hidden = state.mustChangePassword;
     $('chpwdForceNote').hidden = !state.mustChangePassword;
+    setAssetTab(state.mustChangePassword ? 'security' : (state.assetTab || 'license'));
+  }
+
+  /** P15：资产分区切换（一屏一主任务；强制改密时锁在「安全」） */
+  function setAssetTab(name) {
+    if (state.mustChangePassword) name = 'security';
+    state.assetTab = name;
+    queryAll('[data-asset-tab]').forEach(function (btn) {
+      var active = btn.getAttribute('data-asset-tab') === name;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-selected', active ? 'true' : 'false');
+      btn.tabIndex = active ? 0 : -1;
+    });
+    queryAll('[data-asset-panel]').forEach(function (panel) {
+      panel.hidden = panel.getAttribute('data-asset-panel') !== name;
+    });
   }
 
   function errText(err, fallbackKey) {
@@ -571,6 +715,7 @@
     var password = $('loginPassword').value;
     if (!email || !password) return setFormError('formError', t('err.required'));
     if (!EMAIL_RE.test(email)) return setFormError('formError', t('err.invalidEmail'));
+    if (!$('loginLegalConsent').checked) return setFormError('formError', t('legal.consentRequired'));
 
     setBusy(btn, t('auth.loginBusy'));
     apiPost('/api/account/login', { email: email, password: password }).then(function (data) {
@@ -603,7 +748,7 @@
     state.mfaTicket = '';
     state.mfaMethods = null;
     $('loginPassword').value = '';
-    $('mfaCode').value = '';
+    mfaOtp.clear();
     $('mfaLoginForm').hidden = true;
     showContent(data.user && data.user.email);
     var forced = !!(data.user && data.user.mustChangePassword);
@@ -632,42 +777,43 @@
     setFormError('formError', '');
     setFormError('mfaError', '');
     renderMfaStepDesc();
-    $('mfaCode').value = '';
+    mfaOtp.clear();
     $('mfaLoginForm').hidden = false;
-    $('mfaCode').focus();
+    mfaOtp.focus();
   }
 
   /** 返回密码表单：丢弃票据（旧票据随 tokenVersion 递增或 TTL 自然失效，不主动复用）。 */
   function backToLoginForm() {
     state.mfaTicket = '';
     state.mfaMethods = null;
-    $('mfaCode').value = '';
+    mfaOtp.clear();
     $('mfaLoginForm').hidden = true;
     $('loginForm').hidden = false;
     setFormError('mfaError', '');
     $('loginPassword').focus();
   }
 
-  /** 第二步提交：票据 + 动态码（或邮箱兜底码）换正式令牌。 */
-  function handleMfaVerify(event) {
-    event.preventDefault();
+  /**
+   * 第二步提交：票据 + 动态码（或邮箱兜底码）换正式令牌。
+   *
+   * <p>返回 Promise，供「输满 6 位自动提交」与按钮/回车两条入口共用；
+   * 验证失败时清空输入框并聚焦，用户可直接重输并再次触发自动提交。
+   */
+  function verifyMfaCode(code) {
     var btn = $('mfaVerifyBtn');
     setFormError('mfaError', '');
-    var code = $('mfaCode').value.trim();
-    if (!code) return setFormError('mfaError', t('err.required'));
+    if (!code) { setFormError('mfaError', t('err.required')); return Promise.resolve(); }
     if (!state.mfaTicket) {
       backToLoginForm();
       setFormError('formError', t('mfa.ticketLost'));
-      return;
+      return Promise.resolve();
     }
 
     setBusy(btn, t('mfa.verifyBusy'));
-    apiPost('/api/account/mfa/verify', { ticket: state.mfaTicket, code: code })
+    return apiPost('/api/account/mfa/verify', { ticket: state.mfaTicket, code: code })
       .then(function (data) {
-        unsetBusy(btn);
         finishAccountLogin(data, 'mfaError');
       }, function (err) {
-        unsetBusy(btn);
         // 票据失效（过期/账号信息已变更）：留在本表单只会反复失败，退回密码步重新走
         if (err && err.code === 'MFA_TICKET_INVALID') {
           backToLoginForm();
@@ -675,7 +821,24 @@
           return;
         }
         setFormError('mfaError', errText(err, 'err.generic'));
-      });
+        mfaOtp.clear();
+        mfaOtp.focus();
+      })
+      .then(function () { unsetBusy(btn); });
+  }
+
+  function handleMfaVerify(event) {
+    event.preventDefault();
+    if ($('mfaVerifyBtn').disabled) return;
+    verifyMfaCode($('mfaCode').value.trim());
+  }
+
+  /** 动态码输满 6 位即自动验证（键盘输入与粘贴均触发）；不足 6 位或正在验证时不发请求。 */
+  function autoVerifyMfaOnSixDigits() {
+    if ($('mfaVerifyBtn').disabled) return;
+    var code = $('mfaCode').value.trim();
+    if (!/^\d{6}$/.test(code)) return;
+    verifyMfaCode(code);
   }
 
   /** 请求邮箱兜底验证码（认证器不可用时的恢复路径）；受服务端 60s 邮箱冷却约束。 */
@@ -852,6 +1015,7 @@
     if (!EMAIL_RE.test(email)) return setFormError('regError', t('err.invalidEmail'));
     if (!PASSWORD_RE.test(password)) return setFormError('regError', t('reg.pwdPolicy'));
     if (password !== confirm2) return setFormError('regError', t('reg.mismatch'));
+    if (!$('registerLegalConsent').checked) return setFormError('regError', t('legal.consentRequired'));
 
     setBusy(btn, t('reg.busy'));
     apiPost('/api/account/register', { email: email, emailCode: code, password: password })
@@ -936,8 +1100,10 @@
   }
 
   function money(amount, currency) {
-    if (amount === null || amount === undefined) return t('common.none');
-    return amount + ' ' + (currency || '');
+    if (amount === null || amount === undefined || amount === '') return t('common.none');
+    var n = Number(amount);
+    var text = isFinite(n) ? n.toFixed(2) : String(amount);
+    return currency ? text + ' ' + currency : text;
   }
 
   /** 状态徽标：语义色映射（ACTIVE/PAID 绿、PENDING/EXPIRED 黄、REVOKED/FAILED 红、其余灰） */
@@ -951,7 +1117,11 @@
   function badge(status) {
     if (!status) return '<span class="badge badge--muted">' + t('common.none') + '</span>';
     var cls = STATUS_STYLE[status] || 'muted';
-    return '<span class="badge badge--' + cls + '">' + escapeHtml(status) + '</span>';
+    var key = 'status.' + status;
+    var label = (I18N[state.lang] && I18N[state.lang][key] !== undefined)
+      ? I18N[state.lang][key]
+      : (I18N.zh[key] !== undefined ? I18N.zh[key] : status);
+    return '<span class="badge badge--' + cls + '">' + escapeHtml(label) + '</span>';
   }
 
   function escapeHtml(value) {
@@ -963,6 +1133,13 @@
   function setSectionError(id, key, err) {
     var el = $(id);
     el.textContent = errText(err, key);
+    var retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn btn--ghost btn--sm';
+    retry.textContent = t('common.retry');
+    retry.addEventListener('click', function () { loadAll(); });
+    el.appendChild(document.createTextNode(' '));
+    el.appendChild(retry);
     el.hidden = false;
   }
 
@@ -975,6 +1152,23 @@
   function showEmpty(listId, emptyId, rows) {
     $(listId).innerHTML = rows;
     $(emptyId).hidden = rows !== '';
+  }
+
+  /** P18/G3：加载骨架，避免表格在请求期间空白 */
+  function skeletonRows(cols) {
+    var row = '<tr><td colspan="' + cols + '"><div class="sk-row">'
+      + '<span class="sk" style="max-width:160px"></span><span class="sk"></span>'
+      + '<span class="sk" style="max-width:72px"></span></div></td></tr>';
+    return row + row + row;
+  }
+
+  function showSkeleton(bodyId, countId, cols) {
+    $(bodyId).innerHTML = skeletonRows(cols);
+    if ($(countId)) $(countId).textContent = '–';
+  }
+
+  function setCount(countId, value) {
+    if ($(countId)) $(countId).textContent = String(value);
   }
 
   function renderLicenses(list) {
@@ -993,6 +1187,7 @@
         + '</tr>';
     }).join('');
     showEmpty('licenseBody', 'licenseEmpty', rows);
+    setCount('licenseCount', state.licenses.length);
   }
 
   /**
@@ -1032,6 +1227,7 @@
         + '</tr>';
     }).join('');
     showEmpty('subBody', 'subEmpty', rows);
+    setCount('subCount', (list || []).length);
   }
 
   function renderOrders(list) {
@@ -1043,10 +1239,30 @@
         + '<td>' + badge(item.status) + '</td>'
         + '<td>' + badge(item.paymentStatus) + '</td>'
         + '<td class="mono">' + fmtDate(item.createdAt) + '</td>'
-        + '<td>' + refundCell(item) + '</td>'
+        + '<td>' + orderActionCell(item) + '</td>'
         + '</tr>';
     }).join('');
     showEmpty('orderBody', 'orderEmpty', rows);
+    setCount('orderCount', state.orders.length);
+  }
+
+  /**
+   * 订单操作列：P16「继续支付」优先（服务端仅对未支付且会话未过期回填 checkoutId），
+   * 其次 P 号退款入口。两者可以并存时上下排列。
+   */
+  function orderActionCell(item) {
+    var html = '';
+    if (item.checkoutId) {
+      var resumeUrl = '../checkout/?checkoutId=' + encodeURIComponent(item.checkoutId);
+      if (item.productSku) resumeUrl += '&productId=' + encodeURIComponent(item.productSku);
+      html += '<a class="pay-btn" href="' + escapeHtml(resumeUrl) + '">'
+        + escapeHtml(t('order.continuePay')) + '</a>';
+    }
+    var refund = refundCell(item);
+    if (refund) {
+      html += (html ? '' : '') + refund;
+    }
+    return html ? '<div class="order-action-cell">' + html + '</div>' : '<span class="muted">' + t('common.none') + '</span>';
   }
 
   /**
@@ -1054,7 +1270,7 @@
    * License 剩余有效期折算后回填，前端不做资格判断，避免两处口径漂移。
    */
   function refundCell(item) {
-    if (!item.refundable) return '<span class="muted">' + t('common.none') + '</span>';
+    if (!item.refundable) return '';
     var amount = money(item.refundableAmount, item.currency);
     return '<span class="refund-cell">'
       + '<button type="button" class="refund-btn" data-refund="' + escapeHtml(item.orderNumber)
@@ -1070,12 +1286,20 @@
     clearSectionError('licenseError');
     clearSectionError('subError');
     clearSectionError('orderError');
+    showSkeleton('licenseBody', 'licenseCount', 6);
+    showSkeleton('subBody', 'subCount', 7);
+    showSkeleton('orderBody', 'orderCount', 6);
+    $('licenseEmpty').hidden = true;
+    $('subEmpty').hidden = true;
+    $('orderEmpty').hidden = true;
 
     apiGet('/api/account/licenses').then(function (list) {
       renderLicenses(list);
     }, function (err) {
       if (err && err.status === 401) return onSessionExpired();
       if (err && err.code === 'PASSWORD_CHANGE_REQUIRED') return enterForcedChange();
+      $('licenseBody').innerHTML = '';
+      setCount('licenseCount', 0);
       setSectionError('licenseError', 'license.error', err);
     });
 
@@ -1085,6 +1309,8 @@
     }, function (err) {
       if (err && err.status === 401) return onSessionExpired();
       if (err && err.code === 'PASSWORD_CHANGE_REQUIRED') return enterForcedChange();
+      $('subBody').innerHTML = '';
+      setCount('subCount', 0);
       setSectionError('subError', 'sub.error', err);
     });
 
@@ -1093,6 +1319,8 @@
     }, function (err) {
       if (err && err.status === 401) return onSessionExpired();
       if (err && err.code === 'PASSWORD_CHANGE_REQUIRED') return enterForcedChange();
+      $('orderBody').innerHTML = '';
+      setCount('orderCount', 0);
       setSectionError('orderError', 'order.error', err);
     });
   }
@@ -1106,6 +1334,20 @@
   function announce(text) {
     var region = $('liveRegion');
     if (region) region.textContent = text;
+  }
+
+  /** G1/P17：统一 toast 反馈（2 秒自动消失，可堆积） */
+  function toast(message) {
+    var wrap = $('toastWrap');
+    if (!wrap) return;
+    var el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = message;
+    wrap.appendChild(el);
+    setTimeout(function () {
+      el.classList.add('is-out');
+      setTimeout(function () { el.remove(); }, 300);
+    }, 2000);
   }
 
   /* ======================= 6.1 退款流程（plan-4.1） ======================= */
@@ -1127,6 +1369,7 @@
     });
     $('refundReason').value = '';
     $('refundReason').placeholder = t('refund.reasonPlaceholder');
+    $('refundCount').textContent = '0/200';
     setFormError('refundError', '');
     $('refundModal').hidden = false;
     $('refundReason').focus();
@@ -1150,9 +1393,11 @@
         var amount = money(result && result.refundedAmount, order.currency);
         closeRefund();
         // 实际结果可能因渠道不支持部分退款而降级为全额，文案以返回的 fullRefund 为准
-        announce(result && result.fullRefund
+        var text = result && result.fullRefund
           ? t('refund.okFull', { amount: amount })
-          : t('refund.okPartial', { amount: amount }));
+          : t('refund.okPartial', { amount: amount });
+        announce(text);
+        toast(text);
         // 退款会吊销该订单全部 License，故订单与许可证两块都要刷新
         loadAll();
       }, function (err) {
@@ -1196,6 +1441,7 @@
       .then(function () {
         closeUnbind();
         announce(t('unbind.ok'));
+        toast(t('unbind.ok'));
         // 设备列需刷新，才能落成「未绑定」并撤掉解绑按钮
         loadAll();
       }, function (err) {
@@ -1234,6 +1480,7 @@
       .then(function () {
         closeCancelSub();
         announce(t('cancelSub.ok'));
+        toast(t('cancelSub.ok'));
         // 重拉列表：挂上「到期不再续订」标记并撤掉取消按钮
         loadAll();
       }, function (err) {
@@ -1272,6 +1519,28 @@
       $('loginForm').hidden = false;
       setFormError('resetError', '');
       setFormError('codeError', '');
+    });
+
+    // 资产分区 Tab（P15）：点击切换 + 左右方向键移动
+    queryAll('#assetTabs [data-asset-tab]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        setAssetTab(btn.getAttribute('data-asset-tab'));
+      });
+    });
+    $('assetTabs').addEventListener('keydown', function (event) {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      var tabs = queryAll('#assetTabs [data-asset-tab]');
+      var index = tabs.indexOf(document.activeElement);
+      if (index === -1) return;
+      event.preventDefault();
+      var next = tabs[(index + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+      next.focus();
+      setAssetTab(next.getAttribute('data-asset-tab'));
+    });
+
+    // 退款原因字数计数（P19：200 字上限可见）
+    $('refundReason').addEventListener('input', function () {
+      $('refundCount').textContent = String($('refundReason').value.length) + '/200';
     });
 
     // 复制许可证 / 申请退款 / 释放设备绑定（事件委托：表格行由脚本渲染）
@@ -1318,18 +1587,40 @@
     $('regBackBtn').addEventListener('click', backToLoginFromRegister);
 
     document.addEventListener('keydown', function (event) {
-      if (event.key !== 'Escape') return;
-      if (!$('refundModal').hidden) closeRefund();
-      if (!$('unbindModal').hidden) closeUnbind();
-      if (!$('cancelSubModal').hidden) closeCancelSub();
+      if (event.key !== 'Escape' && event.key !== 'Tab') return;
+      var modal = ['refundModal', 'unbindModal', 'cancelSubModal'].map($).filter(function (el) {
+        return el && !el.hidden;
+      })[0];
+      if (!modal) return;
+      if (event.key === 'Escape') {
+        if (modal.id === 'refundModal') closeRefund();
+        else if (modal.id === 'unbindModal') closeUnbind();
+        else closeCancelSub();
+        return;
+      }
+      trapModalFocus(event, modal);
     });
+  }
+
+  /** G4：把 Tab 循环圈在弹层内，避免焦点跑到遮罩后的页面 */
+  function trapModalFocus(event, modal) {
+    var focusables = queryAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])', modal)
+      .filter(function (el) { return !el.disabled && el.offsetParent !== null; });
+    if (!focusables.length) return;
+    var first = focusables[0];
+    var last = focusables[focusables.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   function copyText(text, btn) {
     var done = function () {
-      var original = t('common.copy');
-      btn.textContent = t('common.copied');
-      setTimeout(function () { btn.textContent = original; }, 1500);
+      toast(t('toast.copied'));
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text); done(); });
@@ -1363,7 +1654,9 @@
 
   function start() {
     state.lang = readLang();
+    mfaOtp = initOtp('mfaOtp', 'mfaCode', autoVerifyMfaOnSixDigits);
     applyLang(state.lang);
+    setAssetTab(state.assetTab);
     bindEvents();
 
     // 管理台找回入口跳转 ?mode=reset：直接展开找回表单（不新增后端 API）

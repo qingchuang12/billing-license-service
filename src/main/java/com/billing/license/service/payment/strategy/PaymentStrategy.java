@@ -31,12 +31,29 @@ public interface PaymentStrategy {
     PaymentResponse createPayment(Order order);
 
     /**
+     * 带产品级回跳上下文创建支付（默认忽略上下文，保持既有渠道行为）。
+     *
+     * <p>只有确实支持透传回跳的渠道才覆写；不支持的渠道必须继续用部署级配置或明确拒绝，
+     * 不得把任意 URL 透传给渠道（开放跳转风险）。
+     */
+    default PaymentResponse createPayment(Order order, PaymentLinkContext context) {
+        return createPayment(order);
+    }
+
+    /**
      * 查询支付状态
      * 
      * @param paymentId 支付ID
      * @return 支付状态
      */
     PaymentStatus queryPayment(String paymentId);
+
+    /**
+     * 主动查单（带金额/币种/订单关联证据）。默认退化为仅状态，调用方据此保持待核而不发货。
+     */
+    default PaymentQueryResult queryPaymentDetail(String paymentId) {
+        return PaymentQueryResult.statusOnly(queryPayment(paymentId));
+    }
 
     /**
      * 验证 Webhook 回调签名
@@ -87,15 +104,61 @@ public interface PaymentStrategy {
     }
 
     /**
-     * 退款（管理员发起或平台退款回调）
+     * 退款（管理员发起或平台退款回调）。
      *
-     * @param order 原始订单
-     * @param paymentId 支付侧交易ID（如 Stripe PaymentIntent、支付宝 trade_no）
-     * @param amount 退款金额
-     * @return true 表示退款已受理/成功，false 表示失败或未实现
+     * <p>返回结构化结果：调用方必须区分「明确拒绝」「不支持」「结果未知」——
+     * 结果未知时不得改发第二笔退款，只能按同一 {@code refundRequestId} 查询/重试。
+     *
+     * @param order           原始订单
+     * @param paymentId       支付侧交易 ID（如 Stripe PaymentIntent、支付宝 trade_no）
+     * @param amount          退款金额
+     * @param refundRequestId 稳定的退款请求号（同一退款意图跨重试不变）
      */
-    default boolean refundPayment(Order order, String paymentId, java.math.BigDecimal amount) {
+    default RefundResult refund(Order order, String paymentId, java.math.BigDecimal amount,
+                                String refundRequestId) {
+        return RefundResult.unsupported("渠道未实现退款");
+    }
+
+    /**
+     * 查询某次退款请求的结果（用于 UNKNOWN 后先查明再决定是否重试）。默认未知。
+     */
+    default RefundResult queryRefund(Order order, String paymentId, String refundRequestId) {
+        return RefundResult.unknown("渠道未实现退款查询");
+    }
+
+    /**
+     * 是否具备退款结果反查能力。默认 false：调用方不得对不支持的渠道无限轮询，
+     * 只能标记为待人工核对。
+     */
+    default boolean supportsRefundQuery() {
         return false;
+    }
+
+    /**
+     * 关闭「已过期但仍可能被支付」的未付款交易（#50）。
+     *
+     * <p>收银台会话本地过期后，用户手里的渠道页/二维码仍可能完成支付。支持关单的渠道
+     * （支付宝 / 微信 / Stripe）必须在确认**未支付**后关闭交易；不支持关闭的渠道
+     * （Paddle / PayPal / Creem）由渠道侧自然过期，调用方只能继续轮询并保留关联。
+     *
+     * <p>实现要求（承继硬约束 16）：渠道 HTTP 一律有超时且在事务外调用；渠道返回
+     * 未确认时返回 {@link PaymentCloseResult.Status#UNKNOWN} 或 {@code REJECTED}，
+     * **不得**把「关闭失败」当成已关闭——那会把已付款订单永久排除在补偿之外。
+     *
+     * @param paymentId 渠道侧交易/会话 ID（与 {@link #queryPaymentDetail} 同口径）
+     * @return 关单结果；默认不支持
+     */
+    default PaymentCloseResult closeUnpaidPayment(String paymentId) {
+        return PaymentCloseResult.unsupported("渠道未实现关单");
+    }
+
+    /**
+     * 兼容旧 boolean 调用点（只读/测试用）。新代码必须用 {@link #refund}。
+     */
+    @Deprecated
+    default boolean refundPayment(Order order, String paymentId, java.math.BigDecimal amount) {
+        String legacyRequestId = "legacy-" + order.getOrderNo() + "-" + amount.toPlainString();
+        return refund(order, paymentId, amount, legacyRequestId).isSuccess();
     }
 
     /**

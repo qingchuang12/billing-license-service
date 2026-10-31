@@ -11,7 +11,7 @@
 
   <!-- 有脚本时才启用隐藏态/动效的初始状态：无脚本环境下内容照常可见 -->
   <script>document.documentElement.classList.add('js');</script>
-  <link rel="stylesheet" href="/checkout/checkout.css?v=20261025-3">
+  <link rel="stylesheet" href="/checkout/checkout.css?v=20261029-2">
 </head>
 <body>
   <a class="skip-link" href="#main" data-i18n="a11y.skip">跳到主要内容</a>
@@ -46,12 +46,16 @@
             <span class="steps__num" aria-hidden="true">1</span>
             <span class="steps__label" data-i18n="steps.choose">选择档位</span>
           </li>
-          <li class="steps__item" data-step-item="pay">
+          <li class="steps__item" data-step-item="confirm">
             <span class="steps__num" aria-hidden="true">2</span>
+            <span class="steps__label" data-i18n="steps.confirm">确认信息</span>
+          </li>
+          <li class="steps__item" data-step-item="pay">
+            <span class="steps__num" aria-hidden="true">3</span>
             <span class="steps__label" data-i18n="steps.pay">完成支付</span>
           </li>
           <li class="steps__item" data-step-item="done">
-            <span class="steps__num" aria-hidden="true">3</span>
+            <span class="steps__num" aria-hidden="true">4</span>
             <span class="steps__label" data-i18n="steps.done">获取授权</span>
           </li>
         </ol>
@@ -74,6 +78,7 @@
               <!-- 档位卡片由 checkout.js 依据 K16 端点（GET /api/products）渲染 -->
               <ul class="plan-list" id="planList"></ul>
               <p class="plan-field__note" data-i18n="plan.currencyNote">价格随界面语言切换：中文界面以人民币（CNY）结算，英文界面以美元（USD）结算。</p>
+              <p class="plan-field__note" data-i18n="plan.deviceNote">每份授权仅绑定 1 台设备；多设备需分别购买，换机可在账户页解绑后重新绑定。</p>
               <p class="field__error" id="planError" role="alert" hidden></p>
             </fieldset>
 
@@ -82,19 +87,31 @@
               <input class="field__input" id="email" name="email" type="email" inputmode="email"
                      autocomplete="email" placeholder="you@example.com" required
                      aria-describedby="emailHint emailError">
-              <p class="field__hint" id="emailHint" data-i18n="form.emailHint">授权凭证与订单通知将发送到此邮箱。</p>
+              <p class="field__hint" id="emailHint" data-i18n="form.emailHint">授权凭证与订单通知将发送并绑定到此邮箱。</p>
               <p class="field__error" id="emailError" role="alert" hidden></p>
             </div>
 
             <div class="machine-box">
-              <p class="machine-box__label" data-i18n="form.machineLabel">机器码</p>
-              <p class="machine-box__value" id="machineValue">—</p>
+              <div class="machine-box__top">
+                <div>
+                  <p class="machine-box__label" data-i18n="form.machineLabel">机器码</p>
+                  <p class="machine-box__value" id="machineValue">—</p>
+                </div>
+                <button class="btn btn--ghost btn--sm" id="machineCopyBtn" type="button" hidden data-i18n="common.copy">复制</button>
+              </div>
               <p class="machine-box__hint" id="machineHint">—</p>
             </div>
 
             <p class="form-note">
-              <span data-i18n="form.orderNote">点击下单后将跳转至第三方支付渠道完成付款；发票与企业采购请联系 </span>
+              <span data-i18n="form.orderNote">点击下单后将跳转至第三方支付渠道完成付款；发票事宜请联系 </span>
               <a href="mailto:service@ywhome.top">service@ywhome.top</a>
+            </p>
+            <p class="form-legal">
+              <span data-i18n="form.legalPrefix">点击下单即表示你已阅读并同意</span>
+              <a href="../account/legal/terms.html" target="_blank" rel="noopener" data-i18n="form.legalTerms">《服务条款》</a>
+              <span data-i18n="form.legalAnd">与</span>
+              <a href="../account/legal/privacy.html" target="_blank" rel="noopener" data-i18n="form.legalPrivacy">《隐私政策》</a>
+              <span data-i18n="form.legalSuffix">。</span>
             </p>
 
             <div class="panel__actions">
@@ -104,7 +121,7 @@
         </div>
 
         <!-- ================= 步骤 2/3：支付方式 · 支付 · 结果 ================= -->
-        <div class="panel" id="stage" hidden aria-label="支付流程 / Payment flow"></div>
+        <div class="panel" id="stage" hidden tabindex="-1" aria-label="支付流程 / Payment flow"></div>
 
         <!-- 屏幕阅读器状态播报区 -->
         <p class="sr-only" id="liveRegion" role="status" aria-live="polite"></p>
@@ -159,7 +176,8 @@
   </footer>
 
   <!-- 二维码：本地 vendor 单文件库（MIT），不引 CDN 外链 -->
+  <div class="toast-wrap" id="toastWrap" aria-live="polite"></div>
   <script src="/checkout/vendor/qrcode.js?v=20260929-1"></script>
-  <script src="/checkout/checkout.js?v=20261025-3"></script>
+  <script src="/checkout/checkout.js?v=20261030-1"></script>
 </body>
 </html>

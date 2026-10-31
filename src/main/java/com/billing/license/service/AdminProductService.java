@@ -1,14 +1,13 @@
 package com.billing.license.service;
 
-import com.billing.license.config.BillingProperties;
 import com.billing.license.dto.AdminProductMetaView;
 import com.billing.license.dto.AdminProductRequest;
 import com.billing.license.dto.AdminProductView;
+import com.billing.license.entity.ChargeMode;
 import com.billing.license.entity.Currency;
 import com.billing.license.entity.PlanTier;
 import com.billing.license.entity.Product;
 import com.billing.license.exception.BusinessException;
-import com.billing.license.repository.ProductProfileRepository;
 import com.billing.license.repository.ProductRepository;
 import com.billing.license.service.payment.impl.PaymentServiceFactory;
 import lombok.RequiredArgsConstructor;
@@ -16,18 +15,16 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.UUID;
 
 /**
- * 管理端产品套餐服务（产品 → 套餐两层中的套餐层）。
+ * 管理端产品套餐服务（单层：套餐即售卖单元）。
  *
  * <p>边界：SKU 创建后不可改；不提供物理删除（订单 / License / 兑换码均以外键引用产品），
- * 停售走上下架。权益与产品级名称/描述在产品档案上维护，本服务只维护周期、价格与授权参数。
+ * 停售走上下架。产品码、名称、描述都维护在套餐行上；权益配置已下线，客户端按 SKU 解锁。
  * 数据修改只在前端做一次确认弹窗，不额外要求第二因子（MFA 仅用于登录）。
  */
 @Service
@@ -35,8 +32,6 @@ import java.util.UUID;
 public class AdminProductService {
 
     private final ProductRepository productRepository;
-    private final ProductProfileRepository productProfileRepository;
-    private final BillingProperties billingProperties;
     private final PaymentServiceFactory paymentServiceFactory;
 
     /** 套餐列表：产品表为数十行量级，按 SKU 升序全量取回后内存过滤，避免为组合条件新增查询方法。 */
@@ -50,22 +45,11 @@ public class AdminProductService {
             .toList();
     }
 
-    /** 表单元数据：周期 / 档位枚举 + 配置驱动的权益标签（产品档案表单用）。 */
+    /** 表单元数据：周期 / 档位枚举 + 渠道能力（权益标签已随产品档案下线）。 */
     public AdminProductMetaView meta() {
-        List<AdminProductMetaView.FeatureOption> features = new ArrayList<>();
-        Map<String, BillingProperties.FeatureLabel> labels = billingProperties.getFeatureLabels();
-        if (labels != null) {
-            labels.forEach((key, label) -> features.add(AdminProductMetaView.FeatureOption.builder()
-                .key(key)
-                .labelZh(label != null && label.getZh() != null ? label.getZh() : key)
-                .labelEn(label != null && label.getEn() != null ? label.getEn() : key)
-                .build()));
-        }
-        features.sort((a, b) -> a.getKey().compareTo(b.getKey()));
         return AdminProductMetaView.builder()
             .billingCycles(Arrays.stream(Product.BillingCycle.values()).map(Enum::name).toList())
             .tiers(Arrays.stream(PlanTier.values()).map(Enum::name).toList())
-            .features(features)
             .channels(paymentServiceFactory.getChannelStatuses())
             .build();
     }
@@ -76,9 +60,11 @@ public class AdminProductService {
         if (productRepository.existsBySku(sku)) {
             throw new BusinessException("SKU_EXISTS", "SKU 已存在：" + sku);
         }
+        Product.BillingCycle cycle = parseBillingCycle(request.getBillingCycle());
+        ChargeMode chargeMode = parseChargeMode(request.getChargeMode(), cycle);
         Product product = Product.builder()
             .sku(sku)
-            .productCode(requireProfileCode(request.getProductCode()))
+            .productCode(normalizeProductCode(request.getProductCode()))
             .name(request.getName().trim())
             .nameEn(trimToNull(request.getNameEn()))
             .description(trimToNull(request.getDescription()))
@@ -87,13 +73,15 @@ public class AdminProductService {
             .currency(Currency.USD)
             .priceCny(request.getPriceCny())
             .priceUsd(request.getPriceUsd())
-            .billingCycle(parseBillingCycle(request.getBillingCycle()))
+            .billingCycle(cycle)
+            .chargeMode(chargeMode)
             .tier(parseTier(request.getTier()))
             .licenseDurationDays(request.getLicenseDurationDays())
             .updateUntilDays(request.getUpdateUntilDays())
             .maxMajorVersion(request.getMaxMajorVersion())
             .stripePriceId(trimToNull(request.getStripePriceId()))
             .paddlePriceId(trimToNull(request.getPaddlePriceId()))
+            .creemProductId(trimToNull(request.getCreemProductId()))
             .active(request.getActive() == null || request.getActive())
             .recommended(Boolean.TRUE.equals(request.getRecommended()))
             .build();
@@ -107,7 +95,7 @@ public class AdminProductService {
         if (requestedSku != null && !requestedSku.equalsIgnoreCase(product.getSku())) {
             throw new BusinessException("SKU_IMMUTABLE", "SKU 创建后不可修改：" + product.getSku());
         }
-        product.setProductCode(requireProfileCode(request.getProductCode()));
+        product.setProductCode(normalizeProductCode(request.getProductCode()));
         product.setName(request.getName().trim());
         product.setNameEn(trimToNull(request.getNameEn()));
         product.setDescription(trimToNull(request.getDescription()));
@@ -117,13 +105,16 @@ public class AdminProductService {
         /* 兼容字段与 USD 价同源：历史读取方仍取 price / currency */
         product.setPrice(request.getPriceUsd());
         product.setCurrency(Currency.USD);
-        product.setBillingCycle(parseBillingCycle(request.getBillingCycle()));
+        Product.BillingCycle cycle = parseBillingCycle(request.getBillingCycle());
+        product.setBillingCycle(cycle);
+        product.setChargeMode(parseChargeMode(request.getChargeMode(), cycle));
         product.setTier(parseTier(request.getTier()));
         product.setLicenseDurationDays(request.getLicenseDurationDays());
         product.setUpdateUntilDays(request.getUpdateUntilDays());
         product.setMaxMajorVersion(request.getMaxMajorVersion());
         product.setStripePriceId(trimToNull(request.getStripePriceId()));
         product.setPaddlePriceId(trimToNull(request.getPaddlePriceId()));
+        product.setCreemProductId(trimToNull(request.getCreemProductId()));
         product.setRecommended(Boolean.TRUE.equals(request.getRecommended()));
         return AdminProductView.from(productRepository.save(product));
     }
@@ -145,11 +136,11 @@ public class AdminProductService {
             .orElseThrow(() -> new BusinessException("PRODUCT_NOT_FOUND", "产品不存在：" + productId));
     }
 
-    /** 套餐必须挂到已存在的产品档案，否则权益/产品级描述无从读取。 */
-    private String requireProfileCode(String rawCode) {
+    /** 产品码只做分组/目录过滤键：非空、≤64 字符（校验由 DTO 完成），统一小写去空白。 */
+    private String normalizeProductCode(String rawCode) {
         String code = normalizeCode(rawCode);
-        if (code == null || !productProfileRepository.existsByProductCodeIgnoreCase(code)) {
-            throw new BusinessException("PRODUCT_PROFILE_NOT_FOUND", "产品档案不存在：" + rawCode);
+        if (code == null || code.length() > 64) {
+            throw new BusinessException("PRODUCT_CODE_INVALID", "产品码不能为空且不得超过 64 字符");
         }
         return code;
     }
@@ -184,6 +175,27 @@ public class AdminProductService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /**
+     * 收款方式：显式值优先；留空按周期推导（兼容旧请求）。
+     * 自动续扣必须配订阅类周期；一次性收款允许任意周期（如「一次性 30 天」）。
+     */
+    private static ChargeMode parseChargeMode(String raw, Product.BillingCycle cycle) {
+        if (raw == null || raw.isBlank()) {
+            return cycle.isRecurring() ? ChargeMode.AUTO_RECURRING : ChargeMode.ONE_TIME;
+        }
+        ChargeMode mode;
+        try {
+            mode = ChargeMode.valueOf(raw.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("INVALID_CHARGE_MODE", "非法的收款方式：" + raw);
+        }
+        if (mode == ChargeMode.AUTO_RECURRING && !cycle.isRecurring()) {
+            throw new BusinessException("INVALID_CHARGE_MODE",
+                "自动续扣必须使用订阅类计费周期：" + cycle.name());
+        }
+        return mode;
     }
 
     private static Product.BillingCycle parseBillingCycle(String raw) {

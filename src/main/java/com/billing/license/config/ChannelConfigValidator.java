@@ -40,6 +40,16 @@ public class ChannelConfigValidator implements ApplicationRunner {
     private String alipayPrivateKey;
     @Value("${payment.alipay.public-key:}")
     private String alipayPublicKey;
+    @Value("${payment.alipay.seller-id:}")
+    private String alipaySellerId;
+    @Value("${payment.alipay.sign-mode:}")
+    private String alipaySignMode;
+    @Value("${payment.alipay.app-cert-path:}")
+    private String alipayAppCertPath;
+    @Value("${payment.alipay.alipay-cert-path:}")
+    private String alipayAlipayCertPath;
+    @Value("${payment.alipay.root-cert-path:}")
+    private String alipayRootCertPath;
     @Value("${payment.wechat.app-id:}")
     private String wechatAppId;
     @Value("${payment.wechat.mch-id:}")
@@ -54,6 +64,10 @@ public class ChannelConfigValidator implements ApplicationRunner {
     private String paddleApiKey;
     @Value("${payment.paddle.webhook-secret:}")
     private String paddleWebhookSecret;
+    @Value("${payment.creem.api-key:}")
+    private String creemApiKey;
+    @Value("${payment.creem.webhook-secret:}")
+    private String creemWebhookSecret;
     @Value("${payment.paypal.client-id:}")
     private String paypalClientId;
     @Value("${payment.paypal.client-secret:}")
@@ -76,7 +90,15 @@ public class ChannelConfigValidator implements ApplicationRunner {
                 case "alipay" -> {
                     check(missing, "payment.alipay.app-id", alipayAppId);
                     check(missing, "payment.alipay.private-key", alipayPrivateKey);
-                    check(missing, "payment.alipay.public-key", alipayPublicKey);
+                    check(missing, "payment.alipay.seller-id", alipaySellerId);
+                    // 证书模式不再错误要求普通公钥；两种模式各自的必填项分开校验
+                    if (alipayCertMode()) {
+                        check(missing, "payment.alipay.app-cert-path", alipayAppCertPath);
+                        check(missing, "payment.alipay.alipay-cert-path", alipayAlipayCertPath);
+                        check(missing, "payment.alipay.root-cert-path", alipayRootCertPath);
+                    } else {
+                        check(missing, "payment.alipay.public-key", alipayPublicKey);
+                    }
                 }
                 case "wechat", "wechat_pay" -> {
                     check(missing, "payment.wechat.app-id", wechatAppId);
@@ -90,6 +112,10 @@ public class ChannelConfigValidator implements ApplicationRunner {
                 case "paddle" -> {
                     check(missing, "payment.paddle.api-key", paddleApiKey);
                     check(missing, "payment.paddle.webhook-secret", paddleWebhookSecret);
+                }
+                case "creem" -> {
+                    check(missing, "payment.creem.api-key", creemApiKey);
+                    check(missing, "payment.creem.webhook-secret", creemWebhookSecret);
                 }
                 case "paypal" -> {
                     check(missing, "payment.paypal.client-id", paypalClientId);
@@ -106,6 +132,18 @@ public class ChannelConfigValidator implements ApplicationRunner {
             throw new IllegalStateException(msg);
         }
         logger.info("支付渠道配置校验通过：启用渠道关键凭证齐全（{}）", enabled);
+    }
+
+    /** 与 AlipayStrategy#isCertMode 同口径：显式 sign-mode 优先，留空则三份证书路径齐全即证书模式。 */
+    private boolean alipayCertMode() {
+        if (alipaySignMode != null && !alipaySignMode.isBlank()) {
+            return "CERT".equalsIgnoreCase(alipaySignMode.trim());
+        }
+        return hasText(alipayAppCertPath) && hasText(alipayAlipayCertPath) && hasText(alipayRootCertPath);
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     /** 解析 enabled-channels：逗号分隔、去空白、转小写；空串返回空列表（自动判定模式）。 */

@@ -144,6 +144,11 @@ public class PayPalStrategy implements PaymentStrategy {
 
     @Override
     public PaymentStatus queryPayment(String paymentId) {
+        return queryPaymentDetail(paymentId).status();
+    }
+
+    @Override
+    public PaymentQueryResult queryPaymentDetail(String paymentId) {
         logger.info("查询 PayPal 支付状态：paymentId={}", paymentId);
         try {
             String accessToken = getAccessToken();
@@ -154,17 +159,30 @@ public class PayPalStrategy implements PaymentStrategy {
                     .build();
             HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode result = objectMapper.readTree(httpResponse.body());
-            if (result.has("status")) {
-                String status = result.get("status").asText();
-                // w9：仅 COMPLETED 视为成功；APPROVED 仅「用户批准、尚未捕获扣款」，回落 PENDING 避免未收款即发货
-                if ("COMPLETED".equals(status)) {
-                    return PaymentStatus.SUCCESS;
+            // w9：仅 COMPLETED 视为成功；APPROVED 仅「用户批准、尚未捕获扣款」
+            PaymentStatus status = result.has("status") && "COMPLETED".equals(result.get("status").asText())
+                ? PaymentStatus.SUCCESS : PaymentStatus.PENDING;
+            BigDecimal amount = null;
+            String currency = null;
+            String orderRef = null;
+            if (result.has("purchase_units") && result.get("purchase_units").isArray()
+                    && !result.get("purchase_units").isEmpty()) {
+                JsonNode unit = result.get("purchase_units").get(0);
+                orderRef = unit.has("custom_id") ? unit.get("custom_id").asText() : null;
+                if (unit.has("amount")) {
+                    JsonNode amt = unit.get("amount");
+                    if (amt.has("value")) {
+                        amount = new BigDecimal(amt.get("value").asText());
+                    }
+                    currency = amt.has("currency_code") ? amt.get("currency_code").asText() : null;
                 }
             }
-            return PaymentStatus.PENDING;
+            boolean verified = amount != null && currency != null && orderRef != null;
+            return new PaymentQueryResult(status, amount, currency,
+                result.has("id") ? result.get("id").asText() : paymentId, orderRef, verified);
         } catch (Exception e) {
             logger.error("PayPal 查询失败", e);
-            return PaymentStatus.UNKNOWN;
+            return PaymentQueryResult.statusOnly(PaymentStatus.UNKNOWN);
         }
     }
 
@@ -262,17 +280,18 @@ public class PayPalStrategy implements PaymentStrategy {
      * 未配置或失败返回 false（绝不谎报成功）；渠道标记 COMPLETED 才返回 true。
      */
     @Override
-    public boolean refundPayment(Order order, String paymentId, java.math.BigDecimal amount) {
+    public RefundResult refund(Order order, String paymentId, java.math.BigDecimal amount,
+                               String refundRequestId) {
         if (clientId == null || clientId.isEmpty() || clientSecret == null || clientSecret.isEmpty()) {
             logger.warn("PayPal 未配置，无法发起退款：orderNo={}", order.getOrderNo());
-            return false;
+            return RefundResult.rejected("PayPal 未配置");
         }
         try {
             String accessToken = getAccessToken();
             String captureId = findCaptureId(accessToken, paymentId);
             if (captureId == null) {
                 logger.error("PayPal 无法解析 captureId：orderId={}", paymentId);
-                return false;
+                return RefundResult.rejected("无法解析 PayPal captureId");
             }
             String value = amount.setScale(2, RoundingMode.HALF_UP).toString();
             Map<String, Object> amt = new HashMap<>();
@@ -285,20 +304,26 @@ public class PayPalStrategy implements PaymentStrategy {
                     .uri(URI.create(environment + "/v2/payments/captures/" + captureId + "/refund"))
                     .header("Authorization", "Bearer " + accessToken)
                     .header("Content-Type", "application/json")
+                    .header("PayPal-Request-Id", refundRequestId)
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(refundBody)))
                     .build();
             HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode result = objectMapper.readTree(httpResponse.body());
             String status = result.has("status") ? result.get("status").asText() : "";
-            if (result.has("id") && "COMPLETED".equals(status)) {
-                logger.info("PayPal 退款成功：orderNo={}, refundId={}", order.getOrderNo(), result.get("id").asText());
-                return true;
+            String refundId = result.has("id") ? result.get("id").asText() : null;
+            if (refundId != null && "COMPLETED".equals(status)) {
+                logger.info("PayPal 退款成功：orderNo={}, refundId={}", order.getOrderNo(), refundId);
+                return RefundResult.success(refundId);
             }
-            logger.error("PayPal 退款失败：orderNo={}, status={}, body={}", order.getOrderNo(), status, result.toString());
-            return false;
+            logger.error("PayPal 退款未完成：orderNo={}, http={}, status={}, body={}",
+                order.getOrderNo(), httpResponse.statusCode(), status, result.toString());
+            if ("PENDING".equals(status) || httpResponse.statusCode() >= 500) {
+                return RefundResult.unknown("PayPal 退款结果待确认：" + status);
+            }
+            return RefundResult.rejected("PayPal 退款被拒绝：" + status);
         } catch (Exception e) {
-            logger.error("PayPal 退款异常：orderNo={}", order.getOrderNo(), e);
-            return false;
+            logger.error("PayPal 退款异常（结果未知）：orderNo={}", order.getOrderNo(), e);
+            return RefundResult.unknown("PayPal 退款异常：" + e.getClass().getSimpleName());
         }
     }
 

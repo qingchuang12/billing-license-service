@@ -5,8 +5,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
 import java.math.BigDecimal;
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * Billing configuration properties
@@ -62,11 +60,8 @@ public class BillingProperties {
      */
     private Refund refund = new Refund();
 
-    /**
-     * 权益特性显示名（中/英），配置驱动（收银台 K16 延伸）。
-     * 键必须与 products.features 中的特性键一致（UPPER_SNAKE）；改名只需改此处，前端零发版。
-     */
-    private Map<String, FeatureLabel> featureLabels = new HashMap<>();
+    /** AI-Tools 运营台活跃统计票据配置（密钥/盐为空时端点 503，不影响其他接口）。 */
+    private Console console = new Console();
 
     /**
      * 流水与审计表的保留期（#13）。
@@ -75,6 +70,19 @@ public class BillingProperties {
      * 按此处天数定期清理超期行。天数取合规口径，改动前须确认与业务/法务要求一致。
      */
     private Retention retention = new Retention();
+
+    /** Webhook 入口防护：按渠道+IP 限流，以及带时间戳渠道的防重放窗口。 */
+    private Webhook webhook = new Webhook();
+
+    @Data
+    public static class Webhook {
+        /** 同一渠道同一 IP 每分钟允许的回调数 */
+        private int maxPerMinute = 120;
+        /** 限流窗口（分钟） */
+        private int windowMinutes = 1;
+        /** 带时间戳渠道允许的时钟偏差（秒）；Stripe/Paddle/微信/PayPal 使用 */
+        private long maxClockSkewSeconds = 300;
+    }
 
     @Data
     public static class Risk {
@@ -123,11 +131,30 @@ public class BillingProperties {
         private int userRefundWindowMinutes = 60;
     }
 
-    /** 权益特性显示名（中/英） */
+    /**
+     * AI-Tools 运营台（product-console）活跃统计票据配置。
+     *
+     * <p>票据密钥与 product-console 的 {@code console.device.ticket-secrets.ai-tools}
+     * 必须为同一值（环境变量 {@code TICKET_SECRET_AI_TOOLS}）；摘要盐只留在 billing，
+     * product-console 只接收 HMAC 摘要，不接触明文机器码/账号。
+     */
     @Data
-    public static class FeatureLabel {
-        private String zh;
-        private String en;
+    public static class Console {
+
+        /** 安装票据 HMAC 密钥；为空时端点返回 503，客户端静默退避 */
+        private String ticketSecret = "";
+
+        /** 设备/账号摘要的 HMAC 盐；为空时端点返回 503 */
+        private String productSalt = "";
+
+        /** 与 product-console 产品编码一致 */
+        private String productCode = "ai-tools";
+
+        /** 安装票据有效期（秒） */
+        private int ticketTtlSeconds = 900;
+
+        /** 单 IP 每小时票据签发上限（防公开端点被刷） */
+        private int ticketRateLimitPerHour = 30;
     }
 
     /**

@@ -80,6 +80,15 @@ public class Product {
     private BillingCycle billingCycle = BillingCycle.ONE_TIME;
 
     /**
+     * 收款方式（#57）：一次性扣款 / 渠道自动续扣。
+     * 与 {@link #licenseDurationDays}（权益期限）、渠道的二维码/跳转形态相互独立。
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "charge_mode", nullable = false, length = 24)
+    @Builder.Default
+    private ChargeMode chargeMode = ChargeMode.ONE_TIME;
+
+    /**
      * 产品档位/等级（PRO 基础版 / PRO_PLUS 高级版）。
      * 与 {@link #billingCycle} 组合表达三种付费模式：
      * 买断 = tier×ONE_TIME/LIFETIME；订阅 = tier×MONTHLY/HALF_YEAR/QUARTERLY/YEARLY；高级版 = PRO_PLUS。
@@ -121,7 +130,14 @@ public class Product {
      */
     @Column(name = "paddle_price_id")
     private String paddlePriceId;
-    
+
+    /**
+     * Creem 产品 ID（{@code prod_} 前缀）：走 Creem 时的渠道侧目录产品。
+     * Creem 下单必带 product_id（无 ad-hoc 内联价格），任意周期下缺失即拒单。
+     */
+    @Column(name = "creem_product_id")
+    private String creemProductId;
+
     @Column(nullable = false)
     @Builder.Default
     private Boolean active = true;

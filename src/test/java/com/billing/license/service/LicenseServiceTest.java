@@ -80,8 +80,7 @@ class LicenseServiceTest {
             public byte[] getPublicKey() { return kp.getPublic().getEncoded(); }
             public String getAlgorithm() { return "Ed25519"; }
         };
-        licenseIssuer = new LicenseIssuer(kms,
-            mock(com.billing.license.repository.ProductProfileRepository.class));
+        licenseIssuer = new LicenseIssuer(kms);
 
         userRepository = mock(UserRepository.class);
         machineRegistryService = mock(MachineRegistryService.class);

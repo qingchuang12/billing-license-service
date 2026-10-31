@@ -204,6 +204,11 @@ public class PaddleStrategy implements PaymentStrategy {
 
     @Override
     public PaymentStatus queryPayment(String paymentId) {
+        return queryPaymentDetail(paymentId).status();
+    }
+
+    @Override
+    public PaymentQueryResult queryPaymentDetail(String paymentId) {
         logger.info("查询 Paddle 支付状态：paymentId={}", paymentId);
         try {
             HttpRequest request = HttpRequest.newBuilder()
@@ -215,18 +220,33 @@ public class PaddleStrategy implements PaymentStrategy {
             HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode result = objectMapper.readTree(httpResponse.body());
             if (result.has("data")) {
-                String status = result.get("data").get("status").asText();
+                JsonNode data = result.get("data");
+                String status = data.has("status") ? data.get("status").asText() : "";
+                PaymentStatus paymentStatus;
                 if ("completed".equals(status) || "billed".equals(status)) {
-                    return PaymentStatus.SUCCESS;
+                    paymentStatus = PaymentStatus.SUCCESS;
+                } else if ("canceled".equals(status) || "past_due".equals(status)) {
+                    paymentStatus = PaymentStatus.CANCELLED;
+                } else {
+                    paymentStatus = PaymentStatus.PENDING;
                 }
-                if ("canceled".equals(status) || "past_due".equals(status)) {
-                    return PaymentStatus.CANCELLED;
+                BigDecimal amount = null;
+                if (data.has("details") && data.get("details").has("totals")
+                        && data.get("details").get("totals").has("total")) {
+                    amount = new BigDecimal(data.get("details").get("totals").get("total").asText())
+                        .divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
                 }
+                String currency = data.has("currency_code") ? data.get("currency_code").asText() : null;
+                String orderRef = data.has("custom_data") && data.get("custom_data").has("order_id")
+                    ? data.get("custom_data").get("order_id").asText() : null;
+                boolean verified = amount != null && currency != null && orderRef != null;
+                return new PaymentQueryResult(paymentStatus, amount, currency,
+                    data.has("id") ? data.get("id").asText() : paymentId, orderRef, verified);
             }
-            return PaymentStatus.PENDING;
+            return PaymentQueryResult.statusOnly(PaymentStatus.PENDING);
         } catch (Exception e) {
             logger.error("Paddle 查询失败", e);
-            return PaymentStatus.UNKNOWN;
+            return PaymentQueryResult.statusOnly(PaymentStatus.UNKNOWN);
         }
     }
 
@@ -417,10 +437,10 @@ public class PaddleStrategy implements PaymentStrategy {
      * 注：Paddle 退款 amount 同样为最小货币单位整数串（与创建一致），故走 toMinorUnitString。
      */
     @Override
-    public boolean refundPayment(Order order, String paymentId, BigDecimal amount) {
+    public RefundResult refund(Order order, String paymentId, BigDecimal amount, String refundRequestId) {
         if (apiKey == null || apiKey.isEmpty()) {
             logger.warn("Paddle 未配置，无法发起退款：orderNo={}", order.getOrderNo());
-            return false;
+            return RefundResult.rejected("Paddle 未配置");
         }
         try {
             String txnId = (paymentId != null && paymentId.startsWith("paddle_"))
@@ -432,20 +452,25 @@ public class PaddleStrategy implements PaymentStrategy {
                     .uri(URI.create(buildUrl("/transactions/" + txnId + "/refund")))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
+                    .header("Idempotency-Key", refundRequestId)
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(refundBody)))
                     .build();
             HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode result = objectMapper.readTree(httpResponse.body());
 
-            if (result.has("data")) {
+            if (httpResponse.statusCode() >= 200 && httpResponse.statusCode() < 300 && result.has("data")) {
                 logger.info("Paddle 退款受理成功：orderNo={}, txnId={}", order.getOrderNo(), txnId);
-                return true;
+                return RefundResult.success(txnId);
             }
-            logger.error("Paddle 退款失败：orderNo={}, body={}", order.getOrderNo(), result.toString());
-            return false;
+            logger.error("Paddle 退款失败：orderNo={}, http={}, body={}",
+                order.getOrderNo(), httpResponse.statusCode(), result.toString());
+            if (httpResponse.statusCode() >= 500) {
+                return RefundResult.unknown("Paddle 退款服务异常：" + httpResponse.statusCode());
+            }
+            return RefundResult.rejected("Paddle 退款被拒绝：" + httpResponse.statusCode());
         } catch (Exception e) {
-            logger.error("Paddle 退款异常：orderNo={}", order.getOrderNo(), e);
-            return false;
+            logger.error("Paddle 退款异常（结果未知）：orderNo={}", order.getOrderNo(), e);
+            return RefundResult.unknown("Paddle 退款异常：" + e.getClass().getSimpleName());
         }
     }
 

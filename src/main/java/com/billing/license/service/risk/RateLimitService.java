@@ -167,6 +167,16 @@ public class RateLimitService {
     /**
      * 用户自助退款频控（plan-4.1）：防止单账号反复发起退款申请（含越权探测与刷接口）。
      */
+    /**
+     * Webhook 入口限流：按渠道 + 客户端 IP 计数。渠道重投会有短时突发，
+     * 默认 120 次/分钟/IP，可按渠道体量通过 billing.webhook 调整。
+     */
+    public int checkWebhook(String provider, String ip) {
+        BillingProperties.Webhook webhook = billingProperties.getWebhook();
+        return checkAndCount("webhook-" + provider.toLowerCase(),
+            ip, webhook.getMaxPerMinute(), webhook.getWindowMinutes());
+    }
+
     public int checkUserRefund(java.util.UUID userId) {
         BillingProperties.Refund refund = billingProperties.getRefund();
         return checkAndCount("user-refund", String.valueOf(userId),

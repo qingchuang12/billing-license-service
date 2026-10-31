@@ -12,8 +12,8 @@
   <!-- 有脚本时才启用隐藏态/动效的初始状态：无脚本环境下内容照常可见 -->
   <script>document.documentElement.classList.add('js');</script>
   <!-- 设计体系与收银台同源复用（design tokens + 通用组件）；页面专属样式见 account.css -->
-  <link rel="stylesheet" href="../checkout/checkout.css">
-  <link rel="stylesheet" href="account.css?v=20260925-1">
+  <link rel="stylesheet" href="../checkout/checkout.css?v=20261029-2">
+  <link rel="stylesheet" href="account.css?v=20261030-1">
 </head>
 <body>
   <a class="skip-link" href="#main" data-i18n="a11y.skip">跳到主要内容</a>
@@ -57,6 +57,7 @@
 
         <!-- 登录表单 -->
         <form id="loginForm" novalidate>
+          <p class="auth-step__tag" data-i18n="auth.step1">第 1 步 · 输入密码</p>
           <div class="field">
             <label class="field__label" for="loginEmail" data-i18n="auth.emailLabel">电子邮箱</label>
             <input class="field__input" id="loginEmail" name="email" type="email" inputmode="email"
@@ -67,6 +68,15 @@
             <label class="field__label" for="loginPassword" data-i18n="auth.passwordLabel">密码</label>
             <input class="field__input" id="loginPassword" name="password" type="password"
                    autocomplete="current-password" required>
+          </div>
+          <div class="legal-consent">
+            <input type="checkbox" id="loginLegalConsent" aria-labelledby="loginLegalText">
+            <span id="loginLegalText">
+              <span data-i18n="legal.consentPrefix">我已阅读并同意</span>
+              <a href="legal/privacy.html" target="_blank" rel="noopener" data-i18n="legal.privacy">《隐私政策》</a>
+              <span data-i18n="legal.and">与</span>
+              <a href="legal/terms.html" target="_blank" rel="noopener" data-i18n="legal.terms">《服务条款》</a>
+            </span>
           </div>
           <p class="form-error" id="formError" role="alert" hidden></p>
           <div class="panel__actions">
@@ -81,18 +91,27 @@
 
         <!-- 二次验证第二步（仅开启 MFA 的账号；密码已过，凭一次性票据换令牌） -->
         <form id="mfaLoginForm" hidden novalidate>
+          <p class="auth-step__tag" data-i18n="auth.step2">第 2 步 · 二次验证</p>
           <p class="form-note" id="mfaStepDesc">
             密码已通过。请输入认证器 App 显示的 6 位动态码。
           </p>
           <div class="field">
-            <label class="field__label" for="mfaCode" data-i18n="mfa.codeLabel">动态码（或邮箱验证码）</label>
+            <label class="field__label" data-i18n="mfa.codeLabel">动态码（或邮箱验证码）</label>
+            <div class="otp" id="mfaOtp" role="group" aria-label="6 位动态码">
+              <input class="otp__inp" type="text" inputmode="numeric" maxlength="1" autocomplete="one-time-code" aria-label="第 1 位">
+              <input class="otp__inp" type="text" inputmode="numeric" maxlength="1" autocomplete="off" aria-label="第 2 位">
+              <input class="otp__inp" type="text" inputmode="numeric" maxlength="1" autocomplete="off" aria-label="第 3 位">
+              <input class="otp__inp" type="text" inputmode="numeric" maxlength="1" autocomplete="off" aria-label="第 4 位">
+              <input class="otp__inp" type="text" inputmode="numeric" maxlength="1" autocomplete="off" aria-label="第 5 位">
+              <input class="otp__inp" type="text" inputmode="numeric" maxlength="1" autocomplete="off" aria-label="第 6 位">
+            </div>
+            <input type="hidden" id="mfaCode" name="code" value="">
             <div class="code-row">
-              <input class="field__input" id="mfaCode" name="code" type="text" inputmode="numeric"
-                     maxlength="6" autocomplete="one-time-code" required>
               <button class="btn btn--ghost" id="mfaSendBtn" type="button" data-i18n="mfa.sendEmail">发送邮箱验证码</button>
             </div>
           </div>
           <p class="form-error" id="mfaError" role="alert" hidden></p>
+          <p class="form-note" data-i18n="mfa.autoHint">输满 6 位将自动验证</p>
           <div class="panel__actions">
             <button class="btn btn--primary" id="mfaVerifyBtn" type="submit" data-i18n="mfa.verify">验证并登录</button>
           </div>
@@ -161,6 +180,15 @@
             <input class="field__input" id="regPasswordConfirm" name="passwordConfirm" type="password"
                    autocomplete="new-password" required>
           </div>
+          <div class="legal-consent">
+            <input type="checkbox" id="registerLegalConsent" aria-labelledby="registerLegalText">
+            <span id="registerLegalText">
+              <span data-i18n="legal.consentPrefix">我已阅读并同意</span>
+              <a href="legal/privacy.html" target="_blank" rel="noopener" data-i18n="legal.privacy">《隐私政策》</a>
+              <span data-i18n="legal.and">与</span>
+              <a href="legal/terms.html" target="_blank" rel="noopener" data-i18n="legal.terms">《服务条款》</a>
+            </span>
+          </div>
           <p class="form-error" id="regError" role="alert" hidden></p>
           <div class="panel__actions">
             <button class="btn btn--primary" id="regBtn" type="submit" data-i18n="reg.submit">注册并登录</button>
@@ -178,8 +206,24 @@
           <button class="btn btn--ghost btn--sm" id="logoutBtn" type="button" data-i18n="auth.logout">退出登录</button>
         </div>
 
+        <!-- 资产分区（P15）：一屏一主任务，计数上 Tab -->
+        <nav class="seg" id="assetTabs" role="tablist" aria-label="资产分区">
+          <button class="seg__item" type="button" role="tab" data-asset-tab="license" aria-selected="true" aria-controls="licensePanel">
+            <span data-i18n="license.tab">许可证</span><span class="seg__count" id="licenseCount">0</span>
+          </button>
+          <button class="seg__item" type="button" role="tab" data-asset-tab="sub" aria-selected="false" aria-controls="subPanel">
+            <span data-i18n="sub.tab">订阅</span><span class="seg__count" id="subCount">0</span>
+          </button>
+          <button class="seg__item" type="button" role="tab" data-asset-tab="order" aria-selected="false" aria-controls="orderPanel">
+            <span data-i18n="order.tab">订单</span><span class="seg__count" id="orderCount">0</span>
+          </button>
+          <button class="seg__item" type="button" role="tab" data-asset-tab="security" aria-selected="false" aria-controls="changePwdPanel">
+            <span data-i18n="security.tab">安全</span>
+          </button>
+        </nav>
+
         <!-- 我的许可证 -->
-        <section class="panel asset-panel" id="licensePanel" aria-labelledby="licenseTitle">
+        <section class="panel asset-panel" id="licensePanel" role="tabpanel" data-asset-panel="license" aria-labelledby="licenseTitle">
           <h2 class="panel__title" id="licenseTitle" data-i18n="license.title">我的许可证（License）</h2>
           <p class="panel__desc" data-i18n="license.desc">激活软件所用的许可证；点击「复制」后粘贴到客户端激活框。</p>
           <p class="asset-error" id="licenseError" role="alert" hidden></p>
@@ -202,7 +246,7 @@
         </section>
 
         <!-- 我的订阅 -->
-        <section class="panel asset-panel" id="subPanel" aria-labelledby="subTitle">
+        <section class="panel asset-panel" id="subPanel" role="tabpanel" data-asset-panel="sub" aria-labelledby="subTitle" hidden>
           <h2 class="panel__title" id="subTitle" data-i18n="sub.title">我的订阅</h2>
           <p class="panel__desc">
             <span data-i18n="sub.desc">订阅由支付渠道托管续费；</span>
@@ -229,7 +273,7 @@
         </section>
 
         <!-- 我的订单 -->
-        <section class="panel asset-panel" id="orderPanel" aria-labelledby="orderTitle">
+        <section class="panel asset-panel" id="orderPanel" role="tabpanel" data-asset-panel="order" aria-labelledby="orderTitle" hidden>
           <h2 class="panel__title" id="orderTitle" data-i18n="order.title">我的订单</h2>
           <p class="panel__desc" data-i18n="order.desc">购买与兑换产生的订单记录。</p>
           <p class="asset-error" id="orderError" role="alert" hidden></p>
@@ -252,7 +296,7 @@
         </section>
 
         <!-- 修改密码（plan-7.0 / P1）：复用既有改密端点；管理员代重置后须先在此改密 -->
-        <section class="panel asset-panel" id="changePwdPanel" aria-labelledby="changePwdTitle">
+        <section class="panel asset-panel" id="changePwdPanel" role="tabpanel" data-asset-panel="security" aria-labelledby="changePwdTitle" hidden>
           <h2 class="panel__title" id="changePwdTitle" data-i18n="chpwd.title">修改密码</h2>
           <p class="panel__desc" data-i18n="chpwd.desc">修改成功后所有已登录会话将失效，需用新密码重新登录。</p>
           <p class="asset-error force-note" id="chpwdForceNote" hidden
@@ -287,15 +331,17 @@
         <div class="modal__backdrop" id="refundBackdrop"></div>
         <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="refundTitle">
           <h2 class="modal__title" id="refundTitle" data-i18n="refund.title">申请退款</h2>
-          <p class="modal__desc" id="refundDesc"></p>
+          <div class="danger-box" id="refundDesc"></div>
           <div class="field">
             <label class="field__label" for="refundReason" data-i18n="refund.reasonLabel">退款原因（可选）</label>
-            <textarea class="field__input modal__textarea" id="refundReason" rows="3" maxlength="200"></textarea>
+            <textarea class="field__input modal__textarea" id="refundReason" rows="3" maxlength="200"
+                      data-i18n-placeholder="refund.reasonPlaceholder"></textarea>
+            <p class="field__hint"><span id="refundCount">0/200</span></p>
           </div>
           <p class="form-error" id="refundError" role="alert" hidden></p>
           <div class="modal__actions">
             <button class="btn btn--ghost" id="refundCancelBtn" type="button" data-i18n="refund.cancel">取消</button>
-            <button class="btn btn--primary" id="refundConfirmBtn" type="button" data-i18n="refund.confirm">确认退款</button>
+            <button class="btn btn--danger" id="refundConfirmBtn" type="button" data-i18n="refund.confirm">确认退款</button>
           </div>
         </div>
       </div>
@@ -344,6 +390,7 @@
     </div>
   </footer>
 
-  <script src="account.js?v=20261026-1"></script>
+  <div class="toast-wrap" id="toastWrap" aria-live="polite"></div>
+  <script src="account.js?v=20261030-1"></script>
 </body>
 </html>

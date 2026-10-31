@@ -2,9 +2,7 @@ package com.billing.license.infrastructure.crypto;
 
 import com.billing.license.entity.License;
 import com.billing.license.entity.Product;
-import com.billing.license.entity.ProductProfile;
 import com.billing.license.infrastructure.kms.KmsService;
-import com.billing.license.repository.ProductProfileRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -16,22 +14,18 @@ import java.security.Signature;
 import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 /**
- * LicenseIssuer 单元测试 —— 覆盖 A3（更新门槛字段）、A4（features 非法 JSON）、A5（kid 验签预留）。
- * 使用内存 Ed25519 KmsService 桩与产品档案仓储桩，纯单元测试、不启动 Spring 上下文。
+ * LicenseIssuer 单元测试 —— 覆盖 A3（更新门槛字段）、A5（kid 验签预留）与 feat 下线口径。
+ * 使用内存 Ed25519 KmsService 桩，纯单元测试、不启动 Spring 上下文。
  */
 class LicenseIssuerTest {
 
     private LicenseIssuer issuer;
     private KmsService kms;
-    private ProductProfileRepository productProfileRepository;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -58,8 +52,7 @@ class LicenseIssuerTest {
             public byte[] getPublicKey() { return kp.getPublic().getEncoded(); }
             public String getAlgorithm() { return "Ed25519"; }
         };
-        productProfileRepository = mock(ProductProfileRepository.class);
-        issuer = new LicenseIssuer(kms, productProfileRepository);
+        issuer = new LicenseIssuer(kms);
         ReflectionTestUtils.setField(issuer, "licenseKid", "license-key-1");
     }
 
@@ -75,10 +68,7 @@ class LicenseIssuerTest {
             .build();
     }
 
-    private Product product(Integer updateUntilDays, Integer maxMajorVersion, String features) {
-        when(productProfileRepository.findByProductCodeIgnoreCase("ai-tools"))
-            .thenReturn(Optional.of(ProductProfile.builder()
-                .productCode("ai-tools").name("Pro").features(features).build()));
+    private Product product(Integer updateUntilDays, Integer maxMajorVersion, String ignoredLegacyFeatures) {
         return Product.builder()
             .id(UUID.randomUUID()).sku("pro-buyout").name("Pro 买断")
             .productCode("ai-tools")
@@ -122,24 +112,16 @@ class LicenseIssuerTest {
         assertTrue(payload.containsKey("update_until"), "updateUntilDays 有效时仍应写入");
     }
 
-    // ---------------- A4：features 解析强约束 ----------------
+    // ---------------- feat 下线：令牌不再携带权益清单 ----------------
 
     @Test
-    void issueLicense_shouldWriteFeat_whenFeaturesValidJson() {
+    void issueLicense_shouldNotWriteFeat() {
         Map<String, Object> payload =
             issuer.decodePayload(issuer.issueLicense(license(product(null, null, "[\"OFFLINE\",\"CLOUD_SYNC\"]"))));
 
-        assertEquals(java.util.List.of("OFFLINE", "CLOUD_SYNC"), payload.get("feat"));
-    }
-
-    @Test
-    void issueLicense_shouldSkipFeatButKeepIssuing_whenFeaturesInvalidJson() {
-        String token = issuer.issueLicense(license(product(null, null, "NOT_A_JSON_ARRAY")));
-        Map<String, Object> payload = issuer.decodePayload(token);
-
-        assertFalse(payload.containsKey("feat"), "非法 JSON 不得写入 feat 键");
+        assertFalse(payload.containsKey("feat"), "产品档案下线后令牌不得再写 feat");
         assertEquals("pro-buyout", payload.get("sku"));
-        assertTrue(issuer.verifyLicense(token), "features 非法不得阻断签发");
+        assertEquals("PRO", payload.get("plan"));
     }
 
     // ---------------- A5：kid 验签预留 ----------------
@@ -157,7 +139,7 @@ class LicenseIssuerTest {
             public byte[] getPublicKey() { return kms.getPublicKey(); }
             public String getAlgorithm() { return kms.getAlgorithm(); }
         };
-        LicenseIssuer kidIssuer = new LicenseIssuer(recordingKms, productProfileRepository);
+        LicenseIssuer kidIssuer = new LicenseIssuer(recordingKms);
         ReflectionTestUtils.setField(kidIssuer, "licenseKid", "license-key-1");
 
         String token = kidIssuer.issueLicense(license(product(null, null, null)));
@@ -179,7 +161,7 @@ class LicenseIssuerTest {
             public byte[] getPublicKey() { return kms.getPublicKey(); }
             public String getAlgorithm() { return kms.getAlgorithm(); }
         };
-        LicenseIssuer kidIssuer = new LicenseIssuer(recordingKms, productProfileRepository);
+        LicenseIssuer kidIssuer = new LicenseIssuer(recordingKms);
         ReflectionTestUtils.setField(kidIssuer, "licenseKid", "license-key-1");
 
         // 手工构造：header 段非合法 Base64/JSON，但对 signingInput 重新签名（保证签名本身有效）

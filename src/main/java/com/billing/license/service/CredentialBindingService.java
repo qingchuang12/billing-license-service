@@ -10,6 +10,7 @@ import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.LicenseRepository;
 import com.billing.license.repository.UserRepository;
 import com.billing.license.service.risk.RateLimitService;
+import com.billing.license.util.LogMask;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -110,9 +111,10 @@ public class CredentialBindingService {
             String bound = license.getMachineCode();
             if (bound != null && !bound.isBlank()) {
                 if (bound.equals(machineId)) {
-                    // A3：幂等——同一设备重试直接返回既有签名令牌，绝不二次签发
-                    log.info("激活幂等命中（同机重试）：licenseKey={}", licenseKey);
-                    return ActivateResponse.from(license);
+                    // A3：幂等——同一设备重试不重新绑定；续费后按当前权益重签 token
+                    log.info("激活幂等命中（同机重试）：licenseKey={}", LogMask.secret(licenseKey));
+                    License refreshed = licenseService.refreshTokenIfStale(license);
+                    return ActivateResponse.from(refreshed != null ? refreshed : license);
                 }
                 // 换机恢复路径（决策 B6）：用户登录账号页手动解绑后再激活，不在此处自动改绑
                 throw new BusinessException("MACHINE_MISMATCH",
@@ -122,7 +124,7 @@ public class CredentialBindingService {
             licenseService.bindToMachine(license, machineId, MachineRegistryService.SRC_ACTIVATE);
             licenseService.recordLicenseEvent(license, LicenseEvent.EventType.ACTIVATED, machineId,
                 "Activated by license key");
-            log.info("License activated: licenseKey={}", licenseKey);
+            log.info("License activated: licenseKey={}", LogMask.secret(licenseKey));
             return ActivateResponse.from(license);
         } catch (BusinessException e) {
             // 密钥/兑换码同为「可猜测凭证」，失败一律计入暴力猜测风控（与兑换侧同口径）

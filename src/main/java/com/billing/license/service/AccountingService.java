@@ -3,11 +3,11 @@ package com.billing.license.service;
 import com.billing.license.dto.accounting.*;
 import com.billing.license.entity.Currency;
 import com.billing.license.entity.Order;
-import com.billing.license.entity.Payment;
+import com.billing.license.entity.PaymentLedgerEntry;
 import com.billing.license.entity.Product;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.OrderRepository;
-import com.billing.license.repository.PaymentRepository;
+import com.billing.license.repository.PaymentLedgerRepository;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentStatus;
 import lombok.RequiredArgsConstructor;
@@ -30,7 +30,8 @@ import java.util.stream.Collectors;
  * <p><b>金额口径（全局固化，所有方法一致）</b>：
  * <ul>
  *   <li>已支付类（计入实收）：{@code OrderStatus ∈ {PAID, REFUNDED, REFUND_FAILED}}</li>
- *   <li>已退款：{@code OrderStatus = REFUNDED}（其 paymentStatus 同为 REFUNDED）</li>
+ *   <li>已退款：取订单 metadata 的 {@code refundAmount}（全/部分退款都按**实际退还金额**扣减）；
+ *       历史已退款单无该字段时按订单总额退</li>
  *   <li>净收入 = 实收 − 已退款</li>
  * </ul>
  * <b>多币种</b>：所有金额统计一律按 {@link Currency} 分组，绝对禁止跨币种求和；
@@ -38,9 +39,9 @@ import java.util.stream.Collectors;
  *
  * <p><b>数据源</b>：收入/渠道/产品/趋势以 {@code Order} 为主口径（金额、币种、渠道、产品明细都在订单侧）；
  * 交易流水以 {@code Payment} 为主（每条支付记录 = 一次资金变动）。
- * 管理端退款成功后会写入一条 REFUNDED 支付记录，故退款在交易流水中可见；
- * 但收入/渠道/产品/趋势的「已退款」金额仍以订单侧（OrderStatus=REFUNDED）为准，
- * 不读取 Payment 的退款行，两侧口径独立、互不重复计算。
+ * 管理端/渠道退款成功后会写入一条 REFUNDED 支付记录，故退款在交易流水中可见；
+ * 收入/渠道/产品/趋势的「已退款」金额取订单侧实际退款额（metadata.refundAmount），
+ * 不重复累加 Payment 退款行。
  *
  * <p><b>聚合方式</b>：低频运营查询，先按时间范围取列表再用 Stream 分组聚合，优先保证口径清晰与可维护；
  * 数据量极大时可改为数据库聚合（届时替换本类内部实现即可，对外契约不变）。
@@ -50,11 +51,13 @@ import java.util.stream.Collectors;
 public class AccountingService {
 
     private static final BigDecimal ZERO = BigDecimal.ZERO;
+    private static final com.fasterxml.jackson.databind.ObjectMapper METADATA_MAPPER =
+        new com.fasterxml.jackson.databind.ObjectMapper();
     private static final DateTimeFormatter DAY_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter MONTH_FMT = DateTimeFormatter.ofPattern("yyyy-MM");
 
     private final OrderRepository orderRepository;
-    private final PaymentRepository paymentRepository;
+    private final PaymentLedgerRepository paymentLedgerRepository;
 
     // ==================== 收入总览 ====================
 
@@ -67,9 +70,14 @@ public class AccountingService {
                         o -> accumulate(new MoneyBucket(), o),
                         MoneyBucket::merge));
 
-        List<AccountCurrencySummary> summaries = byCurrency.entrySet().stream()
-                .sorted(Comparator.comparing(e -> e.getKey().name()))
-                .map(e -> toSummary(e.getKey(), e.getValue()))
+        Map<Currency, LedgerBucket> ledgerByCurrency = ledgerBuckets(from, to);
+        java.util.Set<Currency> currencies = new java.util.TreeSet<>(Comparator.comparing(Enum::name));
+        currencies.addAll(byCurrency.keySet());
+        currencies.addAll(ledgerByCurrency.keySet());
+        List<AccountCurrencySummary> summaries = currencies.stream()
+                .map(currency -> toSummary(currency,
+                        byCurrency.getOrDefault(currency, new MoneyBucket()),
+                        ledgerByCurrency.getOrDefault(currency, new LedgerBucket())))
                 .toList();
 
         return AccountOverviewResponse.builder()
@@ -95,9 +103,7 @@ public class AccountingService {
             if (isPaidClass(o.getStatus())) {
                 b.received = b.received.add(o.getTotalAmount());
                 b.paidCount++;
-                if (o.getStatus() == Order.OrderStatus.REFUNDED) {
-                    b.refunded = b.refunded.add(o.getTotalAmount());
-                }
+                b.refunded = b.refunded.add(refundedAmountOf(o));
             }
         }
 
@@ -123,7 +129,8 @@ public class AccountingService {
 
     @Transactional(readOnly = true)
     public List<AccountProductSummary> getByProduct(LocalDateTime from, LocalDateTime to) {
-        List<Order> orders = orderRepository.findByCreatedAtBetween(from, to);
+        // 本方法要读行项与产品，必须预加载：否则每张订单一次行项查询、每个行项再一次产品查询
+        List<Order> orders = orderRepository.findByCreatedAtBetweenWithItems(from, to);
         Map<ProdKey, MoneyBucket> map = new java.util.LinkedHashMap<>();
         Map<ProdKey, Product> meta = new java.util.LinkedHashMap<>();
 
@@ -131,7 +138,7 @@ public class AccountingService {
             if (!isPaidClass(o.getStatus()) || o.getOrderItems() == null) {
                 continue;
             }
-            boolean refunded = o.getStatus() == Order.OrderStatus.REFUNDED;
+            BigDecimal orderRefund = refundedAmountOf(o);
             for (var item : o.getOrderItems()) {
                 Product p = item.getProduct();
                 if (p == null) {
@@ -142,9 +149,7 @@ public class AccountingService {
                 b.orderCount++;                  // 每张订单对该产品计一次
                 b.received = b.received.add(item.getTotalPrice());
                 b.paidCount++;
-                if (refunded) {
-                    b.refunded = b.refunded.add(item.getTotalPrice());
-                }
+                b.refunded = b.refunded.add(allocateRefund(o, item.getTotalPrice(), orderRefund));
                 meta.putIfAbsent(key, p);
             }
         }
@@ -177,31 +182,56 @@ public class AccountingService {
     public Page<AccountTransactionView> getTransactions(LocalDateTime from, LocalDateTime to,
                                                        PaymentMethod channel, PaymentStatus status,
                                                        Currency currency, Pageable pageable) {
-        Specification<Payment> spec = (root, query, cb) -> {
-            List<jakarta.persistence.criteria.Predicate> ps = new ArrayList<>();
-            // get(String) 返回 Path<Object>，需转为具体类型以满足 between 的 Comparable 约束
-            jakarta.persistence.criteria.Path<LocalDateTime> createdAt = root.get("createdAt");
-            ps.add(cb.between(createdAt, from, to));
-            if (channel != null) {
-                // 与 toView 展示口径对齐：展示取 channel，channel 为空时回退 method。
-                // 故过滤须匹配 channel = 目标，或（channel 为空且 method = 目标）的历史记录，
-                // 否则只有 method、channel 为空的存量支付会被漏掉却仍在列表按该渠道显示。
-                ps.add(cb.or(
-                        cb.equal(root.get("channel"), channel),
-                        cb.and(cb.isNull(root.get("channel")), cb.equal(root.get("method"), channel))));
-            }
-            if (status != null) {
-                ps.add(cb.equal(root.get("status"), status));
-            }
-            if (currency != null) {
-                ps.add(cb.equal(root.get("currency"), currency));
-            }
-            return cb.and(ps.toArray(new jakarta.persistence.criteria.Predicate[0]));
-        };
-
-        return paymentRepository.findAll(spec, pageable)
+        // 交易流水以不可变资金账为准：SUCCESS=收款分录，REFUNDED=退款分录
+        PaymentLedgerEntry.EntryType type = null;
+        if (status == PaymentStatus.SUCCESS) {
+            type = PaymentLedgerEntry.EntryType.CHARGE;
+        } else if (status == PaymentStatus.REFUNDED) {
+            type = PaymentLedgerEntry.EntryType.REFUND;
+        } else if (status != null) {
+            return Page.empty(pageable);
+        }
+        return paymentLedgerRepository.search(from, to, channel, type, currency, pageable)
                 .map(AccountingService::toView);
     }
+
+    // ==================== 复式分账 / 手续费 ====================
+
+    /** 复式分账明细：每行含借贷科目，供财务核对与冲正定位。 */
+    @Transactional(readOnly = true)
+    public Page<LedgerEntryView> getLedger(LocalDateTime from, LocalDateTime to,
+                                           PaymentMethod channel, PaymentLedgerEntry.EntryType type,
+                                           Currency currency, Pageable pageable) {
+        return paymentLedgerRepository.search(from, to, channel, type, currency, pageable)
+                .map(LedgerEntryView::from);
+    }
+
+    /** 手续费汇总（仅 FEE 分录），按渠道 × 币种分组。 */
+    @Transactional(readOnly = true)
+    public List<FeeSummaryView> getFeeSummary(LocalDateTime from, LocalDateTime to) {
+        Map<FeeKey, MoneyBucket> map = new LinkedHashMap<>();
+        for (PaymentLedgerEntry e : paymentLedgerRepository.findByOccurredAtBetween(from, to)) {
+            if (e.getEntryType() != PaymentLedgerEntry.EntryType.FEE) {
+                continue;
+            }
+            FeeKey key = new FeeKey(e.getProvider(), e.getCurrency());
+            MoneyBucket b = map.computeIfAbsent(key, k -> new MoneyBucket());
+            b.received = b.received.add(e.getAmount() != null ? e.getAmount() : ZERO);
+            b.paidCount++;
+        }
+        return map.entrySet().stream()
+                .sorted(Comparator.comparing(e -> String.valueOf(e.getKey().provider())
+                        + "|" + String.valueOf(e.getKey().currency())))
+                .map(e -> FeeSummaryView.builder()
+                        .provider(e.getKey().provider())
+                        .currency(e.getKey().currency())
+                        .feeAmount(e.getValue().received)
+                        .entryCount(e.getValue().paidCount)
+                        .build())
+                .toList();
+    }
+
+    private record FeeKey(PaymentMethod provider, Currency currency) {}
 
     // ==================== 时间趋势 ====================
 
@@ -224,9 +254,7 @@ public class AccountingService {
             if (isPaidClass(o.getStatus())) {
                 b.received = b.received.add(o.getTotalAmount());
                 b.paidCount++;
-                if (o.getStatus() == Order.OrderStatus.REFUNDED) {
-                    b.refunded = b.refunded.add(o.getTotalAmount());
-                }
+                b.refunded = b.refunded.add(refundedAmountOf(o));
             }
         }
 
@@ -253,36 +281,36 @@ public class AccountingService {
     @Transactional(readOnly = true)
     public List<AccountDiscrepancy> getDiscrepancies(LocalDateTime from, LocalDateTime to) {
         List<Order> orders = orderRepository.findByCreatedAtBetween(from, to);
-        List<Payment> payments = paymentRepository.findByCreatedAtBetween(from, to);
+        List<PaymentLedgerEntry> entries = paymentLedgerRepository.findByOccurredAtBetween(from, to);
 
         Map<String, Order> orderById = orders.stream()
                 .collect(Collectors.toMap(o -> o.getId().toString(), o -> o, (a, b) -> a));
-        Map<String, List<Payment>> paymentsByOrder = payments.stream()
-                .collect(Collectors.groupingBy(Payment::getOrderIdStr));
+        Map<String, List<PaymentLedgerEntry>> entriesByOrder = entries.stream()
+                .collect(Collectors.groupingBy(PaymentLedgerEntry::getOrderIdStr));
 
         List<AccountDiscrepancy> result = new ArrayList<>();
 
         for (Order o : orders) {
-            List<Payment> ps = paymentsByOrder.getOrDefault(o.getId().toString(), List.of());
-            List<Payment> success = ps.stream()
-                    .filter(p -> p.getStatus() == PaymentStatus.SUCCESS)
+            List<PaymentLedgerEntry> ps = entriesByOrder.getOrDefault(o.getId().toString(), List.of());
+            List<PaymentLedgerEntry> charges = ps.stream()
+                    .filter(e -> e.getEntryType() == PaymentLedgerEntry.EntryType.CHARGE)
                     .toList();
 
             if (isPaidClass(o.getStatus())) {
-                if (success.isEmpty()) {
+                if (charges.isEmpty()) {
                     result.add(discrepancy(o, "PAID_BUT_NO_SUCCESS_PAYMENT",
-                            "订单为已支付类（" + o.getStatus() + "）但无 SUCCESS 支付记录", ZERO));
+                            "订单为已支付类（" + o.getStatus() + "）但无可核对收款分录", ZERO));
                 } else {
-                    BigDecimal matchedSum = success.stream()
-                            .filter(p -> Objects.equals(p.getCurrency(), o.getCurrency()))
-                            .map(Payment::getAmount)
+                    BigDecimal matchedSum = charges.stream()
+                            .filter(e -> Objects.equals(e.getCurrency(), o.getCurrency()))
+                            .map(PaymentLedgerEntry::getAmount)
                             .reduce(ZERO, BigDecimal::add);
-                    long currencyMismatch = success.stream()
-                            .filter(p -> !Objects.equals(p.getCurrency(), o.getCurrency()))
+                    long currencyMismatch = charges.stream()
+                            .filter(e -> !Objects.equals(e.getCurrency(), o.getCurrency()))
                             .count();
                     if (currencyMismatch > 0 || matchedSum.compareTo(o.getTotalAmount()) != 0) {
                         result.add(discrepancy(o, "AMOUNT_MISMATCH",
-                                "成功支付金额 " + matchedSum + " " + o.getCurrency()
+                                "收款分录合计 " + matchedSum + " " + o.getCurrency()
                                         + (currencyMismatch > 0 ? "（含" + currencyMismatch + "笔币种不一致）" : "")
                                         + " 与订单金额 " + o.getTotalAmount() + " " + o.getCurrency() + " 不一致",
                                 matchedSum));
@@ -290,34 +318,34 @@ public class AccountingService {
                 }
             }
 
-            if (o.getStatus() == Order.OrderStatus.REFUNDED && success.isEmpty()) {
+            if (o.getStatus() == Order.OrderStatus.REFUNDED && charges.isEmpty()) {
                 result.add(discrepancy(o, "REFUNDED_BUT_NO_PAYMENT",
-                        "订单已退款但找不到任何 SUCCESS 支付记录（历史退款可能未留支付明细）", ZERO));
+                        "订单已退款但找不到任何收款分录", ZERO));
             }
         }
 
-        // 反向：成功支付记录找不到对应已支付类订单
-        for (Payment p : payments) {
-            if (p.getStatus() != PaymentStatus.SUCCESS) {
+        // 反向：收款分录找不到对应已支付类订单
+        for (PaymentLedgerEntry e : entries) {
+            if (e.getEntryType() != PaymentLedgerEntry.EntryType.CHARGE) {
                 continue;
             }
-            Order o = orderById.get(p.getOrderIdStr());
+            Order o = orderById.get(e.getOrderIdStr());
             if (o == null) {
                 result.add(AccountDiscrepancy.builder()
-                        .orderId(p.getOrderIdStr())
-                        .orderNumber(null)
+                        .orderId(e.getOrderIdStr())
+                        .orderNumber(e.getOrderNumber())
                         .type("SUCCESS_PAYMENT_BUT_ORDER_NOT_PAID")
-                        .description("SUCCESS 支付记录找不到对应订单")
+                        .description("收款分录找不到对应订单")
                         .orderAmount(null)
-                        .orderCurrency(p.getCurrency())
+                        .orderCurrency(e.getCurrency())
                         .orderStatus(null)
                         .orderPaymentStatus(null)
-                        .paidAmount(p.getAmount())
-                        .foundAt(p.getCreatedAt())
+                        .paidAmount(e.getAmount())
+                        .foundAt(e.getOccurredAt())
                         .build());
             } else if (!isPaidClass(o.getStatus())) {
                 result.add(discrepancy(o, "SUCCESS_PAYMENT_BUT_ORDER_NOT_PAID",
-                        "存在 SUCCESS 支付记录，但订单状态为 " + o.getStatus() + "（非已支付类）", p.getAmount()));
+                        "存在收款分录，但订单状态为 " + o.getStatus() + "（非已支付类）", e.getAmount()));
             }
         }
 
@@ -342,14 +370,54 @@ public class AccountingService {
         if (isPaidClass(o.getStatus())) {
             b.received = b.received.add(o.getTotalAmount());
             b.paidCount++;
-            if (o.getStatus() == Order.OrderStatus.REFUNDED) {
-                b.refunded = b.refunded.add(o.getTotalAmount());
-            }
+            b.refunded = b.refunded.add(refundedAmountOf(o));
         }
         return b;
     }
 
-    private AccountCurrencySummary toSummary(Currency currency, MoneyBucket b) {
+    /**
+     * 订单实际已退金额：优先 metadata.refundAmount（人工/渠道退款都会写），
+     * 历史全额退款单无该字段时按订单总额；部分退款单缺字段时按 0（宁少扣不虚增）。
+     */
+    private static BigDecimal refundedAmountOf(Order o) {
+        BigDecimal total = o.getTotalAmount();
+        BigDecimal recorded = null;
+        String metadata = o.getMetadata();
+        if (metadata != null && !metadata.isBlank()) {
+            try {
+                var node = METADATA_MAPPER.readTree(metadata);
+                if (node.hasNonNull("refundAmount")) {
+                    recorded = new BigDecimal(node.get("refundAmount").asText());
+                }
+            } catch (Exception ignored) {
+                // 脏 metadata 不阻断账务；按状态兜底
+            }
+        }
+        if (recorded != null && recorded.signum() > 0) {
+            return total != null && recorded.compareTo(total) > 0 ? total : recorded;
+        }
+        if (o.getStatus() == Order.OrderStatus.REFUNDED) {
+            return total != null ? total : ZERO;
+        }
+        return ZERO;
+    }
+
+    /** 多行订单按明细金额比例分摊退款额（单行订单即全额）。 */
+    private static BigDecimal allocateRefund(Order o, BigDecimal itemTotal, BigDecimal orderRefund) {
+        if (orderRefund == null || orderRefund.signum() <= 0) {
+            return ZERO;
+        }
+        BigDecimal total = o.getTotalAmount();
+        if (total == null || total.signum() <= 0) {
+            return ZERO;
+        }
+        if (itemTotal.compareTo(total) == 0) {
+            return orderRefund;
+        }
+        return orderRefund.multiply(itemTotal).divide(total, 2, RoundingMode.HALF_UP);
+    }
+
+    private AccountCurrencySummary toSummary(Currency currency, MoneyBucket b, LedgerBucket l) {
         BigDecimal net = b.received.subtract(b.refunded);
         BigDecimal aov = b.paidCount > 0
                 ? b.received.divide(BigDecimal.valueOf(b.paidCount), 2, RoundingMode.HALF_UP)
@@ -363,7 +431,38 @@ public class AccountingService {
                 .orderCount(b.orderCount)
                 .paidOrderCount(b.paidCount)
                 .avgOrderValue(aov)
+                .ledgerGrossReceived(l.gross)
+                .ledgerRefunded(l.refunded)
+                .ledgerFee(l.fee)
+                .ledgerNet(l.gross.subtract(l.refunded).subtract(l.fee))
                 .build();
+    }
+
+    private Map<Currency, LedgerBucket> ledgerBuckets(LocalDateTime from, LocalDateTime to) {
+        Map<Currency, LedgerBucket> result = new java.util.LinkedHashMap<>();
+        for (PaymentLedgerEntry e : paymentLedgerRepository.findByOccurredAtBetween(from, to)) {
+            if (e.getCurrency() == null) {
+                continue;
+            }
+            LedgerBucket b = result.computeIfAbsent(e.getCurrency(), k -> new LedgerBucket());
+            BigDecimal amount = e.getAmount() != null ? e.getAmount() : ZERO;
+            switch (e.getEntryType()) {
+                case CHARGE -> b.gross = b.gross.add(amount);
+                case REFUND -> b.refunded = b.refunded.add(amount);
+                case FEE -> b.fee = b.fee.add(amount);
+                case REVERSAL -> {
+                    String debit = e.getDebitAccount();
+                    if ("REVENUE".equals(debit)) {
+                        b.gross = b.gross.subtract(amount);
+                    } else if ("FEE_EXPENSE".equals(debit)) {
+                        b.fee = b.fee.subtract(amount);
+                    } else if ("CHANNEL_CLEARING".equals(debit)) {
+                        b.refunded = b.refunded.subtract(amount);
+                    }
+                }
+            }
+        }
+        return result;
     }
 
     private AccountDiscrepancy discrepancy(Order o, String type, String desc, BigDecimal paidAmount) {
@@ -381,24 +480,32 @@ public class AccountingService {
                 .build();
     }
 
-    private static AccountTransactionView toView(Payment p) {
-        PaymentMethod ch = p.getChannel() != null ? p.getChannel() : p.getMethod();
+    private static AccountTransactionView toView(PaymentLedgerEntry e) {
+        PaymentMethod ch = e.getProvider();
+        PaymentStatus status = e.getEntryType() == PaymentLedgerEntry.EntryType.CHARGE
+            ? PaymentStatus.SUCCESS : PaymentStatus.REFUNDED;
         return AccountTransactionView.builder()
-                .paymentId(p.getPaymentId())
-                .orderId(p.getOrderIdStr())
-                .transactionId(p.getTransactionId())
-                .amount(p.getAmount())
-                .currency(p.getCurrency())
+                .paymentId(e.getIdempotencyKey())
+                .orderId(e.getOrderIdStr())
+                .transactionId(e.getChannelTxnId())
+                .amount(e.getAmount())
+                .currency(e.getCurrency())
                 .channel(ch)
                 .channelName(ch != null ? ch.getName() : "未知渠道")
-                .status(p.getStatus())
-                .statusDesc(p.getStatus() != null ? p.getStatus().getDescription() : null)
-                .createdAt(p.getCreatedAt())
-                .paidAt(p.getPaidAt())
+                .status(status)
+                .statusDesc(status.getDescription())
+                .createdAt(e.getOccurredAt())
+                .paidAt(e.getOccurredAt())
                 .build();
     }
 
     /** 币种级金额累加桶（GMV / 实收 / 已退款 / 笔数） */
+    private static final class LedgerBucket {
+        BigDecimal gross = ZERO;
+        BigDecimal refunded = ZERO;
+        BigDecimal fee = ZERO;
+    }
+
     private static final class MoneyBucket {
         BigDecimal gmv = ZERO;
         BigDecimal received = ZERO;

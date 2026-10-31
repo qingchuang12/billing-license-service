@@ -4,7 +4,7 @@ import com.billing.license.dto.accounting.*;
 import com.billing.license.entity.*;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.OrderRepository;
-import com.billing.license.repository.PaymentRepository;
+import com.billing.license.repository.PaymentLedgerRepository;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentStatus;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,7 +14,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.jpa.domain.Specification;
+
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -40,14 +40,14 @@ class AccountingServiceTest {
     private static final LocalDateTime TO = LocalDateTime.of(2026, 10, 31, 23, 59, 59);
 
     private OrderRepository orderRepository;
-    private PaymentRepository paymentRepository;
+    private PaymentLedgerRepository paymentLedgerRepository;
     private AccountingService service;
 
     @BeforeEach
     void setUp() {
         orderRepository = mock(OrderRepository.class);
-        paymentRepository = mock(PaymentRepository.class);
-        service = new AccountingService(orderRepository, paymentRepository);
+        paymentLedgerRepository = mock(PaymentLedgerRepository.class);
+        service = new AccountingService(orderRepository, paymentLedgerRepository);
     }
 
     /** 金额按口径比较（compareTo），避免 scale 差异造成假失败 */
@@ -80,18 +80,29 @@ class AccountingServiceTest {
         return Product.builder().id(UUID.randomUUID()).sku(sku).name(sku).build();
     }
 
-    private static Payment payment(String paymentId, UUID orderId, String amount, Currency currency,
-                                   PaymentStatus status, PaymentMethod channel, PaymentMethod legacyMethod,
-                                   LocalDateTime createdAt) {
-        return Payment.builder()
-            .paymentId(paymentId)
+    private static PaymentLedgerEntry charge(String key, UUID orderId, String amount, Currency currency,
+                                            PaymentMethod provider, LocalDateTime occurredAt) {
+        return PaymentLedgerEntry.builder()
+            .idempotencyKey(key)
             .orderIdStr(orderId.toString())
+            .entryType(PaymentLedgerEntry.EntryType.CHARGE)
             .amount(new BigDecimal(amount))
             .currency(currency)
-            .status(status)
-            .channel(channel)
-            .method(legacyMethod)
-            .createdAt(createdAt)
+            .provider(provider)
+            .occurredAt(occurredAt)
+            .build();
+    }
+
+    private static PaymentLedgerEntry refundEntry(String key, UUID orderId, String amount, Currency currency,
+                                                  PaymentMethod provider, LocalDateTime occurredAt) {
+        return PaymentLedgerEntry.builder()
+            .idempotencyKey(key)
+            .orderIdStr(orderId.toString())
+            .entryType(PaymentLedgerEntry.EntryType.REFUND)
+            .amount(new BigDecimal(amount))
+            .currency(currency)
+            .provider(provider)
+            .occurredAt(occurredAt)
             .build();
     }
 
@@ -139,6 +150,30 @@ class AccountingServiceTest {
         assertAmount("200.00", usd.getNet());
     }
 
+    @Test
+    void overview_shouldExposeLedgerGrossFeeRefundAndNet() {
+        when(orderRepository.findByCreatedAtBetween(FROM, TO)).thenReturn(List.of());
+        when(paymentLedgerRepository.findByOccurredAtBetween(FROM, TO)).thenReturn(List.of(
+            ledger(PaymentLedgerEntry.EntryType.CHARGE, "100.00", "CHANNEL_CLEARING", "REVENUE"),
+            ledger(PaymentLedgerEntry.EntryType.REFUND, "20.00", "REVENUE_REFUND", "CHANNEL_CLEARING"),
+            ledger(PaymentLedgerEntry.EntryType.FEE, "5.00", "FEE_EXPENSE", "CHANNEL_CLEARING"),
+            ledger(PaymentLedgerEntry.EntryType.REVERSAL, "10.00", "REVENUE", "CHANNEL_CLEARING")));
+
+        AccountCurrencySummary usd = service.getOverview(FROM, TO).getSummaries().get(0);
+
+        assertAmount("90.00", usd.getLedgerGrossReceived());
+        assertAmount("20.00", usd.getLedgerRefunded());
+        assertAmount("5.00", usd.getLedgerFee());
+        assertAmount("65.00", usd.getLedgerNet());
+    }
+
+    private static PaymentLedgerEntry ledger(PaymentLedgerEntry.EntryType type, String amount,
+                                             String debit, String credit) {
+        return PaymentLedgerEntry.builder()
+            .entryType(type).amount(new BigDecimal(amount)).currency(Currency.USD)
+            .debitAccount(debit).creditAccount(credit).build();
+    }
+
     // ==================== 分渠道 ====================
 
     @Test
@@ -184,7 +219,7 @@ class AccountingServiceTest {
         // 明细里 product 为 null：应跳过而不是抛异常
         Order dirty = order("1.00", Currency.USD, Order.OrderStatus.PAID, PaymentMethod.STRIPE, FROM);
         dirty.setOrderItems(List.of(OrderItem.builder().totalPrice(new BigDecimal("1.00")).build()));
-        when(orderRepository.findByCreatedAtBetween(FROM, TO))
+        when(orderRepository.findByCreatedAtBetweenWithItems(FROM, TO))
             .thenReturn(List.of(paid, refunded, pending, dirty));
 
         List<AccountProductSummary> rows = service.getByProduct(FROM, TO);
@@ -205,7 +240,7 @@ class AccountingServiceTest {
     @Test
     void byProduct_shouldSkipOrderWithoutItems() {
         Order noItems = order("10.00", Currency.USD, Order.OrderStatus.PAID, PaymentMethod.ALIPAY, FROM);
-        when(orderRepository.findByCreatedAtBetween(FROM, TO)).thenReturn(List.of(noItems));
+        when(orderRepository.findByCreatedAtBetweenWithItems(FROM, TO)).thenReturn(List.of(noItems));
 
         assertTrue(service.getByProduct(FROM, TO).isEmpty(), "无明细订单不应产出任何产品行");
     }
@@ -213,15 +248,15 @@ class AccountingServiceTest {
     // ==================== 交易流水 ====================
 
     @Test
-    void transactions_shouldFallBackToLegacyMethodWhenChannelMissing() {
+    void transactions_shouldMapChargeAndRefundFromLedger() {
         UUID orderId = UUID.randomUUID();
-        Payment withChannel = payment("pay-1", orderId, "99.00", Currency.USD,
-            PaymentStatus.SUCCESS, PaymentMethod.ALIPAY, null, FROM);
-        Payment legacyOnly = payment("pay-2", orderId, "99.00", Currency.USD,
-            PaymentStatus.REFUNDED, null, PaymentMethod.STRIPE, FROM);
-        Page<Payment> stubbed = new PageImpl<>(List.of(withChannel, legacyOnly), PageRequest.of(0, 20), 2);
-        when(paymentRepository.findAll(ArgumentMatchers.<Specification<Payment>>any(), any(Pageable.class)))
-            .thenReturn(stubbed);
+        PaymentLedgerEntry charge = charge("charge:pay-1", orderId, "99.00", Currency.USD,
+            PaymentMethod.ALIPAY, FROM);
+        PaymentLedgerEntry refund = refundEntry("refund:rf-1", orderId, "99.00", Currency.USD,
+            PaymentMethod.STRIPE, FROM);
+        when(paymentLedgerRepository.search(eq(FROM), eq(TO), eq(PaymentMethod.STRIPE), isNull(), isNull(),
+            any(Pageable.class)))
+            .thenReturn(new PageImpl<>(List.of(charge, refund), PageRequest.of(0, 20), 2));
 
         Page<AccountTransactionView> page = service.getTransactions(
             FROM, TO, PaymentMethod.STRIPE, null, null, PageRequest.of(0, 20));
@@ -232,7 +267,7 @@ class AccountingServiceTest {
         assertEquals("支付宝", first.getChannelName());
         assertEquals("支付成功", first.getStatusDesc());
         AccountTransactionView second = page.getContent().get(1);
-        assertEquals(PaymentMethod.STRIPE, second.getChannel(), "channel 为空须回退 method，否则流水里渠道列会空白");
+        assertEquals(PaymentMethod.STRIPE, second.getChannel());
         assertEquals("已退款", second.getStatusDesc());
     }
 
@@ -274,13 +309,13 @@ class AccountingServiceTest {
         Order pendingWithSuccessPayment = order("40.00", Currency.USD, Order.OrderStatus.PENDING, PaymentMethod.ALIPAY, FROM);
         when(orderRepository.findByCreatedAtBetween(FROM, TO)).thenReturn(
             List.of(paidNoPayment, paidAmountMismatch, refundedNoPayment, pendingWithSuccessPayment));
-        when(paymentRepository.findByCreatedAtBetween(FROM, TO)).thenReturn(List.of(
-            payment("pay-ok", paidAmountMismatch.getId(), "15.00", Currency.USD,
-                PaymentStatus.SUCCESS, PaymentMethod.ALIPAY, null, FROM),
-            payment("pay-orphan", UUID.randomUUID(), "66.00", Currency.USD,
-                PaymentStatus.SUCCESS, PaymentMethod.STRIPE, null, FROM),
-            payment("pay-pending", pendingWithSuccessPayment.getId(), "40.00", Currency.USD,
-                PaymentStatus.SUCCESS, PaymentMethod.ALIPAY, null, FROM)));
+        when(paymentLedgerRepository.findByOccurredAtBetween(FROM, TO)).thenReturn(List.of(
+            charge("charge:pay-ok", paidAmountMismatch.getId(), "15.00", Currency.USD,
+                PaymentMethod.ALIPAY, FROM),
+            charge("charge:pay-orphan", UUID.randomUUID(), "66.00", Currency.USD,
+                PaymentMethod.STRIPE, FROM),
+            charge("charge:pay-pending", pendingWithSuccessPayment.getId(), "40.00", Currency.USD,
+                PaymentMethod.ALIPAY, FROM)));
 
         List<String> types = service.getDiscrepancies(FROM, TO).stream().map(AccountDiscrepancy::getType).toList();
 
@@ -297,9 +332,9 @@ class AccountingServiceTest {
     void discrepancies_shouldStayEmptyWhenOrdersAndPaymentsAgree() {
         Order paid = order("10.00", Currency.USD, Order.OrderStatus.PAID, PaymentMethod.ALIPAY, FROM);
         when(orderRepository.findByCreatedAtBetween(FROM, TO)).thenReturn(List.of(paid));
-        when(paymentRepository.findByCreatedAtBetween(FROM, TO)).thenReturn(List.of(
-            payment("pay-1", paid.getId(), "10.00", Currency.USD, PaymentStatus.SUCCESS,
-                PaymentMethod.ALIPAY, null, FROM)));
+        when(paymentLedgerRepository.findByOccurredAtBetween(FROM, TO)).thenReturn(List.of(
+            charge("charge:pay-1", paid.getId(), "10.00", Currency.USD,
+                PaymentMethod.ALIPAY, FROM)));
 
         assertTrue(service.getDiscrepancies(FROM, TO).isEmpty(), "口径一致时不应误报疑点");
     }

@@ -84,11 +84,23 @@ public class CheckoutSession {
     @Column(name = "pay_url", columnDefinition = "TEXT")
     private String payUrl;
 
+    /** 扫码支付二维码内容（恢复支付入口必须原样返回，不能只存跳转地址）。 */
+    @Column(name = "qr_code", columnDefinition = "TEXT")
+    private String qrCode;
+
+    /** 支付形态：redirect / qrcode；恢复时据此决定返回哪个字段。 */
+    @Column(name = "payment_mode", length = 16)
+    private String paymentMode;
+
     @Column(name = "expires_at")
     private LocalDateTime expiresAt;
 
     @Column(name = "last_compensated_at")
     private LocalDateTime lastCompensatedAt; // R3：上次主动对账补偿时间，用于轮询冷却窗口
+
+    /** #50：渠道确认关单的时间；非空表示该交易已不可能再收款。 */
+    @Column(name = "channel_closed_at")
+    private LocalDateTime channelClosedAt;
 
     @Column(columnDefinition = "TEXT")
     private String metadata;

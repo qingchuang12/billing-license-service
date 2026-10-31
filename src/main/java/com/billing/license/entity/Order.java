@@ -3,6 +3,7 @@ package com.billing.license.entity;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
+import org.hibernate.annotations.DynamicUpdate;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -19,6 +20,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@DynamicUpdate
 @Table(name = "orders")
 public class Order {
     

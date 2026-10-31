@@ -33,18 +33,25 @@ public class AccountNotificationStartupCheck implements ApplicationRunner {
     @Value("${spring.mail.username:}")
     private String mailUsername;
 
+    @Value("${spring.mail.password:}")
+    private String mailPassword;
+
     @Override
     public void run(ApplicationArguments args) {
+        java.util.List<String> blockers = new java.util.ArrayList<>();
         if (properties.isCodeLogOnly()) {
-            log.error("【上线阻断】account.code-log-only=true：验证码只写日志、不发送邮件，"
-                + "注册 / 找回密码 / 二次因子邮箱兜底全部不可用。"
-                + "生产环境必须配置真实 SMTP 并将该开关置为 false 后重启。");
+            blockers.add("account.code-log-only=true：验证码只写日志、不发送邮件，注册/找回密码/邮箱兜底全部不可用");
         }
-        if (isBlank(mailHost) || isBlank(mailUsername)) {
-            log.warn("【告警】SMTP 未完整配置（spring.mail.host / spring.mail.username 缺失）："
-                + "邮箱验证码与密码变更安全提醒将静默跳过——找回密码与代重置通知均不可达。"
-                + "请确认这是预期行为；配置方法见 docs/上线准备工作.md。");
+        if (isBlank(mailHost) || isBlank(mailUsername) || isBlank(mailPassword)) {
+            blockers.add("SMTP 未完整配置（spring.mail.host / username / password 任一为空）："
+                + "验证码与密码变更提醒会静默失败");
         }
+        if (!blockers.isEmpty()) {
+            String message = "生产环境邮件链路未就绪，拒绝启动：" + String.join("；", blockers);
+            log.error("【上线阻断】{}", message);
+            throw new IllegalStateException(message);
+        }
+        log.info("生产邮件链路自检通过：host={}, username={}", mailHost, mailUsername);
     }
 
     private static boolean isBlank(String v) {

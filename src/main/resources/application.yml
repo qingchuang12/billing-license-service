@@ -12,6 +12,12 @@ spring:
     import: optional:file:.env[.properties]
   application:
     name: billing-license-service
+  # 后台对账/退款反查/履约重试/订阅补绑都是独立定时任务；对账与退款反查含渠道 HTTP
+  # （单轮最多 50 条 × 渠道超时），2 条线程会被网络型任务占满并饿死短任务。扩到 4 条。
+  task:
+    scheduling:
+      pool:
+        size: 4
   datasource:
     # 容器化部署时需通过 DB_URL 指向 postgres 服务名（compose 内为 postgres:5432）；本地联调由 .env 覆盖
     url: ${DB_URL:jdbc:postgresql://127.0.0.1:10001/license}
@@ -94,29 +100,45 @@ billing:
   pending-license-window-days: ${BILLING_PENDING_LICENSE_WINDOW_DAYS:7}
   # 默认 License 有效期（天）
   default-license-duration-days: 365
-  # 权益特性显示名（中/英），配置驱动：改名只需改此处，前端零发版。
-  # 键必须与 products.features 中的特性键一致（UPPER_SNAKE）。
-  feature-labels:
-    OFFLINE: { zh: "离线可用", en: "Offline capable" }
-    MULTI_DEVICE: { zh: "多设备授权", en: "Multi-device" }
-    EMAIL_SUPPORT: { zh: "邮件支持", en: "Email support" }
-    PRIORITY_SUPPORT: { zh: "优先支持", en: "Priority support" }
-    # 原名 API_ACCESS（2026-09-20 经 V3 迁移统一改名为 CLOUD_SYNC）
-    CLOUD_SYNC: { zh: "云同步", en: "Cloud sync" }
   # H8：是否信任反向代理注入的 X-Forwarded-For 作为客户端真实 IP。
   # 默认 false（仅按 TCP remoteAddr 限流），避免攻击者伪造 XFF 绕过限流/风控。
   # 仅在确知前方是可信代理（如本服务的 ingress/gateway）时置 true。
   trust-x-forwarded-for: ${BILLING_TRUST_XFF:false}
   support-email: ${SUPPORT_EMAIL:service@ywhome.top}
+  # 定时任务总开关（默认开启）；集成测试/维护窗口可置 false 停止对账、清理、补绑等后台任务。
+  scheduling:
+    enabled: ${BILLING_SCHEDULING_ENABLED:true}
+
+  # Webhook 入口防护（2026-10-31）
+  # 按「渠道 + 客户端 IP」滑动窗口限流；Stripe/Paddle/微信/PayPal 若带签名时间戳，
+  # 还会校验时钟偏差。支付宝 / Creem 无签名时间戳，靠 payment_events 事件号幂等防重。
+  webhook:
+    max-per-minute: ${BILLING_WEBHOOK_MAX_PER_MINUTE:120}
+    window-minutes: ${BILLING_WEBHOOK_WINDOW_MINUTES:1}
+    max-clock-skew-seconds: ${BILLING_WEBHOOK_MAX_CLOCK_SKEW_SECONDS:300}
+
   # 自助退款策略（plan-4.1）：用户端按 License 剩余有效期**线性折算**退款额（可能构成部分退款）。
   # 可退窗口即 License 有效期本身——权益到期即不可退；故此处不设「支付后 N 天」的申请窗口。
   refund:
+    # 是否所有渠道退款都需管理员审核（Creem 无论此开关都强制审核）。
+    # 生产建议 true；本地/测试默认 false 保持自助退款直通。
+    require-approval: ${BILLING_REFUND_REQUIRE_APPROVAL:false}
     # 可退下限（订单币种）：折算额低于此值不开放自助退款，避免小额退款叠加渠道手续费反而倒亏
     min-amount: ${BILLING_REFUND_MIN_AMOUNT:1.00}
     # 同一用户退款申请频控：窗口内上限（防刷与探测）
     user-refund-max: ${BILLING_REFUND_USER_MAX:5}
     # 退款频控窗口（分钟）
     user-refund-window-minutes: ${BILLING_REFUND_USER_WINDOW_MINUTES:60}
+  # AI-Tools 运营台（product-console）活跃统计票据：
+  # 票据密钥必须与 product-console 的 console.device.ticket-secrets.ai-tools 同值；
+  # product-salt 只留在 billing，用于生成设备/账号 HMAC 摘要（不进客户端、不进运营台）。
+  # 任一为空时 /api/licenses/console/ticket 返回 503，客户端静默退避，不影响其他接口。
+  console:
+    ticket-secret: ${TICKET_SECRET_AI_TOOLS:}
+    product-salt: ${CONSOLE_PRODUCT_SALT:}
+    product-code: ai-tools
+    ticket-ttl-seconds: 900
+    ticket-rate-limit-per-hour: 30
 
 # 支付渠道配置
 # 说明：多渠道可「同时启用并存」，互不冲突。下单时由客户端传入的 provider 决定走哪个渠道
@@ -127,7 +149,7 @@ payment:
   # 留空 = 自动判定：关键配置齐全的渠道自动启用，缺配置的自动禁用（本地未配任何渠道也能启动，便于联调/查看文档）
   # 显式配置时以本项为准；渠道名写错会直接启动失败（fail-fast），避免渠道莫名不可用
   # 启动日志会打印各渠道自检报告，也可调 GET /api/admin/payment-channels 在线查询
-  # （可选值：alipay / wechat_pay / stripe / paddle / paypal）
+  # （可选值：alipay / wechat_pay / stripe / paddle / creem / paypal）
   # 仓库内不得留默认渠道：一旦留值，未配任何渠道的环境就会静默启用该渠道（沙箱支付宝）；
   # 生产与本地联调均须显式声明（.env 或环境变量），留空即走自动判定。
   enabled-channels: ${PAYMENT_ENABLED_CHANNELS:}
@@ -140,6 +162,9 @@ payment:
     app-id: ${ALIPAY_APP_ID:}
     # 商户应用私钥（RSA2，PKCS8），用于下单请求签名
     private-key: ${ALIPAY_PRIVATE_KEY:}
+    # 支付宝商户 PID（2088 开头）。回调必须携带并与之匹配，否则视为他人通知拒收。
+    # 生产启用支付宝时必填；缺失会被启动校验与回调验签双重拒绝。
+    seller-id: ${ALIPAY_SELLER_ID:}
     # 支付宝公钥，用于异步通知验签（**不是**商户应用公钥，勿填错）。
     # 必须是「支付宝公钥」纯 RSA 公钥：base64 以 MIIBIjANBgkq 开头、单行、无换行与空格。
     # 切勿填 X.509 公钥证书（以 MIID 开头）——本工程走 AlipaySignature.rsaCheckV1（纯公钥模式），
@@ -160,7 +185,7 @@ payment:
     # 异步通知地址：默认由 app.base-url 派生，需与支付宝后台配置的 Notify URL 一致
     notify-url: ${ALIPAY_NOTIFY_URL:${app.base-url}/api/webhooks/alipay}
     # 网页支付完成后的回跳地址
-    return-url: ${ALIPAY_RETURN_URL:${app.base-url}/payment/return}
+    return-url: ${ALIPAY_RETURN_URL:${app.base-url}/payment/success}
     # 网关地址：生产 https://openapi.alipay.com/gateway.do；沙箱 https://openapi-sandbox.dl.alipaydev.com/gateway.do
     # 默认值即**生产网关**（与 `AlipayStrategy.java:65` 的 `@Value` 默认一致）：仓库内不留沙箱地址，
     # 否则生产漏配会静默打到沙箱（「收钱不发货」的高危配置）；沙箱联调必须显式配 ALIPAY_GATEWAY_URL。
@@ -209,6 +234,23 @@ payment:
     # Webhook 签名密钥，用于 HMAC-SHA256 验签（Paddle-Signature 头的 ts/h1）
     webhook-secret: ${PADDLE_WEBHOOK_SECRET:}
 
+  # Creem（国际，Merchant of Record，代收代缴税费，具备订阅能力）
+  creem:
+    # Creem API Key（Dashboard > Developers，creem_ 前缀）
+    api-key: ${CREEM_API_KEY:}
+    # Webhook 签名密钥（Dashboard > Developers > Webhook）：creem-signature 头 =
+    # HMAC-SHA256(原始请求体, 本密钥) 的 hex，缺失即所有回调验签失败（收钱不发货）
+    webhook-secret: ${CREEM_WEBHOOK_SECRET:}
+    # API 地址：**默认生产** https://api.creem.io/v1（与 `CreemStrategy.java` 的 `@Value` 默认一致）。
+    # 仓库内不留测试网关默认值（硬约束 8）；测试模式联调必须显式配
+    # CREEM_ENVIRONMENT=https://test-api.creem.io/v1（测试与生产数据完全隔离，Key 不通用）。
+    environment: ${CREEM_ENVIRONMENT:https://api.creem.io/v1}
+    # 支付完成回跳地址；留空 = 用 Creem 产品后台配置的 default_success_url
+    success-url: ${CREEM_SUCCESS_URL:${app.base-url}/payment/success}
+    # 下单前校验 Creem 目录价/币种/周期。启用折扣/试用/按比例计费时目录价≠实际扣款，
+    # 需关闭本开关或改用自定义价目表；生产默认开启以防收钱不发货。
+    validate-price: ${CREEM_VALIDATE_PRICE:true}
+
   # PayPal（国际钱包）
   paypal:
     # 应用 Client ID
@@ -222,7 +264,7 @@ payment:
     # Webhook ID，回调验签必需（在 PayPal 后台创建 Webhook 后获得）
     webhook-id: ${PAYPAL_WEBHOOK_ID:}
     # 支付完成回跳地址
-    return-url: ${PAYPAL_RETURN_URL:${app.base-url}/payment/return}
+    return-url: ${PAYPAL_RETURN_URL:${app.base-url}/payment/success}
     # 支付取消回跳地址
     cancel-url: ${PAYPAL_CANCEL_URL:${app.base-url}/payment/cancel}
 
@@ -304,7 +346,8 @@ app:
   # 一旦忘记覆盖，渠道回调地址就是 localhost，用户付款后订单永远不发货（B1 高危配置）。
   # 本地联调：APP_BASE_URL=http://localhost:8000（服务端口见 server.port）
   # 生产：APP_BASE_URL=https://api.ywhome.top
-  base-url: ${APP_BASE_URL:http://localhost:8000}
+  # 2026-10-31 起无任何默认值：缺失即启动失败，避免漏配后回调仍指向 localhost（收钱不发货）。
+  base-url: ${APP_BASE_URL}
   # H9：CORS 允许的源头（逗号分隔）。留空表示不开放跨域（纯服务端 API 默认关闭）。
   # 部署前端独立域名时再显式填入，如 https://shop.example.com
   cors:

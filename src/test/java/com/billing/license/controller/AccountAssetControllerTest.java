@@ -40,6 +40,7 @@ class AccountAssetControllerTest {
     private final LicenseRepository licenseRepository = mock(LicenseRepository.class);
     private final SubscriptionRepository subscriptionRepository = mock(SubscriptionRepository.class);
     private final OrderRepository orderRepository = mock(OrderRepository.class);
+    private final CheckoutSessionRepository checkoutSessionRepository = mock(CheckoutSessionRepository.class);
     private final ProductRepository productRepository = mock(ProductRepository.class);
     private final UserRepository userRepository = mock(UserRepository.class);
     private final AdminService adminService = mock(AdminService.class);
@@ -56,7 +57,7 @@ class AccountAssetControllerTest {
     };
 
     private final AccountAssetService service = new AccountAssetService(
-            licenseRepository, subscriptionRepository, orderRepository,
+            licenseRepository, subscriptionRepository, orderRepository, checkoutSessionRepository,
             productRepository, userRepository, new OrderService(orderRepository),
             billingProperties, paymentStrategies, transactionOperations);
     private final AccountRefundService accountRefundService = new AccountRefundService(
@@ -241,7 +242,8 @@ class AccountAssetControllerTest {
 
     /** plan-4.1：无可退依据（未发货/未支付）时 refundable=false 且不回填金额 */
     @Test
-    void orders_notRefundable_whenNoLicense() {        when(orderRepository.findByCustomerIdOrderByCreatedAtDesc(USER_ID)).thenReturn(List.of(sampleOrder()));
+    void orders_notRefundable_whenNoLicense() {
+        when(orderRepository.findByCustomerIdOrderByCreatedAtDesc(USER_ID)).thenReturn(List.of(sampleOrder()));
         when(licenseRepository.findByOrderIdIn(anyList())).thenReturn(List.of());
 
         ResponseEntity<List<OrderResponse>> resp = controller.myOrders();
@@ -250,6 +252,78 @@ class AccountAssetControllerTest {
         assertNotNull(body);
         assertEquals(Boolean.FALSE, body.get(0).getRefundable());
         assertNull(body.get(0).getRefundableAmount());
+    }
+
+    /** #27-A：未支付订单的收银台会话仍可续做时回填 checkoutId（账号页「继续支付」） */
+    @Test
+    void orders_fillCheckoutId_whenUnpaidSessionResumable() {
+        Order order = pendingOrder();
+        when(orderRepository.findByCustomerIdOrderByCreatedAtDesc(USER_ID)).thenReturn(List.of(order));
+        when(licenseRepository.findByOrderIdIn(anyList())).thenReturn(List.of());
+        when(checkoutSessionRepository.findByOrderNumberIn(anyList())).thenReturn(List.of(
+                CheckoutSession.builder()
+                        .orderNumber(order.getOrderNumber())
+                        .checkoutId("cs_resume")
+                        .status(CheckoutSession.Status.CREATED)
+                        .expiresAt(LocalDateTime.now().plusHours(1))
+                        .createdAt(LocalDateTime.now())
+                        .build()));
+
+        List<OrderResponse> body = controller.myOrders().getBody();
+
+        assertNotNull(body);
+        assertEquals("cs_resume", body.get(0).getCheckoutId());
+    }
+
+    /** #27-A：过期会话不得回填，避免把用户导回必然失败的支付面板 */
+    @Test
+    void orders_hideCheckoutId_whenSessionExpired() {
+        Order order = pendingOrder();
+        when(orderRepository.findByCustomerIdOrderByCreatedAtDesc(USER_ID)).thenReturn(List.of(order));
+        when(licenseRepository.findByOrderIdIn(anyList())).thenReturn(List.of());
+        when(checkoutSessionRepository.findByOrderNumberIn(anyList())).thenReturn(List.of(
+                CheckoutSession.builder()
+                        .orderNumber(order.getOrderNumber())
+                        .checkoutId("cs_expired")
+                        .status(CheckoutSession.Status.PENDING)
+                        .expiresAt(LocalDateTime.now().minusMinutes(1))
+                        .createdAt(LocalDateTime.now().minusHours(3))
+                        .build()));
+
+        List<OrderResponse> body = controller.myOrders().getBody();
+
+        assertNotNull(body);
+        assertNull(body.get(0).getCheckoutId());
+    }
+
+    /** #27-A：订单首个套餐 SKU 回填，供继续支付时预选档位 */
+    @Test
+    void orders_fillProductSku() {
+        Order order = pendingOrder();
+        when(orderRepository.findByCustomerIdOrderByCreatedAtDesc(USER_ID)).thenReturn(List.of(order));
+        when(licenseRepository.findByOrderIdIn(anyList())).thenReturn(List.of());
+        when(orderRepository.findProductSkuByOrderIds(anyList()))
+                .thenReturn(List.<Object[]>of(new Object[]{order.getId(), "pro-buyout"}));
+
+        List<OrderResponse> body = controller.myOrders().getBody();
+
+        assertNotNull(body);
+        assertEquals("pro-buyout", body.get(0).getProductSku());
+    }
+
+    private Order pendingOrder() {
+        Order order = Order.builder()
+                .id(UUID.fromString("44444444-4444-4444-4444-444444444444"))
+                .orderNumber("ORD20261029000000001")
+                .email("buyer@example.com")
+                .totalAmount(new BigDecimal("99.00"))
+                .currency(Currency.USD)
+                .status(Order.OrderStatus.PENDING)
+                .paymentStatus(Order.PaymentStatus.UNPAID)
+                .createdAt(LocalDateTime.of(2026, 10, 29, 10, 0))
+                .build();
+        order.setCustomerId(USER_ID);
+        return order;
     }
 
     /** plan-4.1：用户端退款端点——实退金额与退款后状态取自实际退款结果 */

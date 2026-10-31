@@ -1,17 +1,17 @@
 # Billing & License Service
 
-统一的计费与许可证管理服务，基于 **Java 21 + Spring Boot 4.1.1**（JPA/Hibernate + PostgreSQL + Flyway + 5 家支付渠道 + KMS）构建，为桌面端 exe 工具提供 license 签发、兑换、换机与计费/退款/账务查看后端。
+统一的计费与许可证管理服务，基于 **Java 25 + Spring Boot 4.1.2**（JPA/Hibernate + PostgreSQL + Flyway + 5 家支付渠道 + KMS）构建，为桌面端 exe 工具提供 license 签发、兑换、换机与计费/退款/账务查看后端。
 
 > **上线执行手册见 [`上线准备工作.md`](./上线准备工作.md)**（阻断项清单 / 密钥生成实测命令 / 渠道设置 / 上线当天清单）。
-> **产品接入见 [`产品快速接入手册.md`](./产品快速接入手册.md)**（产品档案 + 套餐配置 → 收银台下单 → 回调发货 → License 领取/激活 → 续费/退款边界）。
-> 已知风险与待实测项见 [`上线准备工作.md`](./上线准备工作.md) §九「风险登记」与 §七 验收清单（含 B7 渠道部分退款、B8 Paddle 续费 payload、E 段管理台实机走查）；授权域「明确不做」与红线定案见 [`授权设计方案.md`](./授权设计方案.md) §十八，管理台 / MFA / 退款范围边界见 [`架构与业务流程设计.md`](./架构与业务流程设计.md) 末节「附：范围边界定案」。活动 plan [`plan-8.0.md`](./plan-8.0.md) **只承载未完成项**（2026-10-17 全量审计整改 + 产品接入收口；渠道侧真订阅与首充丢失补偿为待决策项）；上线闸门 T1–T4 属外部资源事项，登记在 [`上线准备工作.md`](./上线准备工作.md) §七-D。
+> **产品接入见 [`产品快速接入手册.md`](./产品快速接入手册.md)**（单层套餐配置 → 收银台下单 → 回调发货 → License 领取/激活 → 续费/退款边界）。
+> 已知风险与待实测项见 [`上线准备工作.md`](./上线准备工作.md) §九「风险登记」与 §七 验收清单（含 B7 渠道部分退款、B8 Paddle 续费 payload、E 段管理台实机走查）；授权域「明确不做」与红线定案见 [`授权设计方案.md`](./授权设计方案.md) §十八，管理台 / MFA / 退款范围边界见 [`架构与业务流程设计.md`](./架构与业务流程设计.md) 末节「附：范围边界定案」。当前活动 plan 为 [`plan-8.1.md`](./plan-8.1.md)（Creem 支付闭环 · 沙箱联调；plan-8.0 已于 2026-10-29 收口删除）；上线闸门 T1–T4 属外部资源事项，登记在 [`上线准备工作.md`](./上线准备工作.md) §七-D。
 
 ## 功能特性
 
 - **三档收费体系**：Pro 买断（一次性付费）/ Pro Plus 高级版（一次性付费，权益更高）/ 订阅制（月付、半年、年付等周期，License 有效期随渠道订阅事件联动）。⚠ 收银台下单侧当前一律创建**一次性收款**，自动续费依赖渠道（Paddle / Stripe）已建订阅的回调；接入边界见 [`产品快速接入手册.md`](./产品快速接入手册.md)。
 - **双币种定价**：每个 SKU 维护 CNY 与 USD 两档价格，下单按区域（国内/国际）取对应金额与币种。
 - **支付集成（5 家渠道）**：支付宝、微信支付（国内）；Stripe、Paddle、PayPal（国际）。支持创建支付、Webhook 回调发货、查询状态、**管理员全额退款**与**用户端自助退款**（按 License 剩余有效期折算，可能构成部分退款）。**渠道能力矩阵**：国内渠道只支持一次性买断周期，订阅周期（月付/半年/季付/年付）仅 Stripe / Paddle 可售；收银台下单与目录展示都按该矩阵过滤。
-- **许可证签发与校验**：基于 JWS 的签名许可证，payload 含 `lic/cid/sku/plan/feat/mid/oid/iat/exp`，客户端可离线校验机器码绑定与档位权益。
+- **许可证签发与校验**：基于 JWS 的签名许可证，payload 含 `lic/cid/sku/plan/mid/oid/iat/exp`，客户端可离线校验机器码绑定与档位权益；权益清单 `feat` 已随产品档案下线，客户端解锁只按 SKU 映射。
 - **兑换码系统**：密码学安全随机（`SecureRandom`）生成、兑换、管理端批量生成与吊销。
 - **多算法支持**：Ed25519（JWS `EdDSA`，默认）、ECDSA（`ES256`）、RSA（`RS256`）；可用集合（纯本地 `LocalKmsService` 支持）：`EdDSA` / `ES256` / `RS256`（详见 `application.yml` 的 `billing.signature-algorithm` 注释）。
 - **KMS 集成**：纯本地文件方案（`LocalKmsService`），密钥经文件挂载，无云 KMS 依赖（GCP / Azure / 阿里云 均不接入）。
@@ -65,7 +65,7 @@ export STRIPE_WEBHOOK_SECRET=whsec_xxx
 ### 3. 启动服务
 
 ```bash
-# 本地运行（需 JDK 21）
+# 本地运行（需 JDK 25）
 mvn spring-boot:run
 
 # 或打包后运行
@@ -102,30 +102,55 @@ docker compose logs -f app
 > **路径约定（D1，2026-09-14）**：端点前缀统一为 `/api/**`，**不再使用 `/api/v1`**。
 
 > **鉴权为四档（v2.10 增设用户档；B8 增设半认证档；X-API-Key 特权档已于 A12 / 2026-09-23 移除，统一为管理员 JWT）**：
-> 1. **公开**：`/api/checkout/**`、`GET /api/products`、`/api/redeem/redeem`、`/api/licenses/verify/**`、`GET /api/licenses/pending`、`POST /api/licenses/activate`、`POST /api/licenses/report-binding`、`GET /api/licenses/machine/**`（机器首次出现查询）、`/api/webhooks/**`、`/v3/api-docs`，以及账号的 `POST /api/account/verification-code`、`register`、`login`、`password/reset`；三个静态页（`/checkout/**`、`/account/**`、`/admin/**`）的 GET 也放行（后端同源托管，接口仍按上述档位鉴权）；
+> 1. **公开**：`/api/checkout/**`、`GET /api/products`、`/api/redeem/redeem`、`/api/licenses/verify/**`、`GET /api/licenses/pending`、`POST /api/licenses/activate`、`POST /api/licenses/report-binding`、`GET /api/licenses/machine/**`（机器首次出现查询）、`/api/webhooks/**`、`/v3/api-docs`，以及账号的 `POST /api/account/verification-code`、`register`、`login`、`password/reset`；四个静态页（`/checkout/**`、`/account/**`、`/admin/**`、`/payment/**`）的 GET 也放行（后端同源托管，接口仍按上述档位鉴权；`/payment/**` 是渠道支付完成/取消的默认回跳结果页，匿名只读、不含任何账户数据）；
 > 2. **半认证（B8 新增）**：`POST /api/account/mfa/challenge`、`POST /api/account/mfa/verify`——框架层同为 `permitAll`，但**方法内强制校验一次性登录票据**（独立密钥签名 + `tokenVersion` 比对 + 300 秒有效期）。之所以不能要求 `ROLE_USER`：调用者此时尚未持有访问令牌，要求令牌会形成死锁（与登录端点同坑，故 `SecurityConfig` 中这两条也须声明在 `/api/account/**` 之前）；
-> 3. **用户（v2.10 新增）**：`Authorization: Bearer <JWT>` → `ROLE_USER`，适用于 `POST /api/account/logout`、`GET /api/account/me`、`POST /api/account/password/change`，以及「我的资产」五端点（`/api/account/licenses|subscriptions|orders`、`POST /api/account/orders/{orderNumber}/refund`、`POST /api/account/licenses/{licenseKey}/unbind`）。管理员兼授 `ROLE_USER`（B1），故同样可用；
+> 3. **用户（v2.10 新增）**：`Authorization: Bearer <JWT>` → `ROLE_USER`，适用于 `POST /api/account/logout`、`GET /api/account/me`、`POST /api/account/password/change`，以及「我的资产」六端点（`/api/account/licenses|subscriptions|orders`、`POST /api/account/subscriptions/{subscriptionId}/cancel`、`POST /api/account/orders/{orderNumber}/refund`、`POST /api/account/licenses/{licenseKey}/unbind`）。管理员兼授 `ROLE_USER`（B1），故同样可用；
 > 4. **管理（A12 起替代原 X-API-Key 特权档；B8 增设二次因子绑定入口）**：`/api/admin/**` 全部管理动作携带 `Authorization: Bearer <JWT>`，且持有账号的 `role=ADMIN`（即 `ROLE_ADMIN`）。管理员与普通用户共用同一套账号体系与登录端点 `POST /api/account/login`，登录后 `JwtAuthFilter` 按 `users.role` 动态注入角色——**无独立 API Key、无独立密钥配置**。二次因子的绑定入口（`/api/admin/mfa/**` 四个端点）挂在 `admin` 前缀下，由框架统一保证 `ROLE_ADMIN`，普通用户不开放；平台账务（`/api/admin/accounting/**`）同为管理员 JWT。
 >
 > 历史注记：`X-Admin-API-Key`（`AdminController` 自校验）与 `X-API-Key`（`ApiKeyAuthFilter` 机读通道）均已删除（A12）。公开端点依赖签名 License + 限流保护。
 > **权限域严格隔离**：用户令牌（`ROLE_USER`）不能访问 `/api/admin/**`；管理动作依赖「当前管理员用户」上下文，actor 取自 `SecurityContext` 的 `userId`（审计日志可追溯操作人）。
 
-### 端点总览（共 65 个：公开 19 + 半认证 2 + 用户令牌 8 + 管理端 36）
+### 支付模型与资金账（现行结构）
+
+- `payment_attempts`：每次选择渠道发起支付的尝试（渠道会话号、金额、币种、状态），可多行；换渠道不再覆盖历史。
+- `payment_ledger_entries`：不可变资金账，只记录已确认的 `CHARGE` / `REFUND`，按 `idempotency_key` 唯一；订阅每期续费追加一条 CHARGE，退款不会覆盖原收款。
+- `fulfillment_events`：支付核心只登记履约事件（订单 + 类型唯一），`LICENSE` 适配器负责签发 License/兑换码；成功置 `DONE`，失败保留 `FAILED` 由后台重试（默认每 60s，最多 5 次）。
+- 订单只保留支付聚合状态与实际收款渠道；退款按成功收款尝试加锁，不锁订单行。
+- 旧 `payments` 表已由 V19 迁移拆分并删除；V18 增加 `products.charge_mode`，V20 增加履约事件表，V21 增加收银台 `channel_closed_at`（过期会话安全关单与后台对账）。
+
+### 支付回调语义与资金安全（现行口径）
+
+渠道回调按**业务语义**分流，不再只看 `status` 字符串：
+
+- 只有「确认收款」事件（一次性 `PAYMENT_SUCCEEDED` / 订阅 `SUBSCRIPTION_PAYMENT`，如 Creem `subscription.paid`、`checkout.completed`）允许发货或续期。订阅的 `active` / `update`、`trialing`、`paused`、`past_due`、`scheduled_cancel`、`expired` 只联动订阅状态，**绝不发货**；`scheduled_cancel` 不是终态，权益保留到期末且可恢复。
+- 未付款交易关闭（如支付宝 `TRADE_CLOSED`）只更新流水，**不吊销权益**；退款必须走退款事件（`REFUND_SUCCEEDED`）。
+- 收款校验：订单号必须存在、金额与币种必须可核；订阅续期允许金额与首单不同，但仍要求正金额且币种一致。查单补偿同样必须拿到金额/币种/订单关联证据（`PaymentQueryResult.verified=true`）才发货，缺证据保持待核。
+- 渠道归属：支付宝验签后额外核对 `app_id`（可选 `payment.alipay.seller-id`）；支付流水定位排除退款行并校验 `Payment.method` 与回调渠道一致，不一致返回 400 `WEBHOOK_PAYMENT_MISMATCH`。
+- 退款结算：按事件给出的 `refund_amount` / `refund_currency` 记账（不拿原交易实付额顶替），统一撤销该订单的 License **与未使用兑换码**；缺金额或无法关联订单返回 4xx/503 并保留 `processed=false` 供重试/人工核对。
+- 事件幂等：`payment_events.processed` 只在业务与记账都成功后置 true；反查订阅等渠道 HTTP 在事务外完成，失败返回 503 让渠道重投。
+- 续费换证：续期后服务端在 verify / 同机领取响应中下发与新 `expiresAt` 一致的 `signedToken`；客户端验签且确认同一 `lic` 后才替换本地 token。
+- 商品映射：Creem 必须配 `creemProductId`（`prod_` 前缀），Paddle 订阅必须配 `paddlePriceId`；目录只展示「已启用 + 收款方式 + 币种 + 映射齐全」的渠道，缺失在调用渠道前拒单。
+- 收款方式：`products.charge_mode` 为 `ONE_TIME`（一次性扣款，权益可限期）或 `AUTO_RECURRING`（自动续扣）；`billing_cycle` 只表达周期/旧兼容。支付形态用请求 `paymentProduct`（`QRCODE` / `REDIRECT`）选择，未传时优先扫码，**与机器码无关**。
+- 订阅每期续费都追加一条 CHARGE 分录；账务交易流水直接读取资金账，不再从订单状态推断逐期收款。
+
+### 端点总览（共 78 个：公开 20 + 半认证 2 + 用户令牌 9 + 管理端 47）
 
 > 下表逐条列全。数字以代码为准（各 `@RestController` 的方法映射），新增端点时必须同步本表与 [`接口调用时序图.md`](./接口调用时序图.md) §1.6。
+>
+> 2026-10-31 新增管理端账务端点：`GET /api/admin/accounting/ledger`、`GET /api/admin/accounting/fees`、`GET|POST /api/admin/accounting/channel-statements`、`POST /api/admin/accounting/ledger/{id}/reverse`、`GET /api/admin/refunds/manual`（复式账/手续费/渠道对账/人工退款队列），详见 `AccountingController` 与 `AdminController`。
 
 | 分组 | 方法与路径 | 鉴权 |
 |---|---|---|
 | 收银台 | `POST /api/checkout/create`（可选 `provider`，一步下单） | 公开·**IP + 邮箱双维度限流**（#8：IP 由服务端解析，请求体 `clientIp` 已 `@JsonIgnore`） |
 | | `POST /api/checkout/{checkoutId}/select-provider` | 公开 |
 | | `GET /api/checkout/{checkoutId}/status` | 公开 |
-| 商品目录 | `GET /api/products?product=<产品码>` | 公开（接口驱动：`product` 缺省/空白＝返回全部在售套餐；权益来自产品档案；`recurring` 标识是否订阅类周期；`providers` 返回可售渠道（按渠道能力矩阵过滤，空数组＝当前部署无渠道可售）；顺序＝推荐位优先、其余按 SKU 升序；见下「收银台」段） |
+| 商品目录 | `GET /api/products?product=<产品码>` | 公开（接口驱动：`product` 缺省/空白＝返回全部在售套餐；套餐即售卖单元，权益配置已下线；`recurring` 标识是否订阅类周期；`providers` 返回可售渠道（按渠道能力矩阵过滤，空数组＝当前部署无渠道可售）；顺序＝推荐位优先、其余按 SKU 升序；见下「收银台」段） |
 | License | `GET /api/licenses/verify/{licenseKey}` | 公开（成功返回详情 + `nextCheckAfterMs`（默认 15 天）并更新 `lastVerifiedAt`；失效返回 400：`LICENSE_NOT_FOUND` / `LICENSE_EXPIRED` / `LICENSE_INVALID`；限流 429 空 body；客户端须按 [`产品快速接入手册.md`](./产品快速接入手册.md) §5.5 定期复核） |
 | | `GET /api/licenses/pending?machineId=` | 公开·**双维度限流**（机器码 + 真实来源 IP）；支付后按机器码领取未绑定授权，见下「待激活领取」段 |
 | | `POST /api/licenses/activate` | 公开·**可选鉴权**：凭证为兑换码（`RC-` 前缀）时匿名可调；为许可证密钥时**必须登录且归属本人**（判定在服务端，见下「凭证激活」） |
 | | `POST /api/licenses/report-binding` | 公开（客户端兑换/激活后**启动时自动上报机器码**完成补绑；凭 `signedToken` 验签，**无需登录**） |
 | 兑换码 | `POST /api/redeem/redeem` | 公开 |
-| 支付回调 | `POST /api/webhooks/{alipay \| wechat \| stripe \| paddle \| paypal}` | 公开（各渠道自行验签） |
+| 支付回调 | `POST /api/webhooks/{alipay \| wechat \| stripe \| paddle \| creem \| paypal}` | 公开（各渠道自行验签） |
 | 机器台账 | `GET /api/licenses/machine/{machineCode}/first-seen` | 公开只读（返回 `seen` / `firstSeenAt`，供客户端试用防重置：删档重装不能白嫖试用，C8） |
 | 订单 | `GET /api/admin/orders?status=&orderNumber=&orderId=&page=&size=` | 管理员 JWT（#9 起分页：`page` 从 0 起、`size` 默认 20 上限 200，按下单时间倒序，返回 `Page`） |
 | | `POST /api/admin/orders/{orderNumber}/issue` | 管理员 JWT |
@@ -139,13 +164,10 @@ docker compose logs -f app
 | | `GET /api/admin/redeem-codes?productSku=&status=` | 管理员 JWT |
 | | `POST /api/admin/redeem-codes/revoke/{code}` | 管理员 JWT |
 | 运维 | `GET /api/admin/payment-channels` | 管理员 JWT（各渠道启用与缺失配置项自查，不回显密钥；返回 `supportedBillingCycles` / `supportsRecurring` / `paymentProducts` 能力矩阵） |
-| 产品档案 | `GET /api/admin/product-profiles?keyword=` | 管理员 JWT（按产品码定义名称/描述/权益，附挂载套餐数） |
-| | `POST /api/admin/product-profiles` | 管理员 JWT（新增产品档案；产品码创建后锁定） |
-| | `PATCH /api/admin/product-profiles/{profileId}` | 管理员 JWT（编辑名称/描述/权益；权益对该产品下全部套餐生效） |
-| 产品配置 | `GET /api/admin/products?keyword=&active=` | 管理员 JWT（套餐列表，含已下架；关键字匹配 SKU/套餐名/产品码） |
-| | `GET /api/admin/products/meta` | 管理员 JWT（周期/档位枚举 + `billing.feature-labels` 权益标签 + `channels` 渠道能力矩阵） |
-| | `POST /api/admin/products` | 管理员 JWT（新增套餐；必须挂到已存在的产品档案，双币价必填） |
-| | `PATCH /api/admin/products/{productId}` | 管理员 JWT（编辑套餐；SKU 不可改，可改所属档案/周期/价格/推荐位） |
+| 产品配置 | `GET /api/admin/products?keyword=&active=` | 管理员 JWT（单层套餐列表，含已下架；关键字匹配 SKU/套餐名/产品码） |
+| | `GET /api/admin/products/meta` | 管理员 JWT（周期/档位枚举 + `channels` 渠道能力矩阵） |
+| | `POST /api/admin/products` | 管理员 JWT（新增套餐；产品码仅作分组/目录过滤键，双币价必填） |
+| | `PATCH /api/admin/products/{productId}` | 管理员 JWT（编辑套餐；SKU 不可改，可改产品码/周期/价格/推荐位） |
 | | `PATCH /api/admin/products/{productId}/active` | 管理员 JWT（上架/下架；下架只影响新订单） |
 | 用户管理 | `GET /api/admin/users?email=&role=&status=&page=&size=` | 管理员 JWT（列表，page 从 0 起、size 默认 20 上限 200） |
 | | `GET /api/admin/users/{userId}` | 管理员 JWT（详情：脱敏资料 + 名下许可证/订单计数；许可证明细复用 `GET /api/admin/licenses?customerEmail=`） |
@@ -174,7 +196,8 @@ docker compose logs -f app
 | | `POST /api/account/password/change` | 用户令牌 |
 | 我的资产 | `GET /api/account/licenses` | 用户令牌（本人 License，密钥完整回显、不含 signedToken） |
 | | `GET /api/account/subscriptions` | 用户令牌 |
-| | `GET /api/account/orders` | 用户令牌（另回填 `refundable` / `refundableAmount`） |
+| | `POST /api/account/subscriptions/{subscriptionId}/cancel` | 用户令牌（期末取消：渠道确认才落库，权益保留到周期结束） |
+| | `GET /api/account/orders` | 用户令牌（另回填 `refundable` / `refundableAmount` / `checkoutId` / `productSku`） |
 | | `POST /api/account/orders/{orderNumber}/refund` | 用户令牌（按剩余有效期折算，可能构成部分退款） |
 | | `POST /api/account/licenses/{licenseKey}/unbind` | 用户令牌（释放本人 License 的设备绑定，以便换机后重新激活；只解绑不吊销） |
 
@@ -607,35 +630,30 @@ curl "http://localhost:8000/api/admin/users/export?role=USER"   -H "Authorizatio
 > 已登录改密与邮箱验证码自助重置会清除该标记；管理员代重置会置位它。
 > 管理员自己被代重置时同样受限——前端会把人引导到账号页（`/account/`）先改密。
 
-> **MFA 口径（2026-10-25 起）**：二次验证只在**登录**时要求；管理端数据修改（用户账号、产品档案、套餐）不再二次索要动态码，前端仅做一次确认弹窗。原 `X-Step-Up-Token` 机制与 `/api/admin/mfa/step-up/**` 两个端点已移除。
+> **MFA 口径（2026-10-25 起）**：二次验证只在**登录**时要求；管理端数据修改（用户账号、产品套餐配置）不再二次索要动态码，前端仅做一次确认弹窗。原 `X-Step-Up-Token` 机制与 `/api/admin/mfa/step-up/**` 两个端点已移除。
 
 > **账号安全通知（P1）**：已登录改密（SELF_CHANGE）、邮箱验证码自助重置（SELF_RESET）、
 > 管理员代重置（ADMIN_RESET）成功后，向账号邮箱发送**不含任何密码**的安全提醒（`@Async` 旁路，
 > SMTP 未配置时静默跳过、失败不回滚变更）。
 
-### 管理端产品配置（产品档案 + 套餐）
+### 管理端产品配置（单层套餐）
 
-> **两层模型**：产品档案按 `product_code` 定义名称 / 描述 / **权益**；套餐（`products` 行）定义支付周期、双币价、授权天数与上下架。同一产品下的月付 / 半年 / 年付 / 永久套餐**共享产品权益**。
-> 产品码与 SKU 创建后锁定；不提供物理删除（订单 / License / 兑换码均以外键引用产品），停售走「下架」。
+> **单层模型**：套餐（`products` 行）即售卖单元，产品码、名称、描述、支付周期、双币价、授权天数与上下架都在套餐上维护；权益配置已下线（客户端按 SKU 解锁）。
+> 同一 `product_code` 下的套餐在管理台自动归组；SKU 创建后锁定；不提供物理删除（订单 / License / 兑换码均以外键引用产品），停售走「下架」。
 > 收银台目录完全由 `GET /api/products` 驱动，后台新增并上架的套餐会自动出现在收银台（无前端白名单）。
 
 ```bash
-# ① 新增产品档案（权益在产品级定义一次）
-curl -X POST "http://localhost:8000/api/admin/product-profiles" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
-  -d '{"productCode":"ai-tools","name":"AI-Tools 专业版","nameEn":"AI-Tools Pro","features":["OFFLINE","MULTI_DEVICE"]}'
-
-# ② 新增套餐（必须挂到已存在的产品档案；周期支持 MONTHLY / HALF_YEAR / QUARTERLY / YEARLY / ONE_TIME / LIFETIME）
+# ① 新增套餐（产品码仅作分组/目录过滤键，不要求预建档案；周期支持 MONTHLY / HALF_YEAR / QUARTERLY / YEARLY / ONE_TIME / LIFETIME）
 curl -X POST "http://localhost:8000/api/admin/products" \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
   -d '{"sku":"pro-half-year","productCode":"ai-tools","name":"Pro 半年付","nameEn":"Pro Half-year","priceCny":299.00,"priceUsd":39.00,"billingCycle":"HALF_YEAR","tier":"PRO","licenseDurationDays":180,"updateUntilDays":null,"maxMajorVersion":null,"recommended":false}'
 
-# ③ 编辑产品档案权益（对该产品下全部套餐立即生效）
-curl -X PATCH "http://localhost:8000/api/admin/product-profiles/{profileId}" \
+# ② 编辑套餐（SKU 不可改；可改产品码 / 周期 / 价格 / 渠道价目）
+curl -X PATCH "http://localhost:8000/api/admin/products/{productId}" \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
-  -d '{"productCode":"ai-tools","name":"AI-Tools 专业版","features":["OFFLINE","MULTI_DEVICE","CLOUD_SYNC"]}'
+  -d '{"productCode":"ai-tools","name":"Pro 半年付","priceCny":299.00,"priceUsd":39.00,"billingCycle":"HALF_YEAR","chargeMode":"AUTO_RECURRING","tier":"PRO","licenseDurationDays":180,"paddlePriceId":"pri_..."}'
 
-# ④ 套餐上下架（只影响新订单）
+# ③ 套餐上下架（只影响新订单）
 curl -X PATCH "http://localhost:8000/api/admin/products/{productId}/active?active=false" \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
@@ -766,7 +784,7 @@ billing-license-service/
 │   └── db/migration/         # Flyway 迁移脚本 V1–V13（下一个可用版本号 V14；已入库文件受 checksum 保护，不得改内容）
 ├── src/test/                 # 单元测试 + 集成测试（含 @SpringBootTest 上下文闸门、OpenAPI 文档可用性）
 ├── scripts/{db,deploy,ops}/  # 运维脚本（package/run/healthcheck/show_migrations…）
-└── pom.xml                   # Maven 配置（Java 21 + Spring Boot 4.1.1）
+└── pom.xml                   # Maven 配置（Java 25 + Spring Boot 4.1.2）
 ```
 
 ## 配置说明
@@ -836,7 +854,7 @@ Payload 包含：
 - `cid`: 客户 ID
 - `sku`: 产品 SKU
 - `plan`: 档位（PRO / PRO_PLUS，用于客户端权益区分）
-- `feat`: 权益清单（解析自产品档案 `product_profiles.features`，按产品的 `product_code` 读取）
+- 权益清单 `feat` 已随产品档案下线：客户端按 SKU 映射解锁，不再依赖 payload 里的营销权益文案。
 - `mid`: 机器码（客户端离线绑定校验）
 - `oid`: 订单 ID
 - `iat`: 签发时间
@@ -850,4 +868,4 @@ Payload 包含：
 mvn test
 ```
 
-当前共 **592 个测试，0 失败 0 错误**（2026-10-16 实跑 `mvn -o test`：`Tests run: 592, Failures: 0, Errors: 0, Skipped: 0`，`BUILD SUCCESS`；并已接入 CI：`.github/workflows/ci.yml`；覆盖 5 渠道策略与退款契约、收银台/订单状态机、兑换码、订阅生命周期、限流淘汰、审计切面、异常脱敏、管理员 MFA（TOTP / 票据 / 密钥加密 / 二次确认）、凭证激活体系统一、客户端自动上报绑定、管理端 License 处置（解绑 / 失效重发 / 作废）、机器「已转正」标记与首次出现账本、管理端用户管理与代重置、强制改密拦截、**平台账务聚合口径与参数护栏**（不跨币种求和 / 退款归类 / 366 天跨度 / 枚举入参 / 分页封顶）、静态页契约与安全响应头、OpenAPI 文档可用性与响应壳一致性、ApplicationContext 加载与 `healthEndpoint` Bean 装配）。
+当前共 **705 个测试，0 失败 0 错误**（2026-10-30 实跑 `mvn -o test`：`Tests run: 705, Failures: 0, Errors: 0, Skipped: 0`，`BUILD SUCCESS`；并已接入 CI：`.github/workflows/ci.yml`；覆盖 5 渠道策略与退款契约、收银台/订单状态机、兑换码、订阅生命周期（含续期逐期入账、期末取消可逆）、限流淘汰、审计切面、异常脱敏、管理员 MFA（TOTP / 票据 / 密钥加密 / 二次确认）、凭证激活体系统一、客户端自动上报绑定、管理端 License 处置（解绑 / 失效重发 / 作废）、机器「已转正」标记与首次出现账本、管理端用户管理与代重置、强制改密拦截、**平台账务聚合口径与参数护栏**（不跨币种求和 / 退款归类 / 366 天跨度 / 枚举入参 / 分页封顶）、静态页契约与安全响应头（含支付结果页匿名可达）、OpenAPI 文档可用性与响应壳一致性、ApplicationContext 加载与 `healthEndpoint` Bean 装配）。

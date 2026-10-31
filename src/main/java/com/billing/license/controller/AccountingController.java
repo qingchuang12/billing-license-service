@@ -4,7 +4,10 @@ import com.billing.license.annotation.Audit;
 import com.billing.license.dto.accounting.*;
 import com.billing.license.entity.Currency;
 import com.billing.license.exception.BusinessException;
+import com.billing.license.entity.PaymentLedgerEntry;
+import com.billing.license.exception.BusinessException;
 import com.billing.license.service.AccountingService;
+import com.billing.license.service.ChannelReconciliationService;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentStatus;
 import io.swagger.v3.oas.annotations.Operation;
@@ -16,11 +19,9 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -46,6 +47,7 @@ public class AccountingController {
     private static final long MAX_RANGE_DAYS = 366;
 
     private final AccountingService accountingService;
+    private final ChannelReconciliationService channelReconciliationService;
 
     @Operation(summary = "收入总览",
             description = "区间内的 GMV / 实收 / 已退款 / 净收入 / 订单数 / 客单价，按币种分组返回（金额不跨币种求和）。"
@@ -145,6 +147,70 @@ public class AccountingController {
         return ResponseEntity.ok(accountingService.getDiscrepancies(range[0], range[1]));
     }
 
+    @Operation(summary = "复式分账明细",
+            description = "每行含借贷科目（debitAccount / creditAccount）、冲正原分录（reversalOf）。支持按渠道/类型/币种过滤。")
+    @Audit(action = "VIEW_ACCOUNTING_LEDGER", target = "-")
+    @GetMapping("/ledger")
+    public ResponseEntity<Page<LedgerEntryView>> ledger(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
+            @RequestParam(required = false) String channel,
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false) String currency,
+            @RequestParam(required = false, defaultValue = "0") int page,
+            @RequestParam(required = false, defaultValue = "20") int size) {
+        LocalDateTime[] range = normalizeRange(from, to);
+        PaymentMethod ch = parseChannel(channel);
+        PaymentLedgerEntry.EntryType entryType = parseEntryType(type);
+        Currency cur = parseCurrency(currency);
+        int safeSize = Math.max(1, Math.min(size, MAX_PAGE_SIZE));
+        PageRequest pageable = PageRequest.of(Math.max(0, page), safeSize,
+                Sort.by(Sort.Direction.DESC, "occurredAt"));
+        return ResponseEntity.ok(accountingService.getLedger(range[0], range[1], ch, entryType, cur, pageable));
+    }
+
+    @Operation(summary = "手续费汇总", description = "仅统计 FEE 分录，按渠道 × 币种返回手续费总额与笔数。")
+    @Audit(action = "VIEW_ACCOUNTING_FEES", target = "-")
+    @GetMapping("/fees")
+    public ResponseEntity<List<FeeSummaryView>> fees(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to) {
+        LocalDateTime[] range = normalizeRange(from, to);
+        return ResponseEntity.ok(accountingService.getFeeSummary(range[0], range[1]));
+    }
+
+    @Operation(summary = "导入渠道账单", description = "按 channelTxnId 与本地账本匹配；账单手续费自动补记 FEE 分录（幂等）。")
+    @Audit(action = "IMPORT_CHANNEL_STATEMENT", target = "-")
+    @PostMapping("/channel-statements")
+    public ResponseEntity<List<ChannelStatementLineView>> importChannelStatements(
+            @RequestBody List<ChannelStatementLineRequest> lines) {
+        return ResponseEntity.ok(channelReconciliationService.importLines(lines));
+    }
+
+    @Operation(summary = "渠道账单对账结果",
+            description = "返回账单行匹配状态统计、明细，以及有本地分录但账单未出现的交易。")
+    @Audit(action = "VIEW_CHANNEL_RECONCILIATION", target = "-")
+    @GetMapping("/channel-statements")
+    public ResponseEntity<ChannelReconciliationResponse> reconcileChannelStatements(
+            @RequestParam String provider,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        PaymentMethod method = parseChannel(provider);
+        if (method == null) {
+            throw new BusinessException("INVALID_PROVIDER", "provider 不能为空");
+        }
+        return ResponseEntity.ok(channelReconciliationService.reconcile(method, from, to));
+    }
+
+    @Operation(summary = "冲正分账", description = "交换原分录借贷方向生成新分录；幂等，重复调用返回同一条冲正。")
+    @Audit(action = "REVERSE_LEDGER_ENTRY", target = "#id")
+    @PostMapping("/ledger/{id}/reverse")
+    public ResponseEntity<LedgerEntryView> reverseLedgerEntry(
+            @PathVariable Long id,
+            @RequestParam(required = false) String reason) {
+        return ResponseEntity.ok(channelReconciliationService.reverseEntry(id, reason));
+    }
+
     // ==================== 参数处理 ====================
 
     /** from/to 缺省处理：均缺省 → 最近 30 天；单缺省 → 各自按 now / now-30d 兜底。 */
@@ -170,6 +236,18 @@ public class AccountingController {
             return PaymentMethod.valueOf(channel.trim().toUpperCase());
         } catch (IllegalArgumentException e) {
             throw new BusinessException("INVALID_CHANNEL", "非法支付渠道：" + channel);
+        }
+    }
+
+    private PaymentLedgerEntry.EntryType parseEntryType(String type) {
+        if (type == null || type.isBlank()) {
+            return null;
+        }
+        try {
+            return PaymentLedgerEntry.EntryType.valueOf(type.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("INVALID_ENTRY_TYPE",
+                    "非法分录类型（CHARGE/REFUND/FEE/REVERSAL）：" + type);
         }
     }
 

@@ -9,9 +9,13 @@ import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.*;
 import com.billing.license.service.payment.PaymentService;
 import com.billing.license.service.payment.impl.PaymentServiceFactory;
+import com.billing.license.service.payment.strategy.PaymentLinkContext;
 import com.billing.license.service.payment.strategy.PaymentMethod;
+import com.billing.license.service.payment.strategy.PaymentQueryResult;
 import com.billing.license.service.payment.strategy.PaymentResponse;
 import com.billing.license.service.payment.strategy.PaymentStatus;
+import com.billing.license.service.payment.util.AmountValidator;
+import com.billing.license.service.fulfillment.FulfillmentService;
 import com.billing.license.service.risk.RateLimitService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,13 +40,13 @@ class CheckoutServiceTest {
     private CheckoutSessionRepository checkoutSessionRepository;
     private PaymentServiceFactory paymentServiceFactory;
     private PaymentService paymentService;
-    private LicenseService licenseService;
-    private RedeemCodeService redeemCodeService;
+    private FulfillmentService fulfillmentService;
     private LicenseRepository licenseRepository;
     private RedeemCodeRepository redeemCodeRepository;
-    private PaymentRepository paymentRepository;
+    private PaymentAttemptRepository attemptRepository;
     private CustomerIdentityService customerIdentityService;
     private RateLimitService rateLimitService;
+    private AmountValidator amountValidator;
     private CheckoutService checkoutService;
 
     private Product product;
@@ -54,13 +58,13 @@ class CheckoutServiceTest {
         checkoutSessionRepository = mock(CheckoutSessionRepository.class);
         paymentServiceFactory = mock(PaymentServiceFactory.class);
         paymentService = mock(PaymentService.class);
-        licenseService = mock(LicenseService.class);
-        redeemCodeService = mock(RedeemCodeService.class);
+        fulfillmentService = mock(FulfillmentService.class);
         licenseRepository = mock(LicenseRepository.class);
         redeemCodeRepository = mock(RedeemCodeRepository.class);
-        paymentRepository = mock(PaymentRepository.class);
+        attemptRepository = mock(PaymentAttemptRepository.class);
         customerIdentityService = mock(CustomerIdentityService.class);
         rateLimitService = mock(RateLimitService.class);
+        amountValidator = mock(AmountValidator.class);
         // E4：createCheckout 经 CustomerIdentityService 解析客户标识，默认返回一个 userId
         when(customerIdentityService.resolveOrCreate(anyString())).thenReturn(UUID.randomUUID());
 
@@ -70,11 +74,12 @@ class CheckoutServiceTest {
 
         checkoutService = new CheckoutService(
             productRepository, orderRepository, checkoutSessionRepository,
-            paymentServiceFactory, paymentService, licenseService, redeemCodeService,
+            paymentServiceFactory, paymentService, fulfillmentService,
             licenseRepository, redeemCodeRepository,
-            paymentRepository,
+            attemptRepository,
             rateLimitService,
-            customerIdentityService);
+            customerIdentityService,
+            amountValidator);
         // #5：getStatus 把「确认已支付后的写库腿」交给 self.applyCompensatedPayment 的短事务；
         // 单测没有容器代理，self 直接指回同一实例。
         org.springframework.test.util.ReflectionTestUtils.setField(checkoutService, "self", checkoutService);
@@ -88,7 +93,7 @@ class CheckoutServiceTest {
     @Test
     void createCheckout_domestic_shouldReturnDomesticMethods() {
         when(productRepository.findBySku("pro")).thenReturn(Optional.of(product));
-        when(paymentServiceFactory.getEnabledMethods(eq(true), any()))
+        when(paymentServiceFactory.getEnabledMethods(eq(true), any(com.billing.license.entity.ChargeMode.class)))
             .thenReturn(List.of(PaymentMethod.ALIPAY, PaymentMethod.WECHAT_PAY));
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
         when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
@@ -106,7 +111,7 @@ class CheckoutServiceTest {
     @Test
     void createCheckout_international_shouldReturnInternationalMethods() {
         when(productRepository.findBySku("pro")).thenReturn(Optional.of(product));
-        when(paymentServiceFactory.getEnabledMethods(eq(false), any()))
+        when(paymentServiceFactory.getEnabledMethods(eq(false), any(com.billing.license.entity.ChargeMode.class)))
             .thenReturn(List.of(PaymentMethod.STRIPE, PaymentMethod.PADDLE, PaymentMethod.PAYPAL));
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
         when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
@@ -137,8 +142,8 @@ class CheckoutServiceTest {
             .name("Pro").price(new BigDecimal("99.00"))
             .priceCny(new BigDecimal("712.80")).priceUsd(new BigDecimal("99.00")).active(true).build();
         when(productRepository.findBySku("pro")).thenReturn(Optional.of(dual));
-        when(paymentServiceFactory.getEnabledMethods(eq(true), any())).thenReturn(List.of(PaymentMethod.ALIPAY));
-        when(paymentServiceFactory.getEnabledMethods(eq(false), any())).thenReturn(List.of(PaymentMethod.STRIPE));
+        when(paymentServiceFactory.getEnabledMethods(eq(true), any(com.billing.license.entity.ChargeMode.class))).thenReturn(List.of(PaymentMethod.ALIPAY));
+        when(paymentServiceFactory.getEnabledMethods(eq(false), any(com.billing.license.entity.ChargeMode.class))).thenReturn(List.of(PaymentMethod.STRIPE));
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
         when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
 
@@ -171,7 +176,7 @@ class CheckoutServiceTest {
         UUID resolvedUserId = UUID.randomUUID();
         when(customerIdentityService.resolveOrCreate("only@email.com")).thenReturn(resolvedUserId);
         when(productRepository.findBySku("pro")).thenReturn(Optional.of(product));
-        when(paymentServiceFactory.getEnabledMethods(eq(true), any())).thenReturn(List.of(PaymentMethod.ALIPAY));
+        when(paymentServiceFactory.getEnabledMethods(eq(true), any(com.billing.license.entity.ChargeMode.class))).thenReturn(List.of(PaymentMethod.ALIPAY));
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
         when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
 
@@ -210,7 +215,7 @@ class CheckoutServiceTest {
         when(paymentServiceFactory.getStrategy(PaymentMethod.ALIPAY)).thenReturn(mock(com.billing.license.service.payment.strategy.PaymentStrategy.class));
         PaymentResponse pr = new PaymentResponse();
         pr.setPayUrl("https://pay.example.com/x");
-        when(paymentService.requestPayment(any(Order.class), eq(PaymentMethod.ALIPAY))).thenReturn(pr);
+        when(paymentService.requestPayment(any(Order.class), eq(PaymentMethod.ALIPAY), any(PaymentLinkContext.class))).thenReturn(pr);
         when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
 
         SelectProviderRequest sel = SelectProviderRequest.builder().provider("alipay").build();
@@ -239,7 +244,8 @@ class CheckoutServiceTest {
     @Test
     void selectProvider_shouldRejectChannelThatCannotSellPlanCycle() {
         Product monthly = Product.builder().id(UUID.randomUUID()).sku("pro-monthly")
-            .name("Pro 月付").billingCycle(Product.BillingCycle.MONTHLY).active(true).build();
+            .name("Pro 月付").billingCycle(Product.BillingCycle.MONTHLY)
+            .chargeMode(com.billing.license.entity.ChargeMode.AUTO_RECURRING).active(true).build();
         Order order = Order.builder().id(UUID.randomUUID()).orderNumber("ORD-M")
             .totalAmount(new BigDecimal("19.00")).currency(Currency.CNY).build();
         order.setOrderItems(List.of(OrderItem.builder().order(order).product(monthly).quantity(1).build()));
@@ -255,7 +261,7 @@ class CheckoutServiceTest {
                 SelectProviderRequest.builder().provider("alipay").build()));
 
         assertEquals("PROVIDER_NOT_SUPPORTED_FOR_PLAN", ex.getErrorCode());
-        verify(paymentService, never()).requestPayment(any(), any());
+        verify(paymentService, never()).requestPayment(any(), any(), any());
     }
 
     /**
@@ -278,7 +284,7 @@ class CheckoutServiceTest {
         java.util.concurrent.CountDownLatch inChannel = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
-        when(paymentService.requestPayment(any(Order.class), eq(PaymentMethod.ALIPAY))).thenAnswer(inv -> {
+        when(paymentService.requestPayment(any(Order.class), eq(PaymentMethod.ALIPAY), any(PaymentLinkContext.class))).thenAnswer(inv -> {
             calls.incrementAndGet();
             inChannel.countDown();
             release.await(5, java.util.concurrent.TimeUnit.SECONDS);
@@ -315,31 +321,82 @@ class CheckoutServiceTest {
      */
     @Test
     void getStatus_shouldCompensateFromChannel_whenWebhookLost() {
-        Order order = Order.builder().id(UUID.randomUUID()).orderNumber("ORD-1").build();
+        Order order = Order.builder().id(UUID.randomUUID()).orderNumber("ORD-1")
+            .totalAmount(new BigDecimal("99.00")).currency(Currency.CNY).build();
         CheckoutSession session = CheckoutSession.builder()
             .checkoutId("chk_1").orderId(order.getId()).orderNumber("ORD-1")
             .status(CheckoutSession.Status.PENDING).machineId("M1").build();
 
         when(checkoutSessionRepository.findByCheckoutId("chk_1")).thenReturn(Optional.of(session));
-        // 模拟已落库的 Payment（由 selectProvider 写入），渠道为 ALIPAY
-        Payment payment = Payment.builder().paymentId("alipay_ORD-1").method(PaymentMethod.ALIPAY).build();
-        when(paymentRepository.findByOrderIdStr(order.getId().toString())).thenReturn(Optional.of(payment));
-        // 渠道查询返回 SUCCESS → 补偿置 PAID
-        when(paymentService.queryPaymentStatus("alipay_ORD-1", PaymentMethod.ALIPAY))
-            .thenReturn(PaymentStatus.SUCCESS);
+        // 模拟已落库的支付尝试（由 selectProvider 写入），渠道为 ALIPAY
+        PaymentAttempt payment = PaymentAttempt.builder().paymentId("alipay_ORD-1").method(PaymentMethod.ALIPAY).build();
+        // 补偿取流水的口径已改为「按订单取全部、取最新一条」（多行安全），mock 须同步
+        when(attemptRepository.findAllByOrderIdStrOrderByCreatedAtDesc(order.getId().toString()))
+            .thenReturn(List.of(payment));
+        when(orderRepository.findByOrderNumber("ORD-1")).thenReturn(Optional.of(order));
+        // 查单必须带金额/币种/订单关联证据，缺失时只保持待核、不发货
+        when(paymentService.queryPaymentDetail("alipay_ORD-1", PaymentMethod.ALIPAY))
+            .thenReturn(new PaymentQueryResult(PaymentStatus.SUCCESS, new BigDecimal("99.00"),
+                "CNY", "trade_1", "ORD-1", true));
         when(checkoutSessionRepository.save(any(CheckoutSession.class))).thenAnswer(i -> i.getArgument(0));
         when(licenseRepository.findByOrderId(any())).thenReturn(List.of());
 
         CheckoutResponse resp = checkoutService.getStatus("chk_1");
 
         assertEquals("PAID", resp.getStatus());
-        // 验证确实触发了一次渠道查询补偿
-        verify(paymentService).queryPaymentStatus("alipay_ORD-1", PaymentMethod.ALIPAY);
+        // 验证确实触发了一次渠道查单补偿
+        verify(paymentService).queryPaymentDetail("alipay_ORD-1", PaymentMethod.ALIPAY);
+    }
+
+    /**
+     * 会话恢复：PENDING 且已建过扫码入口时，刷新页面/渠道回跳必须把既有二维码带回去，
+     * 否则用户只看到「待支付」却没有入口，只能等会话过期重下单。
+     */
+    @Test
+    void getStatus_pendingSession_shouldRestoreExistingQrCode() {
+        Order order = Order.builder().id(UUID.randomUUID()).orderNumber("ORD-2")
+            .totalAmount(new BigDecimal("99.00")).currency(Currency.CNY).build();
+        CheckoutSession session = CheckoutSession.builder()
+            .checkoutId("chk_qr").orderId(order.getId()).orderNumber("ORD-2")
+            .status(CheckoutSession.Status.PENDING).provider(PaymentMethod.ALIPAY)
+            .paymentMode("qrcode").qrCode("https://qr.alipay.com/xyz")
+            .expiresAt(java.time.LocalDateTime.now().plusMinutes(30))
+            // 冷却窗口内：跳过主动查单补偿，本用例只验恢复响应
+            .lastCompensatedAt(java.time.LocalDateTime.now())
+            .build();
+        when(checkoutSessionRepository.findByCheckoutId("chk_qr")).thenReturn(Optional.of(session));
+
+        CheckoutResponse resp = checkoutService.getStatus("chk_qr");
+
+        assertEquals("PENDING", resp.getStatus());
+        assertEquals("ALIPAY", resp.getProvider());
+        assertEquals("qrcode", resp.getPaymentMode());
+        assertEquals("https://qr.alipay.com/xyz", resp.getQrcode());
+        assertNotNull(resp.getExpiresAt());
+        verify(paymentService, never()).queryPaymentDetail(anyString(), any());
+    }
+
+    /** 过期会话不下发入口：渠道侧二维码多半已失效，给用户一个扫不动的码只会更难解释。 */
+    @Test
+    void getStatus_expiredPendingSession_shouldNotRestoreEntry() {
+        Order order = Order.builder().id(UUID.randomUUID()).orderNumber("ORD-3")
+            .totalAmount(new BigDecimal("99.00")).currency(Currency.CNY).build();
+        CheckoutSession session = CheckoutSession.builder()
+            .checkoutId("chk_exp").orderId(order.getId()).orderNumber("ORD-3")
+            .status(CheckoutSession.Status.PENDING).provider(PaymentMethod.ALIPAY)
+            .paymentMode("qrcode").qrCode("https://qr.alipay.com/old")
+            .expiresAt(java.time.LocalDateTime.now().minusMinutes(1))
+            .build();
+        when(checkoutSessionRepository.findByCheckoutId("chk_exp")).thenReturn(Optional.of(session));
+
+        CheckoutResponse resp = checkoutService.getStatus("chk_exp");
+
+        assertNull(resp.getQrcode());
+        assertNull(resp.getPaymentMode());
     }
 
     @Test
-    void selectProvider_shouldPersistPaymentProviderOnOrder() {
-        // C2：选定渠道后必须落库 order.paymentProvider，否则管理端退款 resolveMethod 恒为 null
+    void selectProvider_shouldRecordAttemptWithoutOverwritingOrderProvider() {
         Order order = Order.builder().id(UUID.randomUUID()).orderNumber("ORD-1")
             .totalAmount(new BigDecimal("99.00")).currency(Currency.CNY).build();
         CheckoutSession session = CheckoutSession.builder()
@@ -348,18 +405,16 @@ class CheckoutServiceTest {
         when(checkoutSessionRepository.findByCheckoutId("chk_1")).thenReturn(Optional.of(session));
         when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
         when(orderRepository.findWithItemsById(order.getId())).thenReturn(Optional.of(order));
-        when(paymentServiceFactory.getStrategy(PaymentMethod.ALIPAY)).thenReturn(mock(com.billing.license.service.payment.strategy.PaymentStrategy.class));
         PaymentResponse pr = new PaymentResponse();
         pr.setPayUrl("https://pay.example.com/x");
-        when(paymentService.requestPayment(any(Order.class), eq(PaymentMethod.ALIPAY))).thenReturn(pr);
-        when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
+        when(paymentService.requestPayment(any(Order.class), eq(PaymentMethod.ALIPAY), any(PaymentLinkContext.class)))
+            .thenReturn(pr);
 
         checkoutService.selectProvider("chk_1", SelectProviderRequest.builder().provider("alipay").build());
 
-        ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
-        verify(orderRepository, atLeastOnce()).save(captor.capture());
-        assertEquals(PaymentMethod.ALIPAY, captor.getValue().getPaymentProvider(),
-                "订单必须记下所选支付渠道，供退款链路解析");
+        // 选择阶段只记尝试；实际收款渠道在确认收款时写订单，避免“选了别的渠道就改掉退款渠道”
+        verify(paymentService).recordAttempt(eq(order), eq(PaymentMethod.ALIPAY), any(PaymentResponse.class));
+        assertNull(order.getPaymentProvider());
     }
 
     @Test
@@ -370,7 +425,8 @@ class CheckoutServiceTest {
             .status(CheckoutSession.Status.PAID).build();
 
         when(checkoutSessionRepository.findByCheckoutId("chk_1")).thenReturn(Optional.of(session));
-        when(redeemCodeService.generateCode("ORD-1")).thenReturn("CODE-ABCD-1234");
+        when(redeemCodeRepository.findByOrderId("ORD-1")).thenReturn(List.of(
+            RedeemCode.builder().code("CODE-ABCD-1234").build()));
 
         CheckoutResponse resp = checkoutService.getStatus("chk_1");
 
@@ -386,8 +442,9 @@ class CheckoutServiceTest {
             .status(CheckoutSession.Status.PAID).machineId("M1").build();
 
         when(checkoutSessionRepository.findByCheckoutId("chk_1")).thenReturn(Optional.of(session));
-        when(licenseService.issueLicensesForOrder(order.getId()))
-            .thenReturn(List.of(com.billing.license.dto.LicenseResponse.builder().signedToken("tok.abc").build()));
+        when(licenseRepository.findByOrderId(order.getId())).thenReturn(List.of(
+            License.builder().signedToken("tok.abc").status(License.LicenseStatus.ACTIVE)
+                .expiresAt(java.time.LocalDateTime.now().plusDays(30)).build()));
 
         CheckoutResponse resp = checkoutService.getStatus("chk_1");
 
@@ -428,16 +485,19 @@ class CheckoutServiceTest {
         java.util.concurrent.atomic.AtomicInteger inFlight = new java.util.concurrent.atomic.AtomicInteger();
         java.util.concurrent.atomic.AtomicInteger maxOverlap = new java.util.concurrent.atomic.AtomicInteger();
         java.util.concurrent.atomic.AtomicInteger issueCalls = new java.util.concurrent.atomic.AtomicInteger();
-        when(licenseService.issueLicensesForOrder(any())).thenAnswer(inv -> {
+        doAnswer(inv -> {
             maxOverlap.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
-            issueCalls.incrementAndGet();
-            Thread.sleep(30); // 放大竞态窗口：若未串行化，重叠必然被观测到
-            issuedView.add(com.billing.license.entity.License.builder()
-                .signedToken("tok." + issueCalls.get()).build());
+            // 生产语义：事件 DONE 后 ensureAndProcess 直接返回；这里用已签发视图模拟
+            if (issuedView.isEmpty()) {
+                issueCalls.incrementAndGet();
+                Thread.sleep(30); // 放大竞态窗口：若未串行化，重叠必然被观测到
+                issuedView.add(com.billing.license.entity.License.builder()
+                    .signedToken("tok." + issueCalls.get()).status(License.LicenseStatus.ACTIVE)
+                    .expiresAt(java.time.LocalDateTime.now().plusDays(30)).build());
+            }
             inFlight.decrementAndGet();
-            return List.of(com.billing.license.dto.LicenseResponse.builder()
-                .signedToken("tok." + issueCalls.get()).build());
-        });
+            return null;
+        }).when(fulfillmentService).ensureAndProcess(any(), any());
 
         int threads = 8;
         java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
@@ -466,8 +526,7 @@ class CheckoutServiceTest {
     void getStatus_shouldReleaseLock_whenFulfillmentThrows() throws Exception {
         CheckoutSession session = paidMachineBoundSession();
         when(checkoutSessionRepository.findByCheckoutId("chk_1")).thenReturn(Optional.of(session));
-        when(licenseService.issueLicensesForOrder(any()))
-            .thenThrow(new RuntimeException("签发失败"));
+        doThrow(new RuntimeException("签发失败")).when(fulfillmentService).ensureAndProcess(any(), any());
 
         assertThrows(RuntimeException.class, () -> checkoutService.getStatus("chk_1"));
         assertTrue(lockTable().isEmpty(), "异常路径也必须释放锁条目（finally 兜底）");
@@ -481,12 +540,23 @@ class CheckoutServiceTest {
             .status(CheckoutSession.Status.PAID).machineId("M2").build();
         when(checkoutSessionRepository.findByCheckoutId("chk_1")).thenReturn(Optional.of(s1));
         when(checkoutSessionRepository.findByCheckoutId("chk_2")).thenReturn(Optional.of(s2));
-        when(licenseService.issueLicensesForOrder(any())).thenAnswer(inv ->
-            List.of(com.billing.license.dto.LicenseResponse.builder().signedToken("tok").build()));
+        when(licenseRepository.findByOrderId(any())).thenReturn(List.of(
+            License.builder().signedToken("tok").status(License.LicenseStatus.ACTIVE)
+                .expiresAt(java.time.LocalDateTime.now().plusDays(30)).build()));
 
         checkoutService.getStatus("chk_1");
         checkoutService.getStatus("chk_2");
 
         assertTrue(lockTable().isEmpty(), "两个订单各自用完即摘，锁表应回空");
+    }
+
+    /** 支付宝 out_trade_no 仅允许字母/数字/下划线；订单号必须从源头满足，避免每笔下单被网关拒绝。 */
+    @Test
+    void generateOrderNumber_shouldBeAlipaySafe() {
+        for (int i = 0; i < 100; i++) {
+            String orderNumber = CheckoutService.generateOrderNumber();
+            assertTrue(orderNumber.matches("[A-Za-z0-9_]{1,64}"), orderNumber);
+            assertFalse(orderNumber.contains("-"), orderNumber);
+        }
     }
 }

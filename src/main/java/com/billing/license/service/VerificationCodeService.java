@@ -5,6 +5,7 @@ import com.billing.license.entity.VerificationCode;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.repository.VerificationCodeRepository;
 import com.billing.license.service.notification.EmailNotificationService;
+import com.billing.license.util.LogMask;
 import com.billing.license.service.risk.RateLimitService;
 import com.billing.license.util.KeyHashUtil;
 import lombok.RequiredArgsConstructor;
@@ -119,7 +120,7 @@ public class VerificationCodeService {
             // 区分「输错」与「来晚了」：查未消费但已过期的码
             boolean expired = codeRepository.findUnconsumed(email, purpose).stream()
                 .anyMatch(v -> v.getExpiresAt() != null && !v.getExpiresAt().isAfter(now));
-            log.info("验证码校验失败：无可用码 email={}, purpose={}, expired={}", email, purpose, expired);
+            log.info("验证码校验失败：无可用码 email={}, purpose={}, expired={}", CustomerIdentityService.maskEmail(email), purpose, expired);
             return expired ? VerifyResult.EXPIRED : VerifyResult.INVALID;
         }
 
@@ -130,7 +131,7 @@ public class VerificationCodeService {
             if (exhausted) {
                 record.setConsumedAt(now);
                 log.warn("验证码连续错误达上限，已作废：email={}, purpose={}, attempts={}",
-                    email, purpose, record.getAttemptCount());
+                    CustomerIdentityService.maskEmail(email), purpose, record.getAttemptCount());
             }
             codeRepository.save(record);
             return exhausted ? VerifyResult.TOO_MANY_ATTEMPTS : VerifyResult.INVALID;
@@ -188,7 +189,7 @@ public class VerificationCodeService {
                 risk.getCodeSendEmailMax(), risk.getCodeSendEmailWindowMinutes());
             rateLimitService.checkAndCount("acct-code-ip", clientIp, risk.getCodeSendIpMax(), 60);
         } catch (RateLimitService.RateLimitExceededException e) {
-            log.warn("验证码发送触发限流：email={}, ip={}", email, clientIp);
+            log.warn("验证码发送触发限流：email={}, ip={}", CustomerIdentityService.maskEmail(email), clientIp);
             throw new BusinessException("CODE_SEND_TOO_FREQUENT", "验证码发送过于频繁，请稍后再试");
         }
     }
@@ -198,8 +199,9 @@ public class VerificationCodeService {
      */
     private void deliver(String email, String code, VerificationCode.CodePurpose purpose, String locale) {
         if (properties.isCodeLogOnly()) {
-            // 联调模式：明文入日志。生产务必关闭（account.code-log-only=false）并配置真实 SMTP。
-            log.info("[code-log-only] 验证码已生成：email={}, purpose={}, code={}", email, purpose, code);
+            // 联调模式：日志里也只留掩码（完整验证码不再落日志）。生产务必关闭并配置真实 SMTP。
+            log.info("[code-log-only] 验证码已生成：email={}, purpose={}, code={}",
+                CustomerIdentityService.maskEmail(email), purpose, LogMask.secret(code));
             return;
         }
         emailNotificationService.sendVerificationCodeEmail(email, code, purpose.name(),

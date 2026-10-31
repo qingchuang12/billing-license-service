@@ -48,7 +48,7 @@
      价格与档位/周期校验一律以接口返回为准。
      ------------------------------------------------------------------ */
   // 构建标记：用于排查「浏览器标签页缓存了旧脚本」的支持场景（F12 控制台可见）
-  console.info('[checkout] build 2026-10-25-2 · 目录完全由 /api/products 驱动（无 SKU 白名单）');
+  console.info('[checkout] build 2026-10-29-1 · 目录完全由 /api/products 驱动（无 SKU 白名单）');
 
   /** 档位徽标文案 */
   var TIER_LABELS = {
@@ -90,8 +90,7 @@
     return '';
   }
 
-  // 权益显示名已配置化：后端 /api/products 直接下发 featureViews（{key,labelZh,labelEn}），
-  // 前端不再维护权益键→i18n 映射与字典（渲染见 renderPlanCards）。
+  // 权益配置已下线：客户端按 SKU 解锁，收银台只用产品描述表达套餐差异。
 
   /**
    * 产品目录取值入口（K8 决策 B + K16 + V10 产品维度）。
@@ -141,8 +140,7 @@
         providers: Array.isArray(dto.providers) ? dto.providers : [],
         name: { zh: nameZh, en: (dto.nameEn != null ? dto.nameEn : nameZh) },
         desc: { zh: descZh, en: (dto.descriptionEn != null ? dto.descriptionEn : descZh) },
-        unit: unitForCycle(cycle),
-        featureViews: dto.featureViews || []
+        unit: unitForCycle(cycle)
       });
     });
     if (!merged.length) {
@@ -172,23 +170,39 @@
   var PAYMENT_METHODS = {
     ALIPAY: {
       label: { zh: '支付宝', en: 'Alipay' },
-      note: { zh: '扫码支付', en: 'Scan QR code to pay' }
+      note: { zh: '扫码支付 · 人民币 CNY', en: 'Scan to pay · CNY' },
+      icon: '支',
+      color: '#1677FF'
     },
     WECHAT_PAY: {
       label: { zh: '微信支付', en: 'WeChat Pay' },
-      note: { zh: '扫码支付', en: 'Scan QR code to pay' }
+      note: { zh: '扫码支付 · 人民币 CNY', en: 'Scan to pay · CNY' },
+      icon: '微',
+      color: '#07C160'
     },
     STRIPE: {
       label: { zh: 'Stripe 信用卡', en: 'Stripe card' },
-      note: { zh: '跳转第三方支付页', en: 'Redirect to secure checkout' }
+      note: { zh: '跳转第三方支付页 · 美元 USD', en: 'Redirect to secure checkout · USD' },
+      icon: 'S',
+      color: '#635BFF'
     },
     PADDLE: {
       label: { zh: 'Paddle', en: 'Paddle' },
-      note: { zh: '跳转第三方支付页', en: 'Redirect to secure checkout' }
+      note: { zh: '跳转第三方支付页 · 美元 USD', en: 'Redirect to secure checkout · USD' },
+      icon: 'P',
+      color: '#1F2937'
+    },
+    CREEM: {
+      label: { zh: 'Creem', en: 'Creem' },
+      note: { zh: '跳转第三方支付页 · 美元 USD', en: 'Redirect to secure checkout · USD' },
+      icon: 'C',
+      color: '#0F172A'
     },
     PAYPAL: {
       label: { zh: 'PayPal', en: 'PayPal' },
-      note: { zh: '跳转第三方支付页', en: 'Redirect to secure checkout' }
+      note: { zh: '跳转第三方支付页 · 美元 USD', en: 'Redirect to secure checkout · USD' },
+      icon: 'P',
+      color: '#003087'
     }
   };
 
@@ -249,13 +263,18 @@
       'checkout.formTitle': '填写下单信息',
 
       'steps.choose': '选择档位',
+      'steps.confirm': '确认信息',
       'steps.pay': '完成支付',
       'steps.done': '获取授权',
 
       'plan.legend': '选择授权档位',
+      'plan.groupOnce': '一次性付费',
+      'plan.groupSubscription': '订阅制 · 按期自动续费',
       'plan.currencyNote': '价格随界面语言切换：中文界面以人民币（CNY）结算，英文界面以美元（USD）结算。',
+      'plan.deviceNote': '每份授权仅绑定 1 台设备；多设备需分别购买，换机可在账户页解绑后重新绑定。',
       'plan.recommended': '推荐',
       'plan.unavailable': '当前区域暂不可售',
+      'plan.unavailableHint': '切换英文界面即可用美元购买',
       'plan.providers': '可用支付方式',
       'plan.priceSuffix.monthly': '/月',
       'plan.priceSuffix.halfYear': '/半年',
@@ -263,12 +282,18 @@
       'plan.priceSuffix.yearly': '/年',
 
       'form.emailLabel': '电子邮箱',
-      'form.emailHint': '授权凭证与订单通知将发送到此邮箱。',
+      'form.emailHint': '授权凭证与订单通知将发送并绑定到此邮箱。',
       'form.machineLabel': '机器码',
+      'common.copy': '复制',
       'form.machineNone': '未提供机器码，支付完成后将发放兑换码。',
       'form.machineHint': '已读取到本机机器码，支付成功后将直接签发绑定该设备的 License。',
-      'form.orderNote': '点击下单后将跳转至第三方支付渠道完成付款；发票与企业采购请联系 ',
-      'form.submit': '下一步：选择支付方式',
+      'form.orderNote': '点击下单后将跳转至第三方支付渠道完成付款；发票事宜请联系 ',
+      'form.legalPrefix': '点击下单即表示你已阅读并同意',
+      'form.legalTerms': '《服务条款》',
+      'form.legalAnd': '与',
+      'form.legalPrivacy': '《隐私政策》',
+      'form.legalSuffix': '。',
+      'form.submit': '下一步：确认信息',
       'form.submitting': '正在创建订单…',
       'form.error.planRequired': '请先选择一个授权档位。',
       'form.error.emailRequired': '请填写电子邮箱。',
@@ -287,7 +312,21 @@
       'summary.notBound': '未绑定',
 
       'pay.title': '选择支付方式',
-      'pay.desc': '订单已创建，请选择一种支付方式继续。',
+      'pay.desc': '请核对订单信息，并选择一种支付方式继续。',
+      'pay.installment': '花呗分期',
+      'pay.installmentNone': '不分期',
+      'pay.installmentOption': '{n} 期',
+      'pay.regionChina': '当前区域：中国 · 人民币（CNY）结算',
+      'pay.regionGlobal': '当前区域：海外 · 美元（USD）结算',
+      'pay.regionSwitchZh': '切换到英文界面后，可用 Stripe / Paddle / Creem / PayPal 以美元结算。',
+      'pay.regionSwitchEn': 'Switch to Chinese to pay with Alipay / WeChat Pay in CNY.',
+      'pay.recommended': '推荐',
+      'pay.recapTitle': '订单信息',
+      'pay.backToForm': '← 返回修改订单',
+      'pay.refreshStatus': '刷新支付状态',
+      'pay.refreshBusy': '查询中…',
+      'pay.copyPayLink': '复制支付链接',
+      'pay.countdownLabel': '会话有效期剩余',
       'pay.redirectTitle': '即将跳转至支付页',
       'pay.redirectHint': '将在浏览器中打开第三方支付页面，完成付款后会自动回到本页并展示授权凭证。若未自动跳转，请点击下方按钮。',
       'pay.goPay': '前往支付',
@@ -322,10 +361,19 @@
       'done.redeemStep2': '粘贴兑换码并确认，客户端会自动绑定当前设备并完成授权。',
       'done.copyLicense': '复制许可证',
       'done.copyCode': '复制兑换码',
-      'done.copied': '已复制到剪贴板',
-      'done.copyFailed': '复制失败，请手动选中内容复制。',
-      'done.backTitle': '回到 AI-Tools 客户端',
-      'done.backHint': '凭证已同步发送至邮箱。请回到 AI-Tools 客户端完成激活；若客户端已打开，请先重启一次。',
+      'done.download': '下载 .txt',
+      'done.downloaded': '已开始下载 .txt',
+      'done.goAccount': '前往「我的授权」',
+      'done.backTitle': '接下来',
+      'done.licenseStep1': '打开 AI-Tools 客户端，进入「授权 / License」页面。',
+      'done.licenseStep2': '粘贴上方许可证并保存，完成本机绑定。',
+      'done.licenseStep3': '之后可在「我的授权」中随时查看或换设备解绑。',
+      'done.redeemStep1': '打开 AI-Tools 客户端的「授权 / License」页面，选择「使用兑换码」。',
+      'done.redeemStep2': '粘贴兑换码并确认，客户端会自动绑定当前设备并完成授权。',
+      'done.backHint': '凭证已同步发送至邮箱；若客户端已打开，请先重启一次。',
+      'done.subscriptionNote': '订阅订单的续费与取消由支付渠道托管，本页不代管；当前权益已按周期生效。',
+      'toast.copied': '已复制到剪贴板',
+      'toast.copyFailed': '复制失败，请手动复制',
 
       'status.CREATED': '待选择支付方式',
       'status.PENDING': '等待支付结果',
@@ -388,13 +436,18 @@
       'checkout.formTitle': 'Order details',
 
       'steps.choose': 'Choose a plan',
+      'steps.confirm': 'Confirm details',
       'steps.pay': 'Complete payment',
       'steps.done': 'Get your license',
 
       'plan.legend': 'Choose a plan',
+      'plan.groupOnce': 'One-time purchase',
+      'plan.groupSubscription': 'Subscription · auto-renews',
       'plan.currencyNote': 'Pricing follows your interface language: CNY for Chinese, USD for English.',
+      'plan.deviceNote': 'Each license binds to one device. Buy separately for additional devices; you can unbind and rebind after a device change.',
       'plan.recommended': 'Recommended',
       'plan.unavailable': 'Not available in this region',
+      'plan.unavailableHint': 'Switch to Chinese to pay in CNY',
       'plan.providers': 'Payment methods',
       'plan.priceSuffix.monthly': '/mo',
       'plan.priceSuffix.halfYear': '/6 mo',
@@ -402,12 +455,18 @@
       'plan.priceSuffix.yearly': '/yr',
 
       'form.emailLabel': 'Email address',
-      'form.emailHint': 'Your license credential and order updates are sent here.',
+      'form.emailHint': 'Your license credential and order updates will be sent to and bound to this email.',
       'form.machineLabel': 'Machine ID',
+      'common.copy': 'Copy',
       'form.machineNone': 'No machine ID provided — a redemption code will be issued after payment.',
       'form.machineHint': 'Machine ID detected — a license bound to this device will be issued right after payment.',
-      'form.orderNote': 'You will be redirected to a third-party payment page. For invoices or team procurement, contact ',
-      'form.submit': 'Next: choose payment method',
+      'form.orderNote': 'You will be redirected to a third-party payment page. For invoices, contact ',
+      'form.legalPrefix': 'By placing the order you agree to the ',
+      'form.legalTerms': 'Terms of Service',
+      'form.legalAnd': ' and ',
+      'form.legalPrivacy': 'Privacy Policy',
+      'form.legalSuffix': '.',
+      'form.submit': 'Next: confirm details',
       'form.submitting': 'Creating your order…',
       'form.error.planRequired': 'Please choose a license tier first.',
       'form.error.emailRequired': 'Please enter your email address.',
@@ -426,7 +485,21 @@
       'summary.notBound': 'Not bound',
 
       'pay.title': 'Choose a payment method',
-      'pay.desc': 'Your order has been created. Pick a payment method to continue.',
+      'pay.desc': 'Review your order and pick a payment method to continue.',
+      'pay.installment': 'Huabei installments',
+      'pay.installmentNone': 'No installments',
+      'pay.installmentOption': '{n} months',
+      'pay.regionChina': 'Region: China · settled in CNY',
+      'pay.regionGlobal': 'Region: Global · settled in USD',
+      'pay.regionSwitchZh': 'Switch to Chinese to pay with Alipay / WeChat Pay in CNY.',
+      'pay.regionSwitchEn': 'Switch to Chinese to pay with Alipay / WeChat Pay in CNY.',
+      'pay.recommended': 'Recommended',
+      'pay.recapTitle': 'Order details',
+      'pay.backToForm': '← Back to edit order',
+      'pay.refreshStatus': 'Refresh payment status',
+      'pay.refreshBusy': 'Checking…',
+      'pay.copyPayLink': 'Copy payment link',
+      'pay.countdownLabel': 'Session expires in',
       'pay.redirectTitle': 'Redirecting to checkout',
       'pay.redirectHint': 'The payment provider page opens in this browser. Once paid you return here and your credential appears automatically. If nothing happens, use the button below.',
       'pay.goPay': 'Go to payment',
@@ -461,10 +534,19 @@
       'done.redeemStep2': 'Paste the code and confirm — the app binds this device and activates automatically.',
       'done.copyLicense': 'Copy license token',
       'done.copyCode': 'Copy redemption code',
-      'done.copied': 'Copied to clipboard',
-      'done.copyFailed': 'Copy failed — please select the value and copy manually.',
-      'done.backTitle': 'Back to the AI-Tools app',
-      'done.backHint': 'The credential was also emailed to you. Return to AI-Tools to activate; restart the app if it is already running.',
+      'done.download': 'Download .txt',
+      'done.downloaded': 'Download started',
+      'done.goAccount': 'Go to My Licenses',
+      'done.backTitle': 'Next steps',
+      'done.licenseStep1': 'Open the AI-Tools app and go to License.',
+      'done.licenseStep2': 'Paste the license above and save to bind this device.',
+      'done.licenseStep3': 'You can view it or unbind the device anytime in My Licenses.',
+      'done.redeemStep1': 'Open License in the AI-Tools app and choose “Redeem a code”.',
+      'done.redeemStep2': 'Paste the code and confirm — the app binds this device and activates automatically.',
+      'done.backHint': 'The credential was also emailed to you. Restart the app if it is already running.',
+      'done.subscriptionNote': 'Renewals and cancellations are managed by the payment provider; your benefits are active for the current period.',
+      'toast.copied': 'Copied to clipboard',
+      'toast.copyFailed': 'Copy failed — please copy manually',
 
       'status.CREATED': 'Awaiting payment method',
       'status.PENDING': 'Awaiting payment',
@@ -530,10 +612,12 @@
     status: '',
     paymentMethods: [],
     provider: '',
+    installmentNum: null,
     paymentMode: '',
     redirectUrl: '',
     qrcode: '',
     expiresAt: 0,
+    expiresTotalMs: 0,
     license: '',
     redeemCode: ''
   };
@@ -683,6 +767,16 @@
   /** 毫秒 → 秒（向上取整），用于倒计时/等待时长展示 */
   function secOf(ms) { return Math.max(0, Math.ceil(ms / 1000)); }
 
+  /** P9：记录会话初始有效期，倒计时进度条按剩余占比绘制 */
+  function syncExpiry(expiresAt) {
+    var value = Number(expiresAt) || 0;
+    if (!value) return;
+    if (state.expiresAt !== value || !state.expiresTotalMs) {
+      state.expiresTotalMs = Math.max(1000, value - Date.now());
+    }
+    state.expiresAt = value;
+  }
+
   /* ======================================================================
      5. 服务端接口层
      ====================================================================== */
@@ -767,8 +861,20 @@
   }
 
   /** POST /api/checkout/{id}/select-provider —— 选定渠道并创建支付 */
-  function apiSelectProvider(checkoutId, provider) {
-    return postJson('/api/checkout/' + encodeURIComponent(checkoutId) + '/select-provider', { provider: provider });
+  function apiSelectProvider(checkoutId, provider, installmentNum) {
+    var payload = { provider: provider };
+    // 手机浏览器优先走支付宝手机网站支付（WAP）；桌面端保持二维码/网页支付。
+    try {
+      if (provider === 'ALIPAY' && window.matchMedia && window.matchMedia('(max-width: 820px)').matches) {
+        payload.paymentProduct = 'WAP';
+      }
+    } catch (e) { /* 老浏览器忽略 */ }
+    if (provider === 'ALIPAY' && installmentNum) {
+      payload.installmentNum = installmentNum;
+      // 扫码（precreate）不支持花呗分期；未指定支付形态时强制走网页跳转
+      if (!payload.paymentProduct) { payload.paymentProduct = 'REDIRECT'; }
+    }
+    return postJson('/api/checkout/' + encodeURIComponent(checkoutId) + '/select-provider', payload);
   }
 
   /** GET /api/checkout/{id}/status —— 轮询订单/支付状态 */
@@ -839,45 +945,18 @@
       return;
     }
 
-    list.innerHTML = products.map(function (product) {
-      var selected = state.product && state.product.sku === product.sku;
-      var providers = providersForRegion(product);
-      var unavailable = providers.length === 0;
-      var providerNames = providers.map(function (pv) {
-        var meta = PAYMENT_METHODS[pv.method];
-        return meta ? pickText(meta.label) : pv.method;
-      }).join(' · ');
-      var tierLabel = pickText(TIER_LABELS[product.tier] || { zh: product.tier, en: product.tier });
-      var p = pickPrice(product);
-      var price = p.symbol + formatMoney(p.value) + priceSuffix(product.cycle);
-      var benefits = product.featureViews.map(function (fv) {
-        var label = (lang === 'zh' || !fv.labelEn) ? fv.labelZh : fv.labelEn;
-        if (!label) label = fv.key;
-        return '<li class="plan-card__benefit">' + esc(label) + '</li>';
-      }).join('');
+    var groups = [
+      { title: t('plan.groupOnce'), items: products.filter(function (p) { return !p.recurring; }) },
+      { title: t('plan.groupSubscription'), items: products.filter(function (p) { return p.recurring; }) }
+    ];
 
-      return '' +
-        '<li>' +
-          '<label class="plan-card' + (selected ? ' is-selected' : '') +
-            (unavailable ? ' is-unavailable' : '') + '" data-sku="' + esc(product.sku) + '">' +
-            '<input class="plan-card__input" type="radio" name="plan" value="' + esc(product.sku) + '"' +
-              (selected ? ' checked' : '') + (unavailable ? ' disabled' : '') + '>' +
-            '<span class="plan-card__body">' +
-              '<span class="plan-card__head">' +
-                '<span class="plan-card__name">' + esc(pickText(product.name)) + '</span>' +
-                '<span class="plan-card__tier">' + esc(tierLabel) + '</span>' +
-              '</span>' +
-              (product.recommended ? '<span class="plan-card__badge">' + esc(t('plan.recommended')) + '</span>' : '') +
-              '<span class="plan-card__amount">' + esc(price) + '</span>' +
-              '<span class="plan-card__unit">' + esc(pickText(product.unit)) + '</span>' +
-              '<span class="plan-card__desc">' + esc(pickText(product.desc)) + '</span>' +
-              '<span class="plan-card__providers">' +
-                esc(unavailable ? t('plan.unavailable') : t('plan.providers') + ' · ' + providerNames) +
-              '</span>' +
-              '<ul class="plan-card__benefits">' + benefits + '</ul>' +
-            '</span>' +
-          '</label>' +
-        '</li>';
+    list.innerHTML = groups.filter(function (group) {
+      return group.items.length > 0;
+    }).map(function (group) {
+      return '<li class="plan-group">' +
+        '<p class="plan-group-title">' + esc(group.title) + '</p>' +
+        '<ul class="plan-list">' + group.items.map(planCardHtml).join('') + '</ul>' +
+      '</li>';
     }).join('');
 
     $$('.plan-card__input', list).forEach(function (input) {
@@ -885,6 +964,58 @@
         selectPlan(input.value);
       });
     });
+  }
+
+  /** 单个档位卡片（P2：不可售卡片明示原因并给出切换语言的出路） */
+  function planCardHtml(product) {
+    var selected = state.product && state.product.sku === product.sku;
+    var providers = providersForRegion(product);
+    var unavailable = providers.length === 0;
+    var providerNames = providers.map(function (pv) {
+      var meta = PAYMENT_METHODS[pv.method];
+      return meta ? pickText(meta.label) : pv.method;
+    }).join(' · ');
+    var tierLabel = pickText(TIER_LABELS[product.tier] || { zh: product.tier, en: product.tier });
+    var p = pickPrice(product);
+    var price = p.symbol + formatMoney(p.value) + priceSuffix(product.cycle);
+
+    return '' +
+      '<li>' +
+        '<label class="plan-card' + (selected ? ' is-selected' : '') +
+          (unavailable ? ' is-unavailable' : '') + '" data-sku="' + esc(product.sku) + '">' +
+          '<input class="plan-card__input" type="radio" name="plan" value="' + esc(product.sku) + '"' +
+            (selected ? ' checked' : '') + (unavailable ? ' disabled' : '') + '>' +
+          '<span class="plan-card__body">' +
+            '<span class="plan-card__head">' +
+              '<span class="plan-card__name">' + esc(pickText(product.name)) + '</span>' +
+              '<span class="plan-card__tier">' + esc(tierLabel) + '</span>' +
+            '</span>' +
+            (product.recommended ? '<span class="plan-card__badge">' + esc(t('plan.recommended')) + '</span>' : '') +
+            '<span class="plan-card__amount">' + esc(price) + '</span>' +
+            '<span class="plan-card__unit">' + esc(pickText(product.unit)) + '</span>' +
+            '<span class="plan-card__desc">' + esc(pickText(product.desc)) + '</span>' +
+            '<span class="plan-card__providers">' +
+              esc(unavailable ? t('plan.unavailable') : t('plan.providers') + ' · ' + providerNames) +
+            '</span>' +
+            (unavailable
+              ? '<span class="plan-card__unavailable-hint">' + esc(t('plan.unavailableHint')) + '</span>'
+              : '') +
+          '</span>' +
+        '</label>' +
+      '</li>';
+  }
+
+  /** 目录加载期间的骨架屏（P18/G3）：避免空白等接口 */
+  function renderPlanSkeleton() {
+    var list = $('#planList');
+    if (!list) return;
+    var rows = '';
+    for (var i = 0; i < 2; i++) {
+      rows += '<li class="sk-row" aria-hidden="true"><span class="sk" style="max-width:120px"></span>' +
+        '<span class="sk" style="max-width:64px"></span><span class="sk" style="max-width:80px"></span>' +
+        '<span class="sk" style="max-width:56px"></span></li>';
+    }
+    list.innerHTML = rows;
   }
 
   function selectPlan(sku) {
@@ -902,9 +1033,11 @@
   function renderMachineBox() {
     var valueEl = $('#machineValue');
     var hintEl = $('#machineHint');
+    var copyBtn = $('#machineCopyBtn');
     if (!valueEl || !hintEl) return;
     valueEl.textContent = state.machineId || '—';
     hintEl.textContent = state.machineId ? t('form.machineHint') : t('form.machineNone');
+    if (copyBtn) copyBtn.hidden = !state.machineId;
   }
 
   function renderSummary() {
@@ -934,11 +1067,11 @@
   function setStep(step) {
     state.step = step;
     var progress = {
-      form: { choose: 'active', pay: '', done: '' },
-      providers: { choose: 'done', pay: 'active', done: '' },
-      pay: { choose: 'done', pay: 'active', done: '' },
-      polling: { choose: 'done', pay: 'active', done: '' },
-      done: { choose: 'done', pay: 'done', done: 'done' },
+      form: { choose: 'active', confirm: '', pay: '', done: '' },
+      providers: { choose: 'done', confirm: 'done', pay: 'active', done: '' },
+      pay: { choose: 'done', confirm: 'done', pay: 'active', done: '' },
+      polling: { choose: 'done', confirm: 'done', pay: 'active', done: '' },
+      done: { choose: 'done', confirm: 'done', pay: 'done', done: 'done' },
       error: null
     }[step];
 
@@ -959,7 +1092,14 @@
     var stage = $('#stage');
     stage.hidden = false;
     stage.innerHTML = html;
+    // G4：步骤切换后把焦点交给新面板，键盘/读屏用户不会停留在旧位置
+    if (lastFocusedStep !== state.step) {
+      lastFocusedStep = state.step;
+      try { stage.focus({ preventScroll: true }); } catch (e) { stage.focus(); }
+    }
   }
+
+  var lastFocusedStep = '';
 
   /* ======================================================================
      8. 主流程：创建订单
@@ -979,19 +1119,8 @@
       hideError('#planError');
     }
 
-    if (!emailValue) {
-      showError('#emailError', t('form.error.emailRequired'));
-      $('#email').setAttribute('aria-invalid', 'true');
-      if (ok) $('#email').focus();
+    if (!validateEmailField()) {
       ok = false;
-    } else if (!isValidEmail(emailValue)) {
-      showError('#emailError', t('form.error.emailInvalid'));
-      $('#email').setAttribute('aria-invalid', 'true');
-      if (ok) $('#email').focus();
-      ok = false;
-    } else {
-      hideError('#emailError');
-      $('#email').removeAttribute('aria-invalid');
     }
 
     if (!ok) return;
@@ -1019,7 +1148,7 @@
       state.orderNumber = data.orderNumber || '';
       state.status = String(data.status || 'CREATED').toUpperCase();
       state.paymentMethods = Array.isArray(data.paymentMethods) ? data.paymentMethods.slice() : [];
-      state.expiresAt = Number(data.expiresAt) || 0;
+      syncExpiry(data.expiresAt);
       state.license = data.license || '';
       state.redeemCode = data.redeemCode || '';
       saveSession();
@@ -1050,6 +1179,30 @@
     });
   }
 
+  /** P4：失焦即验，错误内联到字段下方；修正输入后即时消除 */
+  function validateEmailField(options) {
+    var opts = options || {};
+    var value = String($('#email').value || '').trim();
+    if (!value) {
+      if (!opts.silentEmpty) {
+        showError('#emailError', t('form.error.emailRequired'));
+        $('#email').setAttribute('aria-invalid', 'true');
+        return false;
+      }
+      hideError('#emailError');
+      $('#email').removeAttribute('aria-invalid');
+      return true;
+    }
+    if (!isValidEmail(value)) {
+      showError('#emailError', t('form.error.emailInvalid'));
+      $('#email').setAttribute('aria-invalid', 'true');
+      return false;
+    }
+    hideError('#emailError');
+    $('#email').removeAttribute('aria-invalid');
+    return true;
+  }
+
   /* ======================================================================
      9. 选择支付方式
      ====================================================================== */
@@ -1057,31 +1210,59 @@
     var list = Array.isArray(methods) ? methods : [];
     setStep('providers');
 
-    var items = list.map(function (raw) {
+    var price = state.product
+      ? (function () { var p = pickPrice(state.product); return p.symbol + formatMoney(p.value) + priceSuffix(state.product.cycle); })()
+      : '—';
+
+    var items = list.map(function (raw, index) {
       var key = String(raw || '').toUpperCase();
       var meta = PAYMENT_METHODS[key] || {
         label: { zh: key, en: key },
-        note: { zh: '', en: '' }
+        note: { zh: '', en: '' },
+        icon: key.slice(0, 1),
+        color: '#4C5B61'
       };
+      var installmentRow = key === 'ALIPAY'
+        ? '<div class="installment-row"><label>' + esc(t('pay.installment'))
+            + '<select data-installment>'
+            + '<option value="">' + esc(t('pay.installmentNone')) + '</option>'
+            + [3, 6, 12, 24].map(function (n) {
+                return '<option value="' + n + '">' + esc(t('pay.installmentOption', { n: n })) + '</option>';
+              }).join('')
+            + '</select></label></div>'
+        : '';
       return '' +
         '<li>' +
-          '<button class="provider-item" type="button" data-provider="' + esc(key) + '">' +
-            '<span>' +
-              '<span class="provider-item__label">' + esc(pickText(meta.label)) + '</span>' +
-              '<span class="provider-item__note">' + esc(pickText(meta.note)) + '</span>' +
+          '<button class="provider-card" type="button" data-provider="' + esc(key) + '">' +
+            '<span class="provider-card__icon" style="background:' + esc(meta.color) + '" aria-hidden="true">' +
+              esc(meta.icon) +
             '</span>' +
-            '<span class="provider-item__arrow" aria-hidden="true">›</span>' +
+            '<span>' +
+              '<span class="provider-card__name">' + esc(pickText(meta.label)) + '</span>' +
+              '<span class="provider-card__note">' + esc(pickText(meta.note)) + '</span>' +
+            '</span>' +
+            '<span class="provider-card__amount">' +
+              (index === 0 ? '<span class="badge badge--ok">' + esc(t('pay.recommended')) + '</span>' : '') +
+              '<span class="provider-card__price">' + esc(price) + '</span>' +
+              '<span class="provider-card__arrow" aria-hidden="true">→</span>' +
+            '</span>' +
           '</button>' +
+          installmentRow +
         '</li>';
     }).join('');
 
     setStage('' +
       '<h2 class="panel__title">' + esc(t('pay.title')) + '</h2>' +
       '<p class="panel__desc">' + esc(t('pay.desc')) + '</p>' +
+      '<div class="region-row">' +
+        '<span class="region-chip">' + esc(t(currentRegion() === 'CHINA' ? 'pay.regionChina' : 'pay.regionGlobal')) + '</span>' +
+        '<p class="region-row__note">' + esc(t(lang === 'zh' ? 'pay.regionSwitchZh' : 'pay.regionSwitchEn')) + '</p>' +
+      '</div>' +
       '<ul class="provider-list">' + items + '</ul>' +
+      recapHtml() +
       '<div class="panel__actions">' +
         '<button class="btn btn--ghost" type="button" id="backToFormBtn">' +
-          esc(t('error.restart')) +
+          esc(t('pay.backToForm')) +
         '</button>' +
       '</div>');
 
@@ -1090,16 +1271,40 @@
         chooseProvider(btn.getAttribute('data-provider'));
       });
     });
+    $$('[data-installment]', $('#stage')).forEach(function (sel) {
+      sel.addEventListener('change', function () {
+        state.installmentNum = sel.value ? Number(sel.value) : null;
+      });
+    });
 
     var backBtn = $('#backToFormBtn');
     if (backBtn) {
       backBtn.addEventListener('click', function () {
-        stopPolling();
-        clearSession();
+        // P8：会话与已填信息保留，用户改完邮箱/档位可重新确认下单
+        state.step = 'form';
+        lastFocusedStep = '';
         setStep('form');
+        renderPlanCards();
+        renderSummary();
+        if ($('#email') && state.email) $('#email').value = state.email;
         announce(t('steps.choose'));
+        if ($('#email')) $('#email').focus();
       });
     }
+  }
+
+  /** P8/P3：支付前复核区（档位 / 金额 / 邮箱 / 机器码） */
+  function recapHtml() {
+    var p = state.product ? pickPrice(state.product) : null;
+    var amount = p ? p.symbol + formatMoney(p.value) + priceSuffix(state.product.cycle) : '—';
+    return '<div class="recap" aria-label="' + esc(t('pay.recapTitle')) + '">' +
+      '<div class="recap__row"><span>' + esc(t('summary.plan')) + '</span><b>' +
+        esc(state.product ? pickText(state.product.name) : '—') + '</b></div>' +
+      '<div class="recap__row"><span>' + esc(t('summary.amount')) + '</span><b>' + esc(amount) + '</b></div>' +
+      '<div class="recap__row"><span>' + esc(t('summary.email')) + '</span><b>' + esc(state.email || '—') + '</b></div>' +
+      '<div class="recap__row"><span>' + esc(t('summary.machine')) + '</span><b class="mono">' +
+        esc(state.machineId || t('summary.notBound')) + '</b></div>' +
+    '</div>';
   }
 
   function chooseProvider(provider) {
@@ -1111,7 +1316,7 @@
     setBusy(true, t('form.submitting'));
     $$('[data-provider]', $('#stage')).forEach(function (btn) { btn.disabled = true; });
 
-    apiSelectProvider(state.checkoutId, provider).then(function (data) {
+    apiSelectProvider(state.checkoutId, provider, provider === 'ALIPAY' ? state.installmentNum : null).then(function (data) {
       setBusy(false);
       handlePaymentCreated(data, provider);
     }).catch(function (err) {
@@ -1127,7 +1332,7 @@
     state.redirectUrl = data.redirectUrl || data.payUrl || '';
     state.qrcode = data.qrcode || '';
     state.status = String(data.status || 'PENDING').toUpperCase();
-    state.expiresAt = Number(data.expiresAt) || state.expiresAt;
+    syncExpiry(data.expiresAt || state.expiresAt);
     state.license = data.license || state.license;
     state.redeemCode = data.redeemCode || state.redeemCode;
     saveSession();
@@ -1208,6 +1413,11 @@
     setStage('' +
       '<h2 class="panel__title">' + esc(t('pay.qrTitle')) + '</h2>' +
       '<p class="panel__desc">' + esc(t('pay.qrHint')) + '</p>' +
+      '<div class="cd-row" id="cdRow">' +
+        '<span class="cd-row__label">' + esc(t('pay.countdownLabel')) + '</span>' +
+        '<span class="cd-text" id="cdText">--:--</span>' +
+        '<span class="cd-bar" aria-hidden="true"><span class="cd-bar__fill" id="cdBar"></span></span>' +
+      '</div>' +
       '<div class="qr-box">' +
         '<div class="qr-box__canvas" id="qrCanvas"></div>' +
         '<div class="qr-box__aside">' +
@@ -1224,8 +1434,10 @@
         '</div>' +
       '</div>' +
       '<div id="pollSlot"></div>' +
-      '<div class="panel__actions">' +
-        '<button class="btn btn--ghost" type="button" id="reselectBtn">' + esc(t('pay.reselectProvider')) + '</button>' +
+      '<div class="qr-actions">' +
+        '<button class="btn btn--ghost btn--sm" type="button" id="refreshPollBtn">' + esc(t('pay.refreshStatus')) + '</button>' +
+        '<button class="btn btn--ghost btn--sm" type="button" id="reselectBtn">' + esc(t('pay.reselectProvider')) + '</button>' +
+        '<button class="btn btn--ghost btn--sm" type="button" id="copyPayLinkBtn">' + esc(t('pay.copyPayLink')) + '</button>' +
       '</div>');
 
     var rendered = renderQrSvg('#qrCanvas', state.qrcode);
@@ -1233,7 +1445,34 @@
 
     bindCopyButtons();
     bindSecondaryActions();
+    bindQrManualActions();
     renderPollSlot();
+  }
+
+  /** P10：等待期三个手动出口，异常时不必刷新整页丢会话 */
+  function bindQrManualActions() {
+    var refresh = $('#refreshPollBtn');
+    if (refresh) {
+      refresh.addEventListener('click', function () {
+        refresh.disabled = true;
+        refresh.textContent = t('pay.refreshBusy');
+        pollOnce();
+        setTimeout(function () {
+          refresh.disabled = false;
+          refresh.textContent = t('pay.refreshStatus');
+        }, 800);
+      });
+    }
+    var copyBtn = $('#copyPayLinkBtn');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', function () {
+        copyText(state.qrcode).then(function () {
+          toast(t('toast.copied'));
+        }, function () {
+          toast(t('toast.copyFailed'));
+        });
+      });
+    }
   }
 
   /**
@@ -1354,7 +1593,7 @@
       poll.consecutiveErrors = 0;
 
       state.status = String(data.status || '').toUpperCase();
-      state.expiresAt = Number(data.expiresAt) || state.expiresAt;
+      syncExpiry(data.expiresAt || state.expiresAt);
       state.license = data.license || state.license;
       state.redeemCode = data.redeemCode || state.redeemCode;
       saveSession();
@@ -1399,8 +1638,9 @@
     renderPollSlot();
   }
 
-  /** redirect/qrcode 面板下方的等待提示 */
+  /** redirect/qrcode 面板下方的等待提示 + 会话倒计时（P9） */
   function renderPollSlot() {
+    updateCountdown();
     var slot = $('#pollSlot');
     if (!slot) return;
     var elapsed = secOf(Date.now() - poll.startedAt);
@@ -1409,6 +1649,26 @@
         '<span class="spinner" aria-hidden="true"></span>' +
         '<span>' + esc(t('poll.hint')) + ' ' + esc(t('poll.elapsed', { s: elapsed })) + '</span>' +
       '</p>';
+  }
+
+  function updateCountdown() {
+    var textEl = $('#cdText');
+    if (!textEl || !state.expiresAt) return;
+    var remaining = Math.max(0, state.expiresAt - Date.now());
+    var total = state.expiresTotalMs || Math.max(remaining, 1000);
+    var ratio = Math.max(0, Math.min(1, remaining / total));
+    var seconds = Math.floor(remaining / 1000);
+    var hh = Math.floor(seconds / 3600);
+    var mm = Math.floor((seconds % 3600) / 60);
+    var ss = seconds % 60;
+    var mmText = (mm < 10 ? '0' : '') + mm;
+    var ssText = (ss < 10 ? '0' : '') + ss;
+    // 会话默认 2 小时：超过 1 小时用 h:mm:ss，避免出现 119:59 这种读数
+    textEl.textContent = hh > 0 ? hh + ':' + mmText + ':' + ssText : mmText + ':' + ssText;
+    var bar = $('#cdBar');
+    if (bar) bar.style.width = Math.round(ratio * 100) + '%';
+    var row = $('#cdRow');
+    if (row) row.classList.toggle('is-urgent', remaining <= 60 * 1000);
   }
 
   function renderPolling() {
@@ -1476,6 +1736,14 @@
     var orderRow = state.orderNumber
       ? '<p class="panel__desc">' + esc(t('done.orderLabel')) + '：<code>' + esc(state.orderNumber) + '</code></p>'
       : '';
+    var subscriptionNote = (state.product && state.product.recurring)
+      ? '<p class="form-note">' + esc(t('done.subscriptionNote')) + '</p>'
+      : '';
+    var actions = '' +
+      '<div class="panel__actions">' +
+        '<a class="btn btn--primary" href="../account/">' + esc(t('done.goAccount')) + '</a>' +
+        '<a class="btn btn--ghost" href="https://www.ywhome.top">' + esc(t('error.goHome')) + '</a>' +
+      '</div>';
 
     if (state.license) {
       setStage('' +
@@ -1485,13 +1753,21 @@
         '<p class="result__desc">' + esc(t('done.licenseHint')) + '</p>' +
         orderRow +
         '<div class="code-block"><code id="credentialValue">' + esc(state.license) + '</code></div>' +
-        '<div class="code-copy">' +
+        '<div class="qr-actions">' +
           '<button class="btn btn--primary btn--sm" type="button" data-copy-of="credentialValue">' + esc(t('done.copyLicense')) + '</button>' +
+          '<button class="btn btn--ghost btn--sm" type="button" data-download="license">' + esc(t('done.download')) + '</button>' +
         '</div>' +
+        subscriptionNote +
         '<h3 class="panel__title result__next">' + esc(t('done.backTitle')) + '</h3>' +
-        '<ol class="result__steps"><li>' + esc(t('done.licenseStep')) + '</li>' +
-          '<li>' + esc(t('done.backHint')) + '</li></ol>');
+        '<ol class="result__steps">' +
+          '<li>' + esc(t('done.licenseStep1')) + '</li>' +
+          '<li>' + esc(t('done.licenseStep2')) + '</li>' +
+          '<li>' + esc(t('done.licenseStep3')) + '</li>' +
+        '</ol>' +
+        '<p class="form-note">' + esc(t('done.backHint')) + '</p>' +
+        actions);
       bindCopyButtons();
+      bindDownloads();
       return;
     }
 
@@ -1503,14 +1779,21 @@
         '<p class="result__desc">' + esc(t('done.redeemHint')) + '</p>' +
         orderRow +
         '<div class="code-block"><code id="credentialValue">' + esc(state.redeemCode) + '</code></div>' +
-        '<div class="code-copy">' +
+        '<div class="qr-actions">' +
           '<button class="btn btn--primary btn--sm" type="button" data-copy-of="credentialValue">' + esc(t('done.copyCode')) + '</button>' +
+          '<button class="btn btn--ghost btn--sm" type="button" data-download="redeem">' + esc(t('done.download')) + '</button>' +
         '</div>' +
+        subscriptionNote +
         '<h3 class="panel__title result__next">' + esc(t('done.backTitle')) + '</h3>' +
-        '<ol class="result__steps"><li>' + esc(t('done.redeemStep1')) + '</li>' +
+        '<ol class="result__steps">' +
+          '<li>' + esc(t('done.redeemStep1')) + '</li>' +
           '<li>' + esc(t('done.redeemStep2')) + '</li>' +
-          '<li>' + esc(t('done.backHint')) + '</li></ol>');
+          '<li>' + esc(t('done.licenseStep3')) + '</li>' +
+        '</ol>' +
+        '<p class="form-note">' + esc(t('done.backHint')) + '</p>' +
+        actions);
       bindCopyButtons();
+      bindDownloads();
       return;
     }
 
@@ -1518,7 +1801,7 @@
     setStage('' +
       '<h2 class="result__title">' + esc(t('done.pendingTitle')) + '</h2>' +
       '<p class="result__desc">' + esc(t('done.pendingHint', { email: SUPPORT_EMAIL })) + '</p>' +
-      orderRow);
+      orderRow + actions);
   }
 
   /** FAILED / EXPIRED / CANCELED 等非成功终态 */
@@ -1600,6 +1883,7 @@
     state.redirectUrl = '';
     state.qrcode = '';
     state.expiresAt = 0;
+    state.expiresTotalMs = 0;
     state.license = '';
     state.redeemCode = '';
     setStep('form');
@@ -1644,18 +1928,54 @@
         var target = document.getElementById(btn.getAttribute('data-copy-of'));
         if (!target) return;
         copyText(target.textContent).then(function () {
-          flashButton(btn, t('done.copied'));
+          toast(t('toast.copied'));
         }, function () {
-          flashButton(btn, t('done.copyFailed'));
+          toast(t('toast.copyFailed'));
         });
       });
     });
   }
 
-  function flashButton(btn, message) {
-    var original = btn.textContent;
-    btn.textContent = message;
-    setTimeout(function () { btn.textContent = original; }, 2000);
+  /** P12：许可证/兑换码另存为 txt，方便随邮件或工单转发 */
+  function bindDownloads() {
+    $$('[data-download]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var type = btn.getAttribute('data-download');
+        var value = type === 'redeem' ? state.redeemCode : state.license;
+        if (!value) return;
+        var header = type === 'redeem'
+          ? t('done.copyCode') + '\r\n'
+          : t('done.copyLicense') + '\r\n';
+        downloadText(type === 'redeem' ? 'redeem-code.txt' : 'license.txt', header + value + '\r\n');
+        toast(t('done.downloaded'));
+      });
+    });
+  }
+
+  function downloadText(filename, content) {
+    var blob = new Blob(['\ufeff' + content], { type: 'text/plain;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  /** G1：统一 toast 反馈（2 秒自动消失，可堆积） */
+  function toast(message) {
+    var wrap = $('#toastWrap');
+    if (!wrap) return;
+    var el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = message;
+    wrap.appendChild(el);
+    setTimeout(function () {
+      el.classList.add('is-out');
+      setTimeout(function () { el.remove(); }, 300);
+    }, 2000);
   }
 
   /**
@@ -1719,7 +2039,12 @@
     apiFetchStatus(target).then(function (data) {
       state.status = String(data.status || '').toUpperCase();
       state.orderNumber = data.orderNumber || state.orderNumber;
-      state.expiresAt = Number(data.expiresAt) || state.expiresAt;
+      syncExpiry(data.expiresAt || state.expiresAt);
+      // P16：从账号页「继续支付」进入时用会话上的邮箱/机器码补全摘要
+      if (data.email) state.email = data.email;
+      if (data.machineId) state.machineId = data.machineId;
+      if ($('#email') && state.email) $('#email').value = state.email;
+      renderMachineBox();
       state.paymentMethods = Array.isArray(data.paymentMethods) ? data.paymentMethods.slice() : state.paymentMethods;
       state.provider = data.provider || state.provider;
       state.license = data.license || '';
@@ -1792,9 +2117,27 @@
 
     $('#orderForm').addEventListener('submit', handleSubmit);
     $('#email').addEventListener('input', function () {
+      state.email = String($('#email').value || '').trim();
       hideError('#emailError');
       $('#email').removeAttribute('aria-invalid');
+      renderSummary();
     });
+    // P4：失焦即验；空值不在失焦时打断用户，只在提交时提示必填
+    $('#email').addEventListener('blur', function () {
+      validateEmailField({ silentEmpty: true });
+    });
+    var machineCopyBtn = $('#machineCopyBtn');
+    if (machineCopyBtn) {
+      machineCopyBtn.addEventListener('click', function () {
+        copyText(state.machineId).then(function () {
+          toast(t('toast.copied'));
+        }, function () {
+          toast(t('toast.copyFailed'));
+        });
+      });
+    }
+
+    renderPlanSkeleton();
 
     // 先加载产品目录，再做初始化渲染与会话恢复
     // C9（2026-09-20）：官网产品区按钮携带 ?product=ai-tools&productId=<sku>。

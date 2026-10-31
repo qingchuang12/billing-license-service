@@ -13,6 +13,7 @@ import com.billing.license.repository.OrderRepository;
 import com.billing.license.repository.UserRepository;
 import com.billing.license.service.notification.EmailNotificationService;
 import com.billing.license.service.risk.RateLimitService;
+import com.billing.license.util.LogMask;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -45,7 +46,7 @@ public class LicenseService {
      */
     @Transactional
     public License issueLicense(String orderId, String machineCode) {
-        log.info("Issuing license for order: {} with machineCode: {}", orderId, machineCode);
+        log.info("Issuing license for order: {} with machineCode: {}", orderId, LogMask.secret(machineCode));
 
         Order order = orderRepository.findByOrderNumber(orderId)
             .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND",
@@ -61,8 +62,12 @@ public class LicenseService {
         // 故以「按订单存在性检查」作为跨路径/跨实例的持久幂等兜底（与 generateCode 按订单幂等同口径）。
         List<License> existingByOrder = licenseRepository.findByOrder(order);
         if (existingByOrder != null && !existingByOrder.isEmpty()) {
-            License reuse = existingByOrder.get(0);
-            log.info("订单已存在 License，复用不二签：orderId={}, licenseKey={}", orderId, reuse.getLicenseKey());
+            // 换机重发后同订单会同时存在 REISSUED 旧证与 ACTIVE 新证，必须优先复用生效件
+            License reuse = existingByOrder.stream()
+                .filter(l -> l.getStatus() == License.LicenseStatus.ACTIVE)
+                .findFirst()
+                .orElse(existingByOrder.get(0));
+            log.info("订单已存在 License，复用不二签：orderId={}, licenseKey={}", orderId, LogMask.secret(reuse.getLicenseKey()));
             return reuse;
         }
 
@@ -89,7 +94,7 @@ public class LicenseService {
         // A1（方案 A）：绑定 + 签名 + 落库 + 登记机器统一走内核，避免与兑换、在线激活三路漂移
         bindToMachine(license, machineCode, MachineRegistryService.SRC_PURCHASE);
         recordLicenseEvent(license, LicenseEvent.EventType.ISSUED, machineCode, "Issued for order " + orderId);
-        log.info("License issued successfully: {}", licenseKey);
+        log.info("License issued successfully: {}", LogMask.secret(licenseKey));
 
         return license;
     }
@@ -120,6 +125,54 @@ public class LicenseService {
             machineRegistryService.touch(machineCode, registrySource);
             // B7 = B（plan-7.0 / D3）：完成正式绑定即「已转正」（幂等、作废不回收）
             machineRegistryService.markConverted(machineCode, registrySource);
+        }
+        return license;
+    }
+
+    /**
+     * 权益变更后重签令牌（续费、期末取消等）。未绑定设备的证不签（客户端首次激活时再签）。
+     * 已吊销/过期件绝不重签——签名 token 内没有吊销位，重签等于重新发放可用凭证。
+     */
+    @Transactional
+    public License refreshTokenIfBound(License license) {
+        if (license == null || license.getStatus() != License.LicenseStatus.ACTIVE) {
+            return license;
+        }
+        if (license.getMachineCode() == null || license.getMachineCode().isBlank()) {
+            return license;
+        }
+        license.setSignedToken(licenseIssuer.issueLicense(license));
+        return licenseRepository.save(license);
+    }
+
+    /**
+     * 库内 token 与当前权益不一致时重签（续费后旧 token 的 exp 仍是旧到期日）。
+     *
+     * <p>只在 ACTIVE + 已绑定设备时重签；无法解析/验签失败也重签（库内 token 本就不可信）。
+     * 返回刷新后的实体，供调用方直接下发。
+     */
+    @Transactional
+    public License refreshTokenIfStale(License license) {
+        if (license == null || license.getStatus() != License.LicenseStatus.ACTIVE
+                || license.getMachineCode() == null || license.getMachineCode().isBlank()
+                || license.getExpiresAt() == null) {
+            return license;
+        }
+        String token = license.getSignedToken();
+        boolean stale = token == null || token.isBlank() || !licenseIssuer.verifyLicense(token);
+        if (!stale) {
+            Object exp = licenseIssuer.decodePayload(token).get("exp");
+            long desired = license.getExpiresAt()
+                .atZone(java.time.ZoneId.systemDefault()).toEpochSecond();
+            if (!(exp instanceof Number number) || desired > number.longValue() + 60) {
+                stale = true;
+            }
+        }
+        if (stale) {
+            license.setSignedToken(licenseIssuer.issueLicense(license));
+            licenseRepository.save(license);
+            log.info("License token 已按当前权益重签：licenseKey={}, expiresAt={}",
+                LogMask.secret(license.getLicenseKey()), license.getExpiresAt());
         }
         return license;
     }
@@ -175,9 +228,10 @@ public class LicenseService {
         String bound = license.getMachineCode();
         if (bound != null && !bound.isBlank()) {
             if (bound.equals(machine)) {
-                // 幂等：同一设备重试直接返回既有状态，不二次签发
-                log.info("上报绑定幂等命中（同机）：licenseKey={}", license.getLicenseKey());
-                return ActivateResponse.from(license);
+                // 幂等：同一设备重试不重新绑定，但续费后的旧 token 要按当前权益重签
+                log.info("上报绑定幂等命中（同机）：licenseKey={}", LogMask.secret(license.getLicenseKey()));
+                License refreshed = refreshTokenIfStale(license);
+                return ActivateResponse.from(refreshed != null ? refreshed : license);
             }
             // 守 B6 = A：已绑他机不自动改绑，恢复路径为账号页 / 管理端解绑
             throw new BusinessException("MACHINE_MISMATCH",
@@ -187,7 +241,7 @@ public class LicenseService {
         bindToMachine(license, machine, MachineRegistryService.SRC_REPORT);
         recordLicenseEvent(license, LicenseEvent.EventType.BOUND_BY_REPORT, machine,
             "Bound by client auto-report");
-        log.info("License bound by client auto-report: licenseKey={}", license.getLicenseKey());
+        log.info("License bound by client auto-report: licenseKey={}", LogMask.secret(license.getLicenseKey()));
         return ActivateResponse.from(license);
     }
 
@@ -206,14 +260,28 @@ public class LicenseService {
             throw new BusinessException("ORDER_NOT_PAID", 
                 "Order must be paid before issuing licenses");
         }
-        
-        // Get order items and issue licenses
+
+        // 管理端补偿入口必须幂等：重复调用返回已签发记录，不能再签第二张。
+        List<License> existingByOrder = licenseRepository.findByOrder(order);
+        if (existingByOrder != null && !existingByOrder.isEmpty()) {
+            log.info("订单已存在 License，管理端签发幂等复用：orderId={}, count={}",
+                orderId, existingByOrder.size());
+            String existingEmail = resolveEmail(order.getCustomerId());
+            return existingByOrder.stream()
+                .map(l -> mapToResponse(l, existingEmail))
+                .collect(Collectors.toList());
+        }
+
+        // 当前计费模型是一单一行一张证；数量 >1 无法保证「每张证可独立追踪」，
+        // 也与 licenses(active) 唯一约束冲突，故显式拒绝而不是让 DB 报错。
+        if (order.getOrderItems().stream()
+                .anyMatch(item -> item.getQuantity() != null && item.getQuantity() > 1)) {
+            throw new BusinessException("UNSUPPORTED_QUANTITY",
+                "一个订单行只能签发一张 License（quantity 必须为 1）");
+        }
+
         List<License> licenses = order.getOrderItems().stream()
-            .flatMap(item -> {
-                // Issue one license per quantity
-                return java.util.stream.IntStream.range(0, item.getQuantity())
-                    .mapToObj(i -> createLicense(order, item.getProduct()));
-            })
+            .map(item -> createLicense(order, item.getProduct()))
             .collect(Collectors.toList());
         
         licenseRepository.saveAll(licenses);
@@ -232,7 +300,7 @@ public class LicenseService {
      */
     @Transactional
     public LicenseResponse verifyLicense(String licenseKey) {
-        log.info("Verifying license: {}", licenseKey);
+        log.info("Verifying license: {}", LogMask.secret(licenseKey));
         
         License license = licenseRepository.findByLicenseKey(licenseKey)
             .orElseThrow(() -> new BusinessException("LICENSE_NOT_FOUND", 
@@ -269,6 +337,8 @@ public class LicenseService {
         // 此前实现是「先写后判」（旧 138-140 行），校验失败也会刷新该字段，导致数据失真。
         license.setLastVerifiedAt(LocalDateTime.now());
         licenseRepository.save(license);
+        // 续费只改数据库日期时旧 token 的 exp 仍是旧到期日：在线校验必须下发与新权益一致的令牌
+        refreshTokenIfStale(license);
 
         // E3：verify 为**公开端点**——不回显客户邮箱（否则任何持 licenseKey 者可看到归属邮箱）
         LicenseResponse response = mapToResponse(license, null);
@@ -330,6 +400,7 @@ public class LicenseService {
 
         List<PendingLicenseResponse.Item> items = claimable.stream()
             .map(license -> {
+                refreshTokenIfStale(license);
                 recordPendingQueried(license, machine);
                 return PendingLicenseResponse.Item.builder()
                     .licenseKey(license.getLicenseKey())
@@ -389,7 +460,7 @@ public class LicenseService {
         licenseRepository.save(license);
         recordLicenseEvent(license, LicenseEvent.EventType.REVOKED, boundMachineCode,
             "Revoked. reason=" + (reason != null ? reason : ""));
-        log.info("Revoked license: {} (reason={})", licenseKey, reason);
+        log.info("Revoked license: {} (reason={})", LogMask.secret(licenseKey), reason);
     }
 
     /**
@@ -427,7 +498,7 @@ public class LicenseService {
         licenseRepository.save(license);
         recordLicenseEvent(license, LicenseEvent.EventType.UNBOUND, previous,
             "Device binding released (account self-service)");
-        log.info("License device binding released by owner: licenseKey={}", licenseKey);
+        log.info("License device binding released by owner: licenseKey={}", LogMask.secret(licenseKey));
         return previous;
     }
 
@@ -464,7 +535,7 @@ public class LicenseService {
         licenseRepository.save(license);
         recordLicenseEvent(license, LicenseEvent.EventType.UNBOUND, previous,
             "Device binding released by admin. reason=" + (reason != null ? reason : ""));
-        log.info("License device binding released by admin: licenseKey={}, reason={}", licenseKey, reason);
+        log.info("License device binding released by admin: licenseKey={}, reason={}", LogMask.secret(licenseKey), reason);
         return previous;
     }
 
@@ -481,7 +552,7 @@ public class LicenseService {
     @Transactional
     public LicenseResponse reissueLicense(String licenseKey, String newMachineId, String reason,
                                           boolean force) {
-        log.info("Reissuing license {} to new machine {} (force={})", licenseKey, newMachineId, force);
+        log.info("Reissuing license {} to new machine {} (force={})", LogMask.secret(licenseKey), LogMask.secret(newMachineId), force);
 
         License original = licenseRepository.findByLicenseKey(licenseKey)
             .orElseThrow(() -> new BusinessException("LICENSE_NOT_FOUND",
@@ -516,7 +587,9 @@ public class LicenseService {
         // D3（2026-09-14）：换机失效与退款吊销语义不同，改用 REISSUED（原先误置 REVOKED，
         // 与注释矛盾且会让售后/审计无法区分换机与退款）；换机不写 revokedAt。
         original.setStatus(License.LicenseStatus.REISSUED);
-        licenseRepository.save(original);
+        // 先落库旧证状态，再插入新证：数据库对「同订单同产品仅一张 ACTIVE」有部分唯一索引，
+        // 若 Hibernate 把 INSERT 排在 UPDATE 前会撞约束。
+        licenseRepository.saveAndFlush(original);
         recordLicenseEvent(original, LicenseEvent.EventType.REISSUED, newMachineId,
             "Reissued to new machine. reason=" + (reason != null ? reason : "")
                 + (overLimit ? " [forced over limit=" + reissueMax + "]" : ""));
@@ -545,7 +618,7 @@ public class LicenseService {
         recordLicenseEvent(newLicense, LicenseEvent.EventType.ISSUED, newMachineId,
             "Reissued license for original " + licenseKey);
 
-        log.info("Reissued license created: {}", newLicense.getLicenseKey());
+        log.info("Reissued license created: {}", LogMask.secret(newLicense.getLicenseKey()));
         return mapToResponse(newLicense, resolveEmail(newLicense.getCustomerId()));
     }
 
@@ -569,7 +642,7 @@ public class LicenseService {
                 .build();
             licenseEventRepository.save(event);
         } catch (Exception e) {
-            log.error("记录 License 事件失败：type={}, licenseKey={}", type, license.getLicenseKey(), e);
+            log.error("记录 License 事件失败：type={}, licenseKey={}", type, LogMask.secret(license.getLicenseKey()), e);
         }
     }
     

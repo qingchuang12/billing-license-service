@@ -155,6 +155,9 @@ public class SecurityConfig {
                     // plan-7.0 / D2：客户端「自动上报绑定」——凭 signedToken 验签证明归属（E1 = ①），
                     // 无需登录，故必须放行；真伪与归属由方法内「验签 + 授权状态」把关。
                     "/api/licenses/report-binding",
+                    // AI-Tools 运营台活跃统计取票（计划 2026-10-30）：公开端点，客户端未登录/试用也要上报；
+                    // 票据密钥/摘要盐缺失时端点返回 503，不开放任何账号数据。
+                    "/api/licenses/console/ticket",
                     // plan-1.0 / S1：支付后按机器码领取待激活授权——客户端此时还没有账号登录态、也没有令牌，
                     // 匿名轮询是唯一形态。把关在方法内（只返回绑定本机 + 从未成功校验 + 窗口内的件）+ 双维限流。
                     "/api/licenses/pending").permitAll()
@@ -178,6 +181,11 @@ public class SecurityConfig {
                 // /account/** 同口径放行。同样不是 /api/admin（接口在下方按 ROLE_ADMIN 保护）。
                 // B8：同样仅放行 GET。页面含 noindex 头，且所有数据仍需管理员 JWT 才能取到。
                 .requestMatchers(HttpMethod.GET, "/admin/**").permitAll()
+                // 支付结果页（plan-8.1 / #12）：渠道支付完成后把浏览器送回 /payment/success
+                // （Stripe / Creem 默认回跳，各渠道会在 URL 上追加自己的标识）。此刻用户是匿名的，
+                // 页面也只回显 URL 自带的订单标识、不取任何账户数据，故与 /checkout/** 同口径放行；
+                // 同样仅放行 GET，避免将来误映射到该前缀的写接口被顺带放过。
+                .requestMatchers(HttpMethod.GET, "/payment/**").permitAll()
                 // plan-7.0 / M3：二次因子的两个「半认证」端点。此刻调用者还没有访问令牌，
                 // 只有一枚「密码已通过」的一次性票据，故必须放行——若要求 ROLE_USER，
                 // 未过第二因子者永远拿不到令牌，形成死锁（与登录端点同坑）。

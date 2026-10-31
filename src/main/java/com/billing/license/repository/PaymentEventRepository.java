@@ -1,7 +1,10 @@
 package com.billing.license.repository;
 
 import com.billing.license.entity.PaymentEvent;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -24,4 +27,10 @@ public interface PaymentEventRepository extends JpaRepository<PaymentEvent, UUID
      * 历史事件，不影响 {@link #existsByProviderAndEventId} 的幂等去重语义。
      */
     List<PaymentEvent> findByCreatedAtBefore(LocalDateTime cutoff, Pageable pageable);
+
+    @Query("SELECT e FROM PaymentEvent e WHERE (:provider IS NULL OR e.provider = :provider) "
+        + "AND (:processed IS NULL OR e.processed = :processed) ORDER BY e.createdAt DESC")
+    Page<PaymentEvent> search(@Param("provider") String provider,
+                              @Param("processed") Boolean processed,
+                              Pageable pageable);
 }

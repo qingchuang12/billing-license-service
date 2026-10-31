@@ -53,4 +53,16 @@ public class AccountCurrencySummary {
 
     @Schema(description = "客单价 = 实收 / 已支付订单数", example = "299.00")
     private BigDecimal avgOrderValue;
+
+    @Schema(description = "Ledger 口径实收：CHARGE 分录合计", example = "2990.00")
+    private BigDecimal ledgerGrossReceived;
+
+    @Schema(description = "Ledger 口径已退款：REFUND 分录合计", example = "299.00")
+    private BigDecimal ledgerRefunded;
+
+    @Schema(description = "Ledger 口径手续费：FEE 分录合计", example = "59.80")
+    private BigDecimal ledgerFee;
+
+    @Schema(description = "Ledger 净额 = Ledger 实收 − 退款 − 手续费（含冲正）", example = "2631.20")
+    private BigDecimal ledgerNet;
 }

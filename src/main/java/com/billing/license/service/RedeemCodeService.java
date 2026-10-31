@@ -9,6 +9,7 @@ import com.billing.license.repository.OrderRepository;
 import com.billing.license.repository.ProductRepository;
 import com.billing.license.repository.RedeemCodeRepository;
 import com.billing.license.service.risk.RateLimitService;
+import com.billing.license.util.LogMask;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -78,7 +79,7 @@ public class RedeemCodeService {
             .build();
 
         redeemCodeRepository.save(redeemCode);
-        log.info("Generated redeem code: {} for order: {}", code, orderId);
+        log.info("Generated redeem code: {} for order: {}", LogMask.secret(code), orderId);
 
         return code;
     }
@@ -206,8 +207,8 @@ public class RedeemCodeService {
                 UUID retryCustomerId = customerIdentityService.resolveOrCreate(request.getCustomerEmail());
                 if (redeemCode.getUsedBy().equals(retryCustomerId)) {
                     License existing = findRedeemedLicense(redeemCode, retryCustomerId);
-                    if (existing != null) {
-                        log.info("兑换码重试幂等命中，返回已签发 License：licenseKey={}", existing.getLicenseKey());
+                    if (existing != null && !isOrderRefunded(existing.getOrder())) {
+                        log.info("兑换码重试幂等命中，返回已签发 License：licenseKey={}", LogMask.secret(existing.getLicenseKey()));
                         return existing;
                     }
                 }
@@ -239,6 +240,12 @@ public class RedeemCodeService {
         // 批量生成的码没有订单，保持不挂订单。
         Order redeemOrder = redeemCode.getOrderId() == null ? null
             : orderRepository.findByOrderNumber(redeemCode.getOrderId()).orElse(null);
+        // 退款后未使用的码必须作废：否则「先退款、后兑换」仍能拿到一张新授权
+        if (isOrderRefunded(redeemOrder)) {
+            redeemCode.setStatus(RedeemCode.RedeemCodeStatus.REVOKED);
+            redeemCodeRepository.save(redeemCode);
+            throw new BusinessException("CODE_REVOKED", "该订单已退款，兑换码不可用");
+        }
 
         License license = License.builder()
             .licenseKey(licenseKey)
@@ -260,11 +267,19 @@ public class RedeemCodeService {
         // A1（方案 A）：绑定机器码 + 签发签名令牌 + 落库 + 登记机器首次出现（C8），统一走内核
         licenseService.bindToMachine(license, request.getMachineId(), MachineRegistryService.SRC_REDEEM);
 
-        log.info("Code redeemed successfully, license issued: {}", licenseKey);
+        log.info("Code redeemed successfully, license issued: {}", LogMask.secret(licenseKey));
 
         return license;
     }
     
+    /** 订单是否已退款（全/部分退款都视为权益已收回）。 */
+    private static boolean isOrderRefunded(Order order) {
+        return order != null
+            && (order.getPaymentStatus() == Order.PaymentStatus.REFUNDED
+                || order.getPaymentStatus() == Order.PaymentStatus.PARTIALLY_REFUNDED
+                || order.getStatus() == Order.OrderStatus.REFUNDED);
+    }
+
     /**
      * B9：定位某兑换人凭该兑换码已签发的 License。
      * RedeemCode 无直接 License 外键，按「兑换人 + 该码绑定产品」在其名下 License 中匹配
@@ -299,7 +314,7 @@ public class RedeemCodeService {
         redeemCode.setStatus(RedeemCode.RedeemCodeStatus.REVOKED);
         redeemCodeRepository.save(redeemCode);
         
-        log.info("Revoked redeem code: {}", code);
+        log.info("Revoked redeem code: {}", LogMask.secret(code));
     }
     
     private String generateCode() {

@@ -57,6 +57,24 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     /** 账务：按订单创建时间范围取订单（收入/趋势/对账聚合使用） */
     java.util.List<Order> findByCreatedAtBetween(java.time.LocalDateTime from, java.time.LocalDateTime to);
 
+    /**
+     * 账务分产品聚合：一次 join fetch 出行项与其产品，避免「订单 → 行项 → 产品」逐级懒加载。
+     *
+     * <p>只有 {@code AccountingService#getByProduct} 需要行项；收入/渠道/趋势/对账四个方法只读
+     * 订单标量字段，继续用上面的无预加载版本，不为一处需求让所有账务查询都背一次 join。
+     */
+    @Query("SELECT DISTINCT o FROM Order o LEFT JOIN FETCH o.orderItems oi LEFT JOIN FETCH oi.product "
+        + "WHERE o.createdAt BETWEEN :from AND :to")
+    java.util.List<Order> findByCreatedAtBetweenWithItems(@Param("from") java.time.LocalDateTime from,
+                                                          @Param("to") java.time.LocalDateTime to);
+
     // plan-7.0 账户基础功能 / P1：管理端用户详情的名下订单计数
     long countByCustomerId(UUID customerId);
+
+    /**
+     * P16：账号页订单列表批量取套餐 SKU（「继续支付」需要它把收银台档位预选回来）。
+     * 返回 Object[]{orderId, sku}；一单一行，避免逐单懒加载行项。
+     */
+    @Query("SELECT oi.order.id, p.sku FROM OrderItem oi JOIN oi.product p WHERE oi.order.id IN :orderIds")
+    java.util.List<Object[]> findProductSkuByOrderIds(@Param("orderIds") java.util.Collection<UUID> orderIds);
 }

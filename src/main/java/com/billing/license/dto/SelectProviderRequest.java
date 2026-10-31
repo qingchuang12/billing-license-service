@@ -21,4 +21,12 @@ public class SelectProviderRequest {
             example = "alipay",
             allowableValues = {"alipay", "wechat_pay", "stripe", "paddle", "paypal"})
     private String provider;
+
+    /** 支付形态（QRCODE / REDIRECT）；留空按渠道能力选默认，与机器码无关 */
+    @Schema(description = "支付形态：QRCODE 扫码 / REDIRECT 跳转；留空由服务端按渠道能力选择",
+            allowableValues = {"QRCODE", "REDIRECT"})
+    private String paymentProduct;
+
+    /** 花呗分期期数（3/6/12），仅支付宝手机/网页支付生效；空=不分期 */
+    private Integer installmentNum;
 }

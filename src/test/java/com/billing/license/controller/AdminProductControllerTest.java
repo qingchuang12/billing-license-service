@@ -1,9 +1,7 @@
 package com.billing.license.controller;
 
 import com.billing.license.entity.Product;
-import com.billing.license.entity.ProductProfile;
 import com.billing.license.entity.User;
-import com.billing.license.repository.ProductProfileRepository;
 import com.billing.license.repository.ProductRepository;
 import com.billing.license.repository.UserRepository;
 import com.billing.license.security.JwtTokenService;
@@ -52,7 +50,6 @@ class AdminProductControllerTest {
     @Autowired private WebApplicationContext context;
     @Autowired private UserRepository userRepository;
     @Autowired private ProductRepository productRepository;
-    @Autowired private ProductProfileRepository productProfileRepository;
     @Autowired private JwtTokenService jwtTokenService;
     @Autowired private PasswordEncoder passwordEncoder;
 
@@ -74,12 +71,6 @@ class AdminProductControllerTest {
         normalUser = userRepository.save(User.builder()
             .email(USER_EMAIL).passwordHash(passwordEncoder.encode("Passw0rd1"))
             .role(User.UserRole.USER).status(User.UserStatus.ACTIVE).build());
-        // 套餐必须挂到产品档案：所有套餐用例共用一个测试档案
-        if (!productProfileRepository.existsByProductCodeIgnoreCase("ai-tools")) {
-            productProfileRepository.save(ProductProfile.builder()
-                .productCode("ai-tools").name("AI-Tools")
-                .features("[\"OFFLINE\",\"MULTI_DEVICE\"]").build());
-        }
     }
 
     @AfterEach
@@ -150,21 +141,22 @@ class AdminProductControllerTest {
     // ==================== 元数据与列表 ====================
 
     @Test
-    @DisplayName("元数据返回周期 / 档位枚举与配置驱动的权益标签")
-    void meta_admin_returnsEnumsAndFeatureLabels() throws Exception {
+    @DisplayName("元数据返回周期 / 档位枚举与渠道能力，不再返回权益标签")
+    void meta_admin_returnsEnumsAndChannels() throws Exception {
         mockMvc.perform(get("/api/admin/products/meta")
                 .header("Authorization", "Bearer " + tokenFor(admin)))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.success").value(true))
             .andExpect(jsonPath("$.data.billingCycles").isArray())
             .andExpect(jsonPath("$.data.tiers[0]").exists())
-            .andExpect(jsonPath("$.data.features").isArray());
+            .andExpect(jsonPath("$.data.channels").isArray())
+            .andExpect(jsonPath("$.data.features").doesNotExist());
     }
 
     // ==================== 新增 ====================
 
     @Test
-    @DisplayName("新增套餐：成功、归属产品档案、默认上架且不带权益字段")
+    @DisplayName("新增套餐：成功、产品码直写、默认上架")
     void create_admin_shouldSucceed() throws Exception {
         String sku = "test-product-create";
         createdSkus.add(sku);
@@ -178,9 +170,7 @@ class AdminProductControllerTest {
             .andExpect(jsonPath("$.data.sku").value(sku))
             .andExpect(jsonPath("$.data.productCode").value("ai-tools"))
             .andExpect(jsonPath("$.data.active").value(true))
-            .andExpect(jsonPath("$.data.recommended").value(false))
-            // 权益属于产品档案，套餐视图不再携带 features
-            .andExpect(jsonPath("$.data.features").doesNotExist());
+            .andExpect(jsonPath("$.data.recommended").value(false));
 
         Product saved = productRepository.findBySku(sku).orElseThrow();
         assertEquals(0, saved.getPriceCny().compareTo(new BigDecimal("99.00")));
@@ -313,64 +303,31 @@ class AdminProductControllerTest {
             .andExpect(jsonPath("$.data.length()").value(0));
     }
 
-    // ==================== 产品档案 ====================
+    // ==================== 产品码 ====================
 
     @Test
-    @DisplayName("产品档案：创建、权益归一化、产品码锁定、重复拒绝、挂载套餐数")
-    void productProfiles_crudContract() throws Exception {
-        String code = "test-profile-" + UUID.randomUUID().toString().substring(0, 8);
-        String createBody = "{"
-            + "\"productCode\":\"" + code + "\","
-            + "\"name\":\"测试产品\","
-            + "\"nameEn\":\"Test Product\","
-            + "\"features\":[\"offline\",\"CLOUD_SYNC\",\"offline\"]"
-            + "}";
-
-        mockMvc.perform(post("/api/admin/product-profiles")
+    @DisplayName("产品码只作分组键：任意非空码均可创建，不再要求预建档案")
+    void createProduct_arbitraryProductCode_shouldAccept() throws Exception {
+        String sku = "test-product-new-code";
+        createdSkus.add(sku);
+        String code = "new-product-" + UUID.randomUUID().toString().substring(0, 8);
+        mockMvc.perform(post("/api/admin/products")
                 .header("Authorization", "Bearer " + tokenFor(admin))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(createBody))
+                .content(payload(sku).replace("\"ai-tools\"", "\"" + code + "\"")))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.productCode").value(code))
-            .andExpect(jsonPath("$.data.features.length()").value(2))
-            .andExpect(jsonPath("$.data.features[0]").value("OFFLINE"))
-            .andExpect(jsonPath("$.data.features[1]").value("CLOUD_SYNC"));
-
-        mockMvc.perform(post("/api/admin/product-profiles")
-                .header("Authorization", "Bearer " + tokenFor(admin))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(createBody))
-            .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.code").value("PRODUCT_PROFILE_EXISTS"));
-
-        ProductProfile profile = productProfileRepository.findByProductCodeIgnoreCase(code).orElseThrow();
-        mockMvc.perform(patch("/api/admin/product-profiles/" + profile.getId())
-                .header("Authorization", "Bearer " + tokenFor(admin))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(createBody.replace(code, code + "-new")))
-            .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.code").value("PRODUCT_PROFILE_CODE_IMMUTABLE"));
-
-        mockMvc.perform(get("/api/admin/product-profiles")
-                .param("keyword", code)
-                .header("Authorization", "Bearer " + tokenFor(admin)))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.length()").value(1))
-            .andExpect(jsonPath("$.data[0].planCount").value(0));
-
-        productProfileRepository.delete(profile);
+            .andExpect(jsonPath("$.data.productCode").value(code));
     }
 
     @Test
-    @DisplayName("套餐挂到不存在的产品档案 → PRODUCT_PROFILE_NOT_FOUND")
-    void createProduct_unknownProfile_shouldReject() throws Exception {
-        String sku = "test-product-orphan";
+    @DisplayName("产品码为空 → 参数校验失败")
+    void createProduct_blankProductCode_shouldReject() throws Exception {
+        String sku = "test-product-blank-code";
         createdSkus.add(sku);
         mockMvc.perform(post("/api/admin/products")
                 .header("Authorization", "Bearer " + tokenFor(admin))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(payload(sku).replace("\"ai-tools\"", "\"no-such-profile\"")))
-            .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.code").value("PRODUCT_PROFILE_NOT_FOUND"));
+                .content(payload(sku).replace("\"ai-tools\"", "\"\"")))
+            .andExpect(status().isBadRequest());
     }
 }

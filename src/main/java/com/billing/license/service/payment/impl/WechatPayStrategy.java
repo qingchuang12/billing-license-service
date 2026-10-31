@@ -2,9 +2,11 @@ package com.billing.license.service.payment.impl;
 
 import com.billing.license.config.PaymentHttpClientConfig;
 import com.billing.license.entity.Order;
+import com.billing.license.service.payment.strategy.PaymentCloseResult;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentResponse;
 import com.billing.license.service.payment.strategy.PaymentStatus;
+import com.billing.license.service.payment.strategy.RefundResult;
 import com.billing.license.service.payment.strategy.WebhookPayload;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -57,6 +59,7 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
     private static final ObjectMapper objectMapper = new ObjectMapper();
     private static final String WECHAT_PAY_URL = "https://api.mch.weixin.qq.com/v3/pay/transactions/native";
     private static final String WECHAT_QUERY_URL = "https://api.mch.weixin.qq.com/v3/pay/transactions/out-trade-no/%s";
+    private static final String WECHAT_CLOSE_URL = "https://api.mch.weixin.qq.com/v3/pay/transactions/out-trade-no/%s/close";
     private static final String WECHAT_CERT_URL = "https://api.mch.weixin.qq.com/v3/certificates";
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX");
     /** 回调验签时间戳允许的最大偏移（±5 分钟，防重放），单位毫秒 */
@@ -242,6 +245,11 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
 
     @Override
     public PaymentStatus queryPayment(String paymentId) {
+        return queryPaymentDetail(paymentId).status();
+    }
+
+    @Override
+    public com.billing.license.service.payment.strategy.PaymentQueryResult queryPaymentDetail(String paymentId) {
         logger.info("查询微信支付状态：paymentId={}", paymentId);
 
         try {
@@ -264,23 +272,80 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
 
             if (result.has("trade_state")) {
                 String tradeState = result.get("trade_state").asText();
+                PaymentStatus status;
                 switch (tradeState) {
                     case "SUCCESS":
-                        return PaymentStatus.SUCCESS;
+                        status = PaymentStatus.SUCCESS;
+                        break;
                     case "NOTPAY":
-                        return PaymentStatus.PENDING;
+                        status = PaymentStatus.PENDING;
+                        break;
                     case "CLOSED":
-                        return PaymentStatus.CANCELLED;
+                        status = PaymentStatus.CANCELLED;
+                        break;
                     default:
-                        return PaymentStatus.UNKNOWN;
+                        status = PaymentStatus.UNKNOWN;
                 }
+                BigDecimal amount = null;
+                String currency = null;
+                if (result.has("amount") && result.get("amount").has("total")) {
+                    amount = new BigDecimal(result.get("amount").get("total").asText())
+                        .divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+                    currency = result.get("amount").has("currency")
+                        ? result.get("amount").get("currency").asText() : null;
+                }
+                String responseOutTradeNo = result.has("out_trade_no") ? result.get("out_trade_no").asText() : null;
+                boolean verified = amount != null && currency != null && responseOutTradeNo != null;
+                return new com.billing.license.service.payment.strategy.PaymentQueryResult(
+                    status, amount, currency,
+                    result.has("transaction_id") ? result.get("transaction_id").asText() : null,
+                    responseOutTradeNo, verified);
             }
 
-            return PaymentStatus.UNKNOWN;
+            return com.billing.license.service.payment.strategy.PaymentQueryResult.statusOnly(PaymentStatus.UNKNOWN);
 
         } catch (Exception e) {
             logger.error("查询微信支付状态失败", e);
-            return PaymentStatus.UNKNOWN;
+            return com.billing.license.service.payment.strategy.PaymentQueryResult.statusOnly(PaymentStatus.UNKNOWN);
+        }
+    }
+
+    /**
+     * #50：关闭未付款订单。微信 v3 关单成功返回 204；已支付返回 400 ORDERPAID，
+     * 调用方必须重新查单，不能把「关单被拒」当成「未收款」。
+     */
+    @Override
+    public PaymentCloseResult closeUnpaidPayment(String paymentId) {
+        logger.info("关闭微信支付交易：paymentId={}", paymentId);
+        if (paymentId == null || paymentId.isBlank()) {
+            return PaymentCloseResult.rejected("paymentId 为空");
+        }
+        try {
+            String outTradeNo = paymentId.replaceFirst("wechat_", "");
+            String path = "/v3/pay/transactions/out-trade-no/" + outTradeNo + "/close";
+            Map<String, Object> body = new HashMap<>();
+            body.put("mchid", mchId);
+            String jsonBody = objectMapper.writeValueAsString(body);
+            String auth = buildAuthorization("POST", path, jsonBody);
+
+            HttpRequest request = HttpRequest.newBuilder().timeout(PaymentHttpClientConfig.REQUEST_TIMEOUT)
+                    .uri(URI.create(String.format(WECHAT_CLOSE_URL, outTradeNo)))
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json")
+                    .header("Authorization", auth)
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                    .build();
+
+            HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (httpResponse.statusCode() == 204) {
+                return PaymentCloseResult.closed("微信关单成功");
+            }
+            logger.warn("微信关单未确认：paymentId={}, status={}, body={}",
+                paymentId, httpResponse.statusCode(), httpResponse.body());
+            return PaymentCloseResult.rejected("HTTP " + httpResponse.statusCode() + " " + httpResponse.body());
+        } catch (Exception e) {
+            logger.error("微信关单异常：paymentId={}", paymentId, e);
+            return PaymentCloseResult.unknown(e.getMessage());
         }
     }
 
@@ -522,17 +587,19 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
      * 未配置或调用失败返回 false（绝不谎报成功）；成功受理（返回 refund_id）才返回 true。
      */
     @Override
-    public boolean refundPayment(Order order, String paymentId, java.math.BigDecimal amount) {
+    public RefundResult refund(Order order, String paymentId, java.math.BigDecimal amount,
+                               String refundRequestId) {
         if (!configured) {
             logger.warn("微信支付未配置，无法发起退款：orderNo={}", order.getOrderNo());
-            return false;
+            return RefundResult.rejected("微信支付未配置");
         }
         try {
             long totalFen = order.getAmount().multiply(new BigDecimal("100"))
                     .setScale(0, RoundingMode.HALF_UP).longValue();
             long refundFen = amount.multiply(new BigDecimal("100"))
                     .setScale(0, RoundingMode.HALF_UP).longValue();
-            String outRefundNo = order.getOrderNo() + "_rf" + System.nanoTime();
+            // 稳定的商户退款单号：同一退款意图重试必须复用，微信据此幂等
+            String outRefundNo = refundRequestId;
 
             Map<String, Object> amountMap = new HashMap<>();
             amountMap.put("currency", "CNY");
@@ -558,15 +625,19 @@ public class WechatPayStrategy implements com.billing.license.service.payment.st
             HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode result = objectMapper.readTree(httpResponse.body());
 
-            if (result.has("refund_id")) {
+            if (httpResponse.statusCode() >= 200 && httpResponse.statusCode() < 300 && result.has("refund_id")) {
                 logger.info("微信退款受理成功：orderNo={}, refundId={}", order.getOrderNo(), result.get("refund_id").asText());
-                return true;
+                return RefundResult.success(result.get("refund_id").asText());
             }
-            logger.error("微信退款失败：orderNo={}, body={}", order.getOrderNo(), result.toString());
-            return false;
+            logger.error("微信退款失败：orderNo={}, http={}, body={}",
+                order.getOrderNo(), httpResponse.statusCode(), result.toString());
+            if (httpResponse.statusCode() >= 500) {
+                return RefundResult.unknown("微信退款服务异常：" + httpResponse.statusCode());
+            }
+            return RefundResult.rejected("微信退款被拒绝：" + httpResponse.statusCode());
         } catch (Exception e) {
-            logger.error("微信退款异常：orderNo={}", order.getOrderNo(), e);
-            return false;
+            logger.error("微信退款异常（结果未知）：orderNo={}", order.getOrderNo(), e);
+            return RefundResult.unknown("微信退款异常：" + e.getClass().getSimpleName());
         }
     }
 

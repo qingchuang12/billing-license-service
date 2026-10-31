@@ -71,7 +71,7 @@ public class AccountService {
             rateLimitService.checkAndCount("acct-register-email", email,
                 risk.getRegisterEmailMax(), risk.getRegisterWindowMinutes());
         } catch (RateLimitService.RateLimitExceededException e) {
-            log.warn("注册触发限流：email={}, ip={}", email, clientIp);
+            log.warn("注册触发限流：email={}, ip={}", CustomerIdentityService.maskEmail(email), clientIp);
             throw new BusinessException("REGISTER_LIMIT", "注册操作过于频繁，请稍后再试");
         }
 
@@ -99,7 +99,7 @@ public class AccountService {
             .build();
         user.normalizeEmail();
         User saved = userRepository.save(user);
-        log.info("账号注册成功：userId={}, email={}", saved.getId(), email);
+        log.info("账号注册成功：userId={}, email={}", saved.getId(), CustomerIdentityService.maskEmail(email));
 
         return toAuthResponse(saved);
     }
@@ -135,7 +135,7 @@ public class AccountService {
             User failed = userRepository.findByEmail(email).orElse(null);
             recordLoginFailure(clientIp, risk, failed, locale);
             if (failed == null) {
-                log.info("登录失败：邮箱不存在 email={}", email);
+                log.info("登录失败：邮箱不存在 email={}", CustomerIdentityService.maskEmail(email));
             } else {
                 log.info("登录失败：密码错误 userId={}", failed.getId());
             }
@@ -222,7 +222,7 @@ public class AccountService {
             rateLimitService.checkAndCount("acct-reset-ip", clientIp,
                 risk.getResetIpMax(), risk.getResetWindowMinutes());
         } catch (RateLimitService.RateLimitExceededException e) {
-            log.warn("找回密码触发限流：email={}, ip={}", email, clientIp);
+            log.warn("找回密码触发限流：email={}, ip={}", CustomerIdentityService.maskEmail(email), clientIp);
             throw new BusinessException("RESET_LIMIT", "找回密码操作过于频繁，请稍后再试");
         }
 

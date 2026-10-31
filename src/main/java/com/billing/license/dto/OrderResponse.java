@@ -74,4 +74,16 @@ public class OrderResponse {
      */
     @Schema(description = "可退金额（剩余有效期线性折算；不可退时为 null）", example = "91.20")
     private BigDecimal refundableAmount;
+
+    /**
+     * 待支付订单可续做的收银台会话 id（P16「继续支付」）。
+     * 仅用户端 {@code GET /api/account/orders} 在会话仍处于 CREATED/PENDING 且未过期时回填；
+     * 其余场景为 null。前端据此拼 {@code /checkout/?checkoutId=...} 回到原会话。
+     */
+    @Schema(description = "可继续支付的收银台会话 id（仅未支付且会话未过期时回填）", example = "cs_9f8e7d6c5b4a")
+    private String checkoutId;
+
+    /** 订单首个套餐 SKU（P16 继续支付回填档位用；仅用户端订单列表回填）。 */
+    @Schema(description = "订单套餐 SKU（仅 /api/account/orders 回填，用于继续支付时预选档位）", example = "pro-buyout")
+    private String productSku;
 }

@@ -3,6 +3,8 @@ package com.billing.license.service.payment.impl;
 import com.billing.license.dto.PaymentChannelStatus;
 import com.billing.license.entity.Product;
 import com.billing.license.exception.ChannelDisabledException;
+import com.billing.license.service.payment.PaymentFeature;
+import com.billing.license.service.payment.PaymentSettingsService;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentStrategy;
 import jakarta.annotation.PostConstruct;
@@ -48,8 +50,8 @@ public class PaymentServiceFactory {
 
     private final Map<PaymentMethod, PaymentStrategy> strategies = new ConcurrentHashMap<>();
 
-    /** 生效的启用渠道集合（线程安全，运行期只读） */
-    private final Set<PaymentMethod> enabledChannels = ConcurrentHashMap.newKeySet();
+    /** 生效的启用渠道集合（整体替换，避免刷新瞬间被读到空集合） */
+    private volatile Set<PaymentMethod> enabledChannels = Set.of();
 
     /**
      * 显式启用的渠道（逗号分隔，大小写不敏感）。留空则按关键配置是否齐全自动判定。
@@ -63,6 +65,10 @@ public class PaymentServiceFactory {
 
     /** true=按 payment.enabled-channels 显式启用；false=按配置完备性自动判定 */
     private boolean explicitEnabled = false;
+
+    /** Web 端运行时开关；单元测试手工构造时为 null，按环境变量行为运行。 */
+    @Autowired(required = false)
+    private PaymentSettingsService paymentSettingsService;
 
     @Autowired
     public PaymentServiceFactory(List<PaymentStrategy> strategyList) {
@@ -78,19 +84,43 @@ public class PaymentServiceFactory {
      */
     @PostConstruct
     public void initEnabledChannels() {
+        if (paymentSettingsService != null) {
+            paymentSettingsService.reload();
+        }
+        refreshChannels();
+    }
+
+    /**
+     * 重新计算生效渠道：环境变量/自动判定为基线，Web 端数据库开关按渠道覆盖。
+     * 渠道停用只影响新支付；Webhook/退款走 {@link #getStrategyForExistingPayment} 不受影响。
+     */
+    public synchronized void refreshChannels() {
         Set<PaymentMethod> declared = parseChannels(enabledChannelsConfig);
-        enabledChannels.clear();
+        Set<PaymentMethod> next = EnumSet.noneOf(PaymentMethod.class);
         if (declared.isEmpty()) {
             explicitEnabled = false;
             for (PaymentStrategy strategy : strategies.values()) {
                 if (strategy.isConfigured()) {
-                    enabledChannels.add(strategy.getPaymentMethod());
+                    next.add(strategy.getPaymentMethod());
                 }
             }
         } else {
             explicitEnabled = true;
-            enabledChannels.addAll(declared);
+            next.addAll(declared);
         }
+        if (paymentSettingsService != null) {
+            for (PaymentMethod method : PaymentMethod.values()) {
+                Boolean override = paymentSettingsService.channelOverride(method);
+                if (override != null) {
+                    if (override) {
+                        next.add(method);
+                    } else {
+                        next.remove(method);
+                    }
+                }
+            }
+        }
+        enabledChannels = Set.copyOf(next);
         logChannelReport();
     }
 
@@ -194,9 +224,22 @@ public class PaymentServiceFactory {
         }
     }
 
-    /** 该渠道当前是否启用 */
+    /** 该渠道当前是否启用（仅用于新建支付） */
     public boolean isEnabled(PaymentMethod paymentMethod) {
         return paymentMethod != null && enabledChannels.contains(paymentMethod);
+    }
+
+    /**
+     * 已支付订单的 Webhook/退款取策略：不检查「新建支付是否启用」，
+     * 否则运营在 Web 端停渠道后，存量订单回调会全部 500、退款也无法发起。
+     * 仍要求策略存在（渠道代码已注册）。
+     */
+    public PaymentStrategy getStrategyForExistingPayment(PaymentMethod paymentMethod) {
+        PaymentStrategy strategy = strategies.get(paymentMethod);
+        if (strategy == null) {
+            throw new IllegalArgumentException("不支持的支付方式：" + paymentMethod);
+        }
+        return strategy;
     }
 
     /**
@@ -212,14 +255,14 @@ public class PaymentServiceFactory {
      * 获取已启用的国内支付方式
      */
     public List<PaymentMethod> getDomesticMethods() {
-        return getEnabledMethods(true, null);
+        return getEnabledMethods(true, (com.billing.license.entity.ChargeMode) null);
     }
 
     /**
      * 获取已启用的国际支付方式
      */
     public List<PaymentMethod> getInternationalMethods() {
-        return getEnabledMethods(false, null);
+        return getEnabledMethods(false, (com.billing.license.entity.ChargeMode) null);
     }
 
     /**
@@ -229,18 +272,48 @@ public class PaymentServiceFactory {
      * <p>顺序按枚举声明固定，避免渠道集合的哈希序导致收银台展示顺序漂移。
      */
     public List<PaymentMethod> getEnabledMethods(boolean domestic, Product.BillingCycle cycle) {
+        return getEnabledMethods(domestic,
+            cycle == null ? null : (cycle.isRecurring()
+                ? com.billing.license.entity.ChargeMode.AUTO_RECURRING
+                : com.billing.license.entity.ChargeMode.ONE_TIME));
+    }
+
+    /** 按区域 + 收款方式过滤可售渠道（#57）。 */
+    public List<PaymentMethod> getEnabledMethods(boolean domestic,
+                                                 com.billing.license.entity.ChargeMode chargeMode) {
         return Arrays.stream(PaymentMethod.values())
             .filter(domestic ? PaymentMethod::isDomestic : PaymentMethod::isInternational)
             .filter(this::isEnabled)
-            .filter(method -> cycle == null || method.supports(cycle))
+            .filter(method -> chargeMode == null || method.supportsChargeMode(chargeMode))
+            .filter(method -> featureAllows(method, chargeMode))
             .toList();
     }
 
-    /** 全部区域中支持该周期的已启用渠道（供公开目录展示「可售渠道」）。 */
+    /** 功能开关与渠道能力的交叉过滤（当前用于 Creem 订阅开关）。 */
+    private boolean featureAllows(PaymentMethod method, com.billing.license.entity.ChargeMode chargeMode) {
+        if (paymentSettingsService == null) {
+            return true;
+        }
+        if (method == PaymentMethod.CREEM
+                && chargeMode == com.billing.license.entity.ChargeMode.AUTO_RECURRING
+                && !paymentSettingsService.isFeatureEnabled(PaymentFeature.CREEM_SUBSCRIPTION)) {
+            return false;
+        }
+        return true;
+    }
+
+    /** 全部区域中支持该周期的已启用渠道（供公开目录展示「可售渠道」，旧口径）。 */
     public List<PaymentMethod> getEnabledMethods(Product.BillingCycle cycle) {
+        return getEnabledMethods(cycle == null ? null : (cycle.isRecurring()
+            ? com.billing.license.entity.ChargeMode.AUTO_RECURRING
+            : com.billing.license.entity.ChargeMode.ONE_TIME));
+    }
+
+    /** 全部区域中支持该收款方式的已启用渠道。 */
+    public List<PaymentMethod> getEnabledMethods(com.billing.license.entity.ChargeMode chargeMode) {
         return Arrays.stream(PaymentMethod.values())
             .filter(this::isEnabled)
-            .filter(method -> cycle == null || method.supports(cycle))
+            .filter(method -> chargeMode == null || method.supportsChargeMode(chargeMode))
             .toList();
     }
 

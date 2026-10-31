@@ -28,5 +28,13 @@ public class WebMvcConfig implements WebMvcConfigurer {
         // 与 /checkout、/account 一并 forward（启动日志打印的是 /admin/ 目录形式）。
         registry.addViewController("/admin").setViewName("forward:/admin/index.html");
         registry.addViewController("/admin/").setViewName("forward:/admin/index.html");
+        // 支付结果页（plan-8.1 / #12）：Stripe / Creem 的默认 success-url、cancel-url 都指向
+        // /payment/success 与 /payment/cancel，而这两个路径此前既无静态资源也无控制器，
+        // 未传 returnUrl 的接入方（服务端直连建单）付款后被安全链拦成 401 JSON。
+        // 落地为匿名只读结果页：只回显回跳自带的订单标识，不取任何账户数据。
+        registry.addViewController("/payment/success").setViewName("forward:/payment/success.html");
+        registry.addViewController("/payment/cancel").setViewName("forward:/payment/cancel.html");
+        // /payment/ 目录本身不设索引：该前缀只有这两条合法入口（均由渠道回跳产生），
+        // 虚构一个 index.html 只会多一个不知道该显示「成功」还是「取消」的页面。
     }
 }

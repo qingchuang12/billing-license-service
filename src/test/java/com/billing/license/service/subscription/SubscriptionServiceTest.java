@@ -42,6 +42,7 @@ class SubscriptionServiceTest {
     private RedeemCodeService redeemCodeService;
     private List<PaymentStrategy> paymentStrategies;
     private TransactionOperations transactionOperations;
+    private SubscriptionNotificationService notificationService;
     private SubscriptionService service;
 
     private final UUID orderId = UUID.randomUUID();
@@ -63,6 +64,7 @@ class SubscriptionServiceTest {
         paymentStrategies = new java.util.ArrayList<>();
         // 编程式事务桩：直接同步执行事务体（等价无事务，验证的是仓库调用与状态流转）
         transactionOperations = mock(TransactionOperations.class);
+        notificationService = mock(SubscriptionNotificationService.class);
         doAnswer(inv -> {
             Consumer<TransactionStatus> action = inv.getArgument(0);
             action.accept(null);
@@ -70,7 +72,7 @@ class SubscriptionServiceTest {
         }).when(transactionOperations).executeWithoutResult(any());
         service = new SubscriptionService(subscriptionRepository, orderRepository,
             licenseRepository, productRepository, licenseService, redeemCodeService,
-            paymentStrategies, transactionOperations);
+            paymentStrategies, transactionOperations, notificationService);
     }
 
     private Product buildProduct(int durationDays) {
@@ -208,6 +210,8 @@ class SubscriptionServiceTest {
         ArgumentCaptor<Subscription> subCaptor = ArgumentCaptor.forClass(Subscription.class);
         verify(subscriptionRepository).save(subCaptor.capture());
         assertEquals(Subscription.SubscriptionStatus.CANCELED, subCaptor.getValue().getStatus());
+        verify(notificationService).notifyStatus(eq(orderId), eq("订阅已取消"),
+            eq("Subscription canceled"), anyString(), eq(false));
     }
 
     @Test
@@ -272,6 +276,29 @@ class SubscriptionServiceTest {
     }
 
     @Test
+    void paidEvent_afterExpiry_shouldReviveAndExtend() {
+        Subscription existing = Subscription.builder().id(UUID.randomUUID()).orderId(orderId)
+            .customerId(customerId).provider(PaymentMethod.PADDLE)
+            .providerSubscriptionId(subId).status(Subscription.SubscriptionStatus.EXPIRED)
+            .licenseId(licenseId).build();
+        when(subscriptionRepository.findByProviderAndProviderSubscriptionId(PaymentMethod.PADDLE, subId))
+            .thenReturn(Optional.of(existing));
+        License license = buildLicense(-1);
+        license.setStatus(License.LicenseStatus.EXPIRED);
+        when(licenseRepository.findById(licenseId)).thenReturn(Optional.of(license));
+        WebhookPayload p = buildPayload(PaymentStatus.SUCCESS.name(), "transaction.billed");
+        p.setCurrentPeriodEnd(LocalDateTime.now().plusDays(30));
+
+        service.processSubscriptionEvent(p, PaymentMethod.PADDLE);
+
+        // 已过期后渠道又确认扣款成功：必须恢复订阅并延长权益，不能收钱不发货
+        assertEquals(Subscription.SubscriptionStatus.ACTIVE, existing.getStatus());
+        assertEquals(License.LicenseStatus.ACTIVE, license.getStatus());
+        assertTrue(license.getExpiresAt().isAfter(LocalDateTime.now().plusDays(29)));
+        verify(licenseRepository).save(license);
+    }
+
+    @Test
     void lateSuccessEvent_afterCancellation_shouldNotResurrectSubscription() {
         Subscription existing = Subscription.builder().id(UUID.randomUUID()).orderId(orderId)
             .customerId(customerId).provider(PaymentMethod.PADDLE)
@@ -329,6 +356,8 @@ class SubscriptionServiceTest {
         WebhookPayload p = buildPayload(PaymentStatus.SUCCESS.name(), "transaction.billed");
         p.setOrderId(null);
 
+        // 渠道反查已前置到事务外：先补全订单号，再处理事件
+        assertTrue(service.enrichFromProvider(p, PaymentMethod.PADDLE));
         service.processSubscriptionEvent(p, PaymentMethod.PADDLE);
 
         ArgumentCaptor<Subscription> captor = ArgumentCaptor.forClass(Subscription.class);
@@ -350,6 +379,8 @@ class SubscriptionServiceTest {
         WebhookPayload p = buildPayload(PaymentStatus.SUCCESS.name(), "transaction.billed");
         p.setOrderId(null);
 
+        // 反查失败返回 false，由控制器转 503 让渠道重投；不得落订阅记录
+        assertFalse(service.enrichFromProvider(p, PaymentMethod.PADDLE));
         service.processSubscriptionEvent(p, PaymentMethod.PADDLE);
 
         verify(paddle).lookupSubscription(subId);
@@ -369,6 +400,7 @@ class SubscriptionServiceTest {
         WebhookPayload p = buildPayload(PaymentStatus.SUCCESS.name(), "invoice.paid");
         p.setOrderId(null);
 
+        assertFalse(service.enrichFromProvider(p, PaymentMethod.STRIPE));
         service.processSubscriptionEvent(p, PaymentMethod.STRIPE);
 
         verify(paddle, never()).lookupSubscription(any());

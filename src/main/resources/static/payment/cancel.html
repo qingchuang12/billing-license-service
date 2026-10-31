@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="robots" content="noindex, nofollow">
+<title>支付已取消 · 晏宁科技</title>
+<link rel="stylesheet" href="/payment/result.css?v=1">
+</head>
+<body>
+<main class="result">
+  <section class="result__card" aria-labelledby="resultTitle">
+    <div class="result__mark result__mark--cancel" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 8v5"></path>
+        <path d="M12 16.5h.01"></path>
+        <circle cx="12" cy="12" r="9"></circle>
+      </svg>
+    </div>
+
+    <h1 class="result__title" id="resultTitle">支付已取消</h1>
+    <p class="result__subtitle">Payment cancelled</p>
+
+    <p class="result__text">
+      本次结算未完成，订单不会扣款。如仍需购买，可返回下单的应用重新发起，或回到收银台重新结算。
+    </p>
+
+    <div class="result__meta" id="meta" hidden>
+      <div class="result__meta-row">
+        <span class="result__meta-label">订单号</span>
+        <span class="result__meta-value" id="orderNo">—</span>
+      </div>
+    </div>
+
+    <div class="result__actions">
+      <a class="btn btn--primary" href="/checkout/">返回收银台</a>
+      <a class="btn btn--ghost" href="/account/">查看我的授权</a>
+    </div>
+
+    <p class="result__foot">
+      本页仅用于支付结果提示，不展示任何账户或支付隐私信息。
+    </p>
+  </section>
+</main>
+<script src="/payment/result.js?v=1"></script>
+</body>
+</html>

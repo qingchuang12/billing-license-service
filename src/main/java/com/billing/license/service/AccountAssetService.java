@@ -37,6 +37,7 @@ public class AccountAssetService {
     private final LicenseRepository licenseRepository;
     private final SubscriptionRepository subscriptionRepository;
     private final OrderRepository orderRepository;
+    private final CheckoutSessionRepository checkoutSessionRepository;
     private final ProductRepository productRepository;
     private final UserRepository userRepository;
     private final OrderService orderService;
@@ -156,6 +157,13 @@ public class AccountAssetService {
 
         LocalDateTime now = LocalDateTime.now();
         BigDecimal minAmount = billingProperties.getRefund().getMinAmount();
+        Map<String, CheckoutSession> resumable = resumableSessions(orders, now);
+        Map<UUID, String> skuByOrder = orderRepository
+            .findProductSkuByOrderIds(orders.stream().map(Order::getId).toList()).stream()
+            .collect(Collectors.toMap(
+                row -> (UUID) row[0],
+                row -> (String) row[1],
+                (left, right) -> left));
         return orders.stream()
             .map(order -> {
                 OrderResponse response = orderService.mapToResponse(order);
@@ -163,9 +171,41 @@ public class AccountAssetService {
                     order, licensesByOrder.getOrDefault(order.getId(), List.of()), now, minAmount);
                 response.setRefundable(quote.isPresent());
                 quote.ifPresent(q -> response.setRefundableAmount(q.amount()));
+                response.setProductSku(skuByOrder.get(order.getId()));
+                CheckoutSession session = resumable.get(order.getOrderNumber());
+                if (session != null) {
+                    response.setCheckoutId(session.getCheckoutId());
+                }
                 return response;
             })
             .toList();
+    }
+
+    /**
+     * 待支付订单的「继续支付」会话（P16）：只放开仍在有效期内且未进入终态的收银台会话。
+     * 已过期会话即使渠道尚未确认也不再展示，避免把用户导回一个必然失败的面板。
+     */
+    private Map<String, CheckoutSession> resumableSessions(List<Order> orders, LocalDateTime now) {
+        List<String> unpaid = orders.stream()
+            .filter(order -> order.getPaymentStatus() == Order.PaymentStatus.UNPAID)
+            .map(Order::getOrderNumber)
+            .toList();
+        if (unpaid.isEmpty()) {
+            return Map.of();
+        }
+        return checkoutSessionRepository.findByOrderNumberIn(unpaid).stream()
+            .filter(session -> session.getStatus() == CheckoutSession.Status.CREATED
+                || session.getStatus() == CheckoutSession.Status.PENDING)
+            .filter(session -> session.getExpiresAt() == null || session.getExpiresAt().isAfter(now))
+            .collect(Collectors.toMap(CheckoutSession::getOrderNumber, Function.identity(),
+                (left, right) -> {
+                    LocalDateTime leftAt = left.getCreatedAt();
+                    LocalDateTime rightAt = right.getCreatedAt();
+                    if (leftAt == null || rightAt == null) {
+                        return leftAt != null ? left : right;
+                    }
+                    return leftAt.isAfter(rightAt) ? left : right;
+                }));
     }
 
     private static SubscriptionView toView(Subscription subscription, Product product) {

@@ -133,6 +133,47 @@ public class AdminController {
         return ResponseEntity.ok(adminService.refundOrder(orderNumber, reason));
     }
 
+    @Operation(summary = "人工退款队列",
+            description = "列出 Creem 待审核退款与待转账确认的部分退款。")
+    @Audit(action = "VIEW_MANUAL_REFUNDS")
+    @GetMapping("/refunds/manual")
+    public ResponseEntity<List<com.billing.license.dto.accounting.ManualRefundView>> manualRefunds() {
+        return ResponseEntity.ok(adminService.listManualRefunds());
+    }
+
+    @Operation(summary = "审核退款",
+            description = "Creem 全额：审批后自动调用 Creem 退款 API；Creem 部分：审批后进入转账待确认。")
+    @Audit(action = "APPROVE_REFUND", target = "#id")
+    @PostMapping("/refunds/{id}/approve")
+    public ResponseEntity<com.billing.license.dto.accounting.ManualRefundView> approveRefund(
+            @PathVariable UUID id,
+            @RequestBody(required = false) RefundReviewRequest request) {
+        String note = request != null ? request.getNote() : null;
+        return ResponseEntity.ok(adminService.approveRefund(id, CurrentUserResolver.currentUserId(), note));
+    }
+
+    @Operation(summary = "拒绝退款", description = "仅标记拒绝，不退款、不变更权益。")
+    @Audit(action = "REJECT_REFUND", target = "#id")
+    @PostMapping("/refunds/{id}/reject")
+    public ResponseEntity<com.billing.license.dto.accounting.ManualRefundView> rejectRefund(
+            @PathVariable UUID id,
+            @RequestBody(required = false) RefundReviewRequest request) {
+        String note = request != null ? request.getNote() : null;
+        return ResponseEntity.ok(adminService.rejectRefund(id, CurrentUserResolver.currentUserId(), note));
+    }
+
+    @Operation(summary = "确认部分退款转账",
+            description = "Creem 部分退款：运营完成线下/网银转账后登记转账流水，系统结算权益与账本。")
+    @Audit(action = "CONFIRM_REFUND_TRANSFER", target = "#id")
+    @PostMapping("/refunds/{id}/confirm-transfer")
+    public ResponseEntity<OrderResponse> confirmRefundTransfer(
+            @PathVariable UUID id,
+            @RequestBody RefundTransferRequest request) {
+        return ResponseEntity.ok(adminService.confirmManualTransfer(id,
+            request.getTransferChannel(), request.getTransferReference(),
+            CurrentUserResolver.currentUserId(), request.getNote()));
+    }
+
     /**
      * I4：为已支付订单签发 License（管理端）。
      *

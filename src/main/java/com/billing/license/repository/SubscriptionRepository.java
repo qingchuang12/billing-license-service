@@ -16,8 +16,13 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, UUID
 
     Optional<Subscription> findByLicenseId(UUID licenseId);
 
+    List<Subscription> findByOrderId(UUID orderId);
+
     List<Subscription> findByCustomerId(UUID customerId);
 
     // 用户自助查询：本人名下订阅，创建时间倒序（最新的在前）
     List<Subscription> findByCustomerIdOrderByCreatedAtDesc(UUID customerId);
+
+    /** 首充时 License 尚未签发（履约异步）导致 license_id 为空，后台任务补绑。 */
+    List<Subscription> findTop100ByLicenseIdIsNull();
 }

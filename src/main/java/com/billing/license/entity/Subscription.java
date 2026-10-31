@@ -23,7 +23,9 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@Table(name = "subscriptions")
+@Table(name = "subscriptions",
+    uniqueConstraints = @UniqueConstraint(name = "uq_subscriptions_provider_sub",
+        columnNames = {"provider", "provider_subscription_id"}))
 public class Subscription {
 
     @Id
@@ -43,7 +45,7 @@ public class Subscription {
     @Column(nullable = false)
     private PaymentMethod provider; // PADDLE / STRIPE
 
-    @Column(name = "provider_subscription_id", nullable = false, unique = true)
+    @Column(name = "provider_subscription_id", nullable = false)
     private String providerSubscriptionId;
 
     @Enumerated(EnumType.STRING)

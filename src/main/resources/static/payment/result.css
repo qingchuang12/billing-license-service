@@ -1,0 +1,188 @@
+/* ==========================================================================
+   支付结果页（/payment/success · /payment/cancel）专用样式
+   自包含：沿用收银台同源设计令牌（品牌灰蓝 #4C5B61 / 8px 栅格 / 半径 6·8·12·16）。
+   本页只做结果提示，不展示任何账户数据，故仅需单列卡片排版。
+   响应式断点：768 / 480
+   ========================================================================== */
+
+:root {
+  --brand-50:  #F4F7F8;
+  --brand-100: #E6EDEF;
+  --brand-200: #CBD8DC;
+  --brand-500: #647880;
+  --brand-700: #4C5B61;
+  --brand-800: #3A474D;
+
+  --ink-1: #111A1D;
+  --ink-2: #3D4A4F;
+  --ink-3: #5F6D72;
+  --line: #E4E9EB;
+  --bg: #FFFFFF;
+  --bg-soft: #F7F9FA;
+
+  --success: #3E9C7A;
+  --success-bg: #EDF6F2;
+  --warning: #C9943A;
+  --warning-bg: #FBF4E8;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+               "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --shadow: 0 4px 12px rgba(17, 26, 29, .06);
+  --shadow-md: 0 10px 28px rgba(17, 26, 29, .09);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg-soft);
+  color: var(--ink-1);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+.result {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 20px;
+}
+
+.result__card {
+  width: 100%;
+  max-width: 520px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  padding: 40px 36px 32px;
+  text-align: center;
+}
+
+.result__mark {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.result__mark--success { background: var(--success-bg); color: var(--success); }
+.result__mark--cancel  { background: var(--warning-bg); color: var(--warning); }
+
+.result__mark svg { width: 26px; height: 26px; display: block; }
+
+.result__title {
+  margin: 0 0 8px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+
+.result__subtitle {
+  margin: 0 0 18px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-3);
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+
+.result__text {
+  margin: 0 auto 24px;
+  max-width: 400px;
+  color: var(--ink-2);
+}
+
+.result__meta {
+  margin: 0 0 24px;
+  padding: 14px 16px;
+  background: var(--brand-50);
+  border-radius: var(--radius);
+  text-align: left;
+}
+
+.result__meta[hidden] { display: none; }
+
+.result__meta-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.result__meta-row + .result__meta-row { margin-top: 8px; }
+
+.result__meta-row dt,
+.result__meta-label { margin: 0; }
+
+.result__meta-row dd,
+.result__meta-value {
+  margin: 0;
+  color: var(--ink-1);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  word-break: break-all;
+  text-align: right;
+}
+
+.result__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.btn--primary { background: var(--brand-700); color: #fff; }
+.btn--primary:hover { background: var(--brand-800); }
+
+.btn--ghost {
+  background: var(--bg);
+  border-color: var(--line);
+  color: var(--ink-2);
+}
+.btn--ghost:hover { border-color: var(--brand-200); background: var(--brand-50); }
+
+.result__foot {
+  margin: 26px 0 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+@media (max-width: 480px) {
+  .result { padding: 28px 14px; }
+  .result__card { padding: 30px 22px 24px; border-radius: var(--radius-lg); }
+  .result__title { font-size: 19px; }
+  .btn { width: 100%; }
+}

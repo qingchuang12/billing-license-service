@@ -70,9 +70,10 @@ public final class RefundPolicy {
         if (licenses == null || licenses.isEmpty()) {
             return Optional.empty();
         }
-        // 全部 License 均已被吊销 → 无可退权益（如已因违规被作废，不应再退款）
+        // 只按仍然生效的证计算：REISSUED/REVOKED 是终态历史件，混进来会拿旧 issuedAt + 新 expiresAt
+        // 把可退时长算大（换机重发即可抬高退款额）。
         boolean hasLiveLicense = licenses.stream()
-            .anyMatch(l -> l != null && l.getStatus() != License.LicenseStatus.REVOKED);
+            .anyMatch(l -> l != null && l.getStatus() == License.LicenseStatus.ACTIVE);
         if (!hasLiveLicense) {
             return Optional.empty();
         }
@@ -80,7 +81,7 @@ public final class RefundPolicy {
         LocalDateTime issuedAt = null;
         LocalDateTime expiresAt = null;
         for (License license : licenses) {
-            if (license == null) {
+            if (license == null || license.getStatus() != License.LicenseStatus.ACTIVE) {
                 continue;
             }
             LocalDateTime issued = license.getIssuedAt();
@@ -128,7 +129,8 @@ public final class RefundPolicy {
         }
         return order.getOrderItems().stream()
             .filter(item -> item != null && item.getProduct() != null)
-            .anyMatch(item -> item.getProduct().getBillingCycle() != null
-                && item.getProduct().getBillingCycle().isRecurring());
+            .anyMatch(item -> item.getProduct().getChargeMode() == com.billing.license.entity.ChargeMode.AUTO_RECURRING
+                || (item.getProduct().getBillingCycle() != null
+                    && item.getProduct().getBillingCycle().isRecurring()));
     }
 }

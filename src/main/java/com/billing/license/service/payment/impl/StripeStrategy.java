@@ -95,17 +95,56 @@ public class StripeStrategy implements PaymentStrategy {
 
     @Override
     public PaymentStatus queryPayment(String paymentId) {
+        return queryPaymentDetail(paymentId).status();
+    }
+
+    @Override
+    public PaymentQueryResult queryPaymentDetail(String paymentId) {
         logger.info("查询 Stripe 支付状态：paymentId={}", paymentId);
         try {
             initStripe();
             Session session = Session.retrieve(paymentId);
-            if ("complete".equals(session.getStatus()) && "paid".equals(session.getPaymentStatus())) {
-                return PaymentStatus.SUCCESS;
-            }
-            return PaymentStatus.PENDING;
+            PaymentStatus status = ("complete".equals(session.getStatus()) && "paid".equals(session.getPaymentStatus()))
+                ? PaymentStatus.SUCCESS : PaymentStatus.PENDING;
+            BigDecimal amount = session.getAmountTotal() != null
+                ? BigDecimal.valueOf(session.getAmountTotal()).movePointLeft(2) : null;
+            String currency = session.getCurrency() != null ? session.getCurrency().toUpperCase() : null;
+            String orderRef = session.getMetadata() != null ? session.getMetadata().get("order_id") : null;
+            boolean verified = amount != null && currency != null && orderRef != null;
+            return new PaymentQueryResult(status, amount, currency, session.getPaymentIntent(), orderRef, verified);
         } catch (Exception e) {
             logger.error("Stripe 查询失败", e);
-            return PaymentStatus.UNKNOWN;
+            return PaymentQueryResult.statusOnly(PaymentStatus.UNKNOWN);
+        }
+    }
+
+    /**
+     * #50：关闭未付款 Checkout Session。Stripe 只允许 open 状态过期；
+     * complete 表示用户已完成支付，必须交由调用方重新查单，不能当作未收款。
+     */
+    @Override
+    public PaymentCloseResult closeUnpaidPayment(String paymentId) {
+        logger.info("关闭 Stripe Checkout Session：paymentId={}", paymentId);
+        if (paymentId == null || paymentId.isBlank()) {
+            return PaymentCloseResult.rejected("paymentId 为空");
+        }
+        try {
+            initStripe();
+            Session session = Session.retrieve(paymentId);
+            if ("expired".equals(session.getStatus())) {
+                return PaymentCloseResult.closed("Stripe 会话已过期");
+            }
+            if (!"open".equals(session.getStatus())) {
+                return PaymentCloseResult.rejected("Stripe 会话状态：" + session.getStatus()
+                    + "，payment_status=" + session.getPaymentStatus());
+            }
+            Session expired = session.expire();
+            return "expired".equals(expired.getStatus())
+                ? PaymentCloseResult.closed("Stripe 会话已关闭")
+                : PaymentCloseResult.unknown("Stripe 关单后状态：" + expired.getStatus());
+        } catch (Exception e) {
+            logger.error("Stripe 关单失败：paymentId={}", paymentId, e);
+            return PaymentCloseResult.unknown(e.getMessage());
         }
     }
 
@@ -359,10 +398,11 @@ public class StripeStrategy implements PaymentStrategy {
      * 未配置或失败返回 false（绝不谎报成功）；渠道标记 succeeded 才返回 true。
      */
     @Override
-    public boolean refundPayment(Order order, String paymentId, java.math.BigDecimal amount) {
+    public RefundResult refund(Order order, String paymentId, java.math.BigDecimal amount,
+                               String refundRequestId) {
         if (apiKey == null || apiKey.isEmpty()) {
             logger.warn("Stripe 未配置，无法发起退款：orderNo={}", order.getOrderNo());
-            return false;
+            return RefundResult.rejected("Stripe 未配置");
         }
         try {
             initStripe();
@@ -374,7 +414,7 @@ public class StripeStrategy implements PaymentStrategy {
             }
             if (paymentIntentId == null || paymentIntentId.isEmpty()) {
                 logger.error("Stripe 无法解析 PaymentIntent：sessionId={}", paymentId);
-                return false;
+                return RefundResult.rejected("无法解析 Stripe PaymentIntent");
             }
             long unitAmount = amount.multiply(new BigDecimal("100"))
                     .setScale(0, RoundingMode.HALF_UP).longValue();
@@ -382,17 +422,24 @@ public class StripeStrategy implements PaymentStrategy {
                     .setPaymentIntent(paymentIntentId)
                     .setAmount(unitAmount)
                     .build();
-            Refund refund = Refund.create(params);
+            com.stripe.net.RequestOptions options = com.stripe.net.RequestOptions.builder()
+                    .setIdempotencyKey(refundRequestId)
+                    .build();
+            Refund refund = Refund.create(params, options);
             if (refund != null && "succeeded".equals(refund.getStatus())) {
                 logger.info("Stripe 退款成功：orderNo={}, refundId={}", order.getOrderNo(), refund.getId());
-                return true;
+                return RefundResult.success(refund.getId());
             }
-            logger.error("Stripe 退款未成功：orderNo={}, status={}",
-                    order.getOrderNo(), refund != null ? refund.getStatus() : "null");
-            return false;
+            String status = refund != null ? refund.getStatus() : null;
+            logger.error("Stripe 退款未成功：orderNo={}, status={}", order.getOrderNo(), status);
+            // failed/canceled 为明确失败；pending/requires_action 仍需等待，按未知处理
+            if ("failed".equals(status) || "canceled".equals(status)) {
+                return RefundResult.rejected("Stripe 退款失败：" + status);
+            }
+            return RefundResult.unknown("Stripe 退款状态待确认：" + status);
         } catch (Exception e) {
-            logger.error("Stripe 退款异常：orderNo={}", order.getOrderNo(), e);
-            return false;
+            logger.error("Stripe 退款异常（结果未知）：orderNo={}", order.getOrderNo(), e);
+            return RefundResult.unknown("Stripe 退款异常：" + e.getClass().getSimpleName());
         }
     }
 

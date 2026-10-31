@@ -170,11 +170,28 @@ class PaymentServiceFactoryTest {
                 .filter(s -> "ALIPAY".equals(s.method())).findFirst().orElseThrow();
         assertFalse(alipay.supportsRecurring());
         assertEquals(List.of("ONE_TIME", "LIFETIME"), alipay.supportedBillingCycles());
-        assertEquals(List.of("QRCODE", "REDIRECT"), alipay.paymentProducts());
+        assertEquals(List.of("QRCODE", "REDIRECT", "WAP"), alipay.paymentProducts());
 
         PaymentChannelStatus stripe = f.getChannelStatuses().stream()
                 .filter(s -> "STRIPE".equals(s.method())).findFirst().orElseThrow();
         assertTrue(stripe.supportsRecurring());
         assertEquals(List.of("REDIRECT"), stripe.paymentProducts());
+    }
+
+    @Test
+    void webOverride_canDisableChannel_andExistingPaymentStillResolves() {
+        PaymentStrategy alipay = strategy(PaymentMethod.ALIPAY, true, NONE);
+        PaymentServiceFactory f = factory("alipay", alipay);
+
+        com.billing.license.service.payment.PaymentSettingsService settings =
+            mock(com.billing.license.service.payment.PaymentSettingsService.class);
+        when(settings.channelOverride(PaymentMethod.ALIPAY)).thenReturn(false);
+        ReflectionTestUtils.setField(f, "paymentSettingsService", settings);
+        f.refreshChannels();
+
+        assertFalse(f.isEnabled(PaymentMethod.ALIPAY), "Web 端停用后不再接新单");
+        assertSame(alipay, f.getStrategyForExistingPayment(PaymentMethod.ALIPAY),
+            "存量订单的 Webhook/退款仍可解析策略");
+        assertThrows(ChannelDisabledException.class, () -> f.getStrategy(PaymentMethod.ALIPAY));
     }
 }

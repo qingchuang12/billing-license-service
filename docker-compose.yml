@@ -13,6 +13,10 @@ services:
     environment:
       # 生产可显式指定 SPRING_PROFILES_ACTIVE=prod（关闭 Swagger 等，见 application-prod.yml）
       - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE:-docker}
+      # 堆 512m：容器总额 1g，余下约 512m 留给元空间、线程栈、直接内存与 code cache。
+      # ⚠ 调 mem_limit 必须同时复核这一行，否则要么 OOM-kill、要么白留一半内存。
+      # ⚠ JVM 不接受 -Xmx0.5g（实测被截成 -Xmx0 直接拒启），必须写整数值。
+      - JAVA_OPTS=-Xmx512m
       # 数据源：指向同网络内的 postgres 服务（非 127.0.0.1），库名与 POSTGRES_DB 一致
       - DB_URL=jdbc:postgresql://postgres:5432/billing_db
       - DB_USERNAME=${DB_USERNAME:-postgres}
@@ -33,12 +37,12 @@ services:
     networks:
       - billing-network
     healthcheck:
-      # i11/W22：eclipse-temurin:21-jre 不含 wget；已通过 Dockerfile 安装 curl 作为探针
+      # i11/W22：eclipse-temurin:25-jre 不含 wget；已通过 Dockerfile 安装 curl 作为探针
       test: ["CMD", "curl", "-f", "http://localhost:8000/actuator/health"]
       interval: 30s
       timeout: 5s
       retries: 3
-    mem_limit: 512m
+    mem_limit: 1g
     cpus: "1.0"
 
   postgres:

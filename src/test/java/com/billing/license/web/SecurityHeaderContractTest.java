@@ -22,6 +22,7 @@ import java.util.regex.Pattern;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -97,6 +98,23 @@ class SecurityHeaderContractTest {
             "script-src 未把内联脚本哈希列入白名单");
         assertTrue(!csp.contains("'unsafe-inline'"), "不得用 'unsafe-inline' 放行脚本（会架空 CSP）");
         assertTrue(!csp.contains("'unsafe-eval'"), "不得用 'unsafe-eval'");
+    }
+
+    @Test
+    @DisplayName("支付结果页匿名可达：渠道默认回跳地址不得被安全链拦成 401")
+    void paymentResultPagesArePubliclyReachable() throws Exception {
+        // plan-8.1 / #12：Stripe 与 Creem 的默认 success-url / cancel-url 指向这两条路径。
+        // 未传 returnUrl 的接入方（服务端直连建单）付款后是匿名态，若不放行只会看到 401 JSON。
+        // MockMvc 不渲染 forward 后的静态资源，故断言「放行 200 + 转发目标正确」两件事；
+        // 页面实际内容由浏览器实测覆盖（见 plan-8.1 验证记录）。
+        mockMvc.perform(get("/payment/success"))
+            .andExpect(status().isOk())
+            .andExpect(forwardedUrl("/payment/success.html"))
+            .andExpect(header().string("X-Frame-Options", "DENY"));
+        mockMvc.perform(get("/payment/cancel"))
+            .andExpect(status().isOk())
+            .andExpect(forwardedUrl("/payment/cancel.html"))
+            .andExpect(header().string("X-Frame-Options", "DENY"));
     }
 
     @Test

@@ -25,6 +25,15 @@ public interface RedeemCodeRepository extends JpaRepository<RedeemCode, UUID> {
     List<RedeemCode> findByOrderId(String orderId);
 
     /**
+     * 退款撤码专用：对订单下全部兑换码加悲观写锁，与 {@link #findByCode} 的核销锁落在同一批行上，
+     * 使「退款置 REVOKED」与「核销置 USED」串行——否则两边都先读到 UNUSED，退款撤的码会被核销覆盖。
+     * 读路径（轮询/列表）继续用无锁的 {@link #findByOrderId}，不要换成这个。
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT r FROM RedeemCode r WHERE r.orderId = :orderId")
+    List<RedeemCode> findByOrderIdForUpdate(@Param("orderId") String orderId);
+
+    /**
      * I6：按产品 SKU + 状态检索兑换码（参数传 null 表示该维度不过滤），供管理端导出与对账。
      */
     @Query("SELECT r FROM RedeemCode r WHERE (:sku IS NULL OR r.product.sku = :sku) "

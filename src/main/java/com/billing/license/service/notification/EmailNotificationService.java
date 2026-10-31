@@ -229,6 +229,86 @@ public class EmailNotificationService {
     }
 
     /**
+     * 退款进度通知（待审核 / 已审核待转账 / 被拒绝等），与「退款已处理」区分。
+     */
+    @Async
+    public void sendRefundStatusEmail(String to, String orderNo, String statusZh, String statusEn,
+                                      String detail, String locale) {
+        logger.info("发送退款进度通知：to={}, orderNo={}", to, orderNo);
+        if (!isEmailConfigured()) {
+            return;
+        }
+        try {
+            boolean en = preferEn(locale);
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(fromAddress != null ? fromAddress : "noreply@billing.com");
+            helper.setTo(to);
+            helper.setSubject(pick(en, "退款进度 - 订单 ", "Refund status - Order ") + esc(orderNo));
+            String content = "<div style=\"font-family:sans-serif;line-height:1.6\">"
+                + "<h2>" + esc(pick(en, statusZh, statusEn)) + "</h2>"
+                + "<p>" + esc(pick(en, "订单号：", "Order: ")) + esc(orderNo) + "</p>"
+                + "<p>" + esc(detail != null ? detail : "") + "</p>"
+                + "<p style=\"color:#777\">" + esc(pick(en,
+                    "如需帮助，请回复本邮件联系客服。", "Reply to this email if you need help.")) + "</p>"
+                + "</div>";
+            helper.setText(content, true);
+            mailSender.send(message);
+        } catch (Exception e) {
+            logger.error("发送退款进度通知失败：to={}", to, e);
+        }
+    }
+
+    /** 订阅状态通知（续费成功/取消/到期/扣款失败）。 */
+    @Async
+    public void sendSubscriptionStatusEmail(String to, String orderNo, String statusZh, String statusEn,
+                                            String detail, String locale) {
+        logger.info("发送订阅状态通知：to={}, orderNo={}", to, orderNo);
+        if (!isEmailConfigured()) {
+            return;
+        }
+        try {
+            boolean en = preferEn(locale);
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(fromAddress != null ? fromAddress : "noreply@billing.com");
+            helper.setTo(to);
+            helper.setSubject(pick(en, "订阅状态 - 订单 ", "Subscription status - Order ") + esc(orderNo));
+            String content = "<div style=\"font-family:sans-serif;line-height:1.6\">"
+                + "<h2>" + esc(pick(en, statusZh, statusEn)) + "</h2>"
+                + "<p>" + esc(pick(en, "订单号：", "Order: ")) + esc(orderNo) + "</p>"
+                + "<p>" + esc(detail != null ? detail : "") + "</p>"
+                + "<p style=\"color:#777\">" + esc(pick(en,
+                    "如需帮助，请回复本邮件联系客服。", "Reply to this email if you need help.")) + "</p>"
+                + "</div>";
+            helper.setText(content, true);
+            mailSender.send(message);
+        } catch (Exception e) {
+            logger.error("发送订阅状态通知失败：to={}", to, e);
+        }
+    }
+
+    /** 通用运营告警（发到 billing.support-email），用于订阅扣款失败/到期等。 */
+    @Async
+    public void sendOpsAlertEmail(String orderNo, String subjectZh, String subjectEn, String detail) {
+        if (supportEmail == null || supportEmail.isBlank()) {
+            return;
+        }
+        sendSubscriptionStatusEmail(supportEmail, orderNo, subjectZh, subjectEn, detail, "zh");
+    }
+
+    /** 退款待审核/待转账通知运营（发到 billing.support-email）。 */
+    @Async
+    public void sendRefundOpsEmail(String orderNo, String event, String detail) {
+        if (supportEmail == null || supportEmail.isBlank()) {
+            return;
+        }
+        sendRefundStatusEmail(supportEmail, orderNo,
+            "退款待处理", "Refund action required",
+            event + (detail != null ? "：" + detail : ""), "zh");
+    }
+
+    /**
      * 发送邮箱验证码（plan v2.10 / A3）。
      *
      * <p>与其余通知一致：SMTP 未配置时<b>静默跳过</b>（仅 warn）。

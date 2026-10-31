@@ -56,7 +56,7 @@ public class AdminProductController {
     }
 
     @Operation(summary = "产品表单元数据",
-            description = "返回计费周期 / 产品档位枚举与权益标签（来自 billing.feature-labels），供管理端渲染表单")
+            description = "返回计费周期 / 产品档位枚举与渠道能力，供管理端渲染表单；权益标签已随产品档案下线")
     @ApiResponse(responseCode = "200", description = "查询成功")
     @Audit(action = "GET_PRODUCT_META", target = "-")
     @GetMapping("/meta")

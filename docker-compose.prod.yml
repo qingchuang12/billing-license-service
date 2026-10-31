@@ -1,0 +1,11 @@
+# 生产覆盖文件：显式启用 prod profile（关闭 Swagger、启用生产配置/邮件/证书自检）。
+#
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# 不把它设成默认值，是为了保留本地 compose 联调（docker profile + 沙箱配置）的可用性；
+# 生产部署必须带 -f docker-compose.prod.yml，否则 compose 默认只激活 docker profile。
+services:
+  app:
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod

@@ -1,21 +1,27 @@
 package com.billing.license.controller.webhook;
 
+import com.billing.license.common.web.ClientIpResolver;
+import com.billing.license.common.web.WebhookReplayGuard;
 import com.billing.license.entity.Order;
-import com.billing.license.entity.Payment;
+import com.billing.license.entity.PaymentAttempt;
 import com.billing.license.entity.PaymentEvent;
+import com.billing.license.entity.PaymentLedgerEntry;
 import com.billing.license.repository.OrderRepository;
+import com.billing.license.service.risk.RateLimitService;
 import com.billing.license.repository.PaymentEventRepository;
-import com.billing.license.repository.PaymentRepository;
-import com.billing.license.service.CheckoutService;
-import com.billing.license.service.LicenseService;
-import com.billing.license.service.RedeemCodeService;
-import com.billing.license.service.notification.EmailNotificationService;
+import com.billing.license.repository.PaymentLedgerRepository;
+import com.billing.license.service.RefundSettlementService;
+import com.billing.license.service.fulfillment.FulfillmentService;
+import com.billing.license.service.fulfillment.LicenseFulfillmentHandler;
 import com.billing.license.service.payment.impl.PaymentServiceFactory;
+import com.billing.license.service.payment.strategy.PaymentEventType;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentStatus;
 import com.billing.license.service.payment.strategy.WebhookPayload;
 import com.billing.license.service.payment.util.AmountValidator;
 import com.billing.license.service.subscription.SubscriptionService;
+import com.billing.license.exception.BusinessException;
+import org.springframework.http.HttpStatus;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -26,6 +32,8 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.util.Map;
 
@@ -38,6 +46,16 @@ import java.util.Map;
 public class WebhookController {
     
     private static final Logger logger = LoggerFactory.getLogger(WebhookController.class);
+
+    /**
+     * 回调成功响应体。
+     *
+     * <p>必须是小写 {@code success}：支付宝以「响应体是否为 success」判定投递成功，返回
+     * {@code Success} / {@code Already processed} 会被判为失败并在 25 小时内重发最多 8 次
+     * （重复投递虽被幂等挡住，但重试风暴会持续占用连接与日志）。微信分支只看状态码，
+     * 另按其要求包成 {@code {"code":"SUCCESS"}}，不受此处影响。
+     */
+    private static final String SUCCESS_BODY = "success";
     
     @Autowired
     private PaymentServiceFactory paymentServiceFactory;
@@ -49,21 +67,8 @@ public class WebhookController {
     private OrderRepository orderRepository;
     
     @Autowired
-    private PaymentRepository paymentRepository;
+    private PaymentLedgerRepository paymentLedgerRepository;
 
-    // B3：渠道退款/取消回调吊销该订单下的 License（与管理端退款同口径）
-    @Autowired
-    private com.billing.license.repository.LicenseRepository licenseRepository;
-    
-    @Autowired
-    private LicenseService licenseService;
-    
-    @Autowired
-    private RedeemCodeService redeemCodeService;
-    
-    @Autowired
-    private EmailNotificationService emailNotificationService;
-    
     @Autowired
     private AmountValidator amountValidator;
 
@@ -71,13 +76,36 @@ public class WebhookController {
     private PaymentEventRepository paymentEventRepository;
 
     @Autowired
-    private CheckoutService checkoutService;
+    private FulfillmentService fulfillmentService;
 
     // B18：订阅生命周期处理（首充绑定 / 续费延长 / 取消作废）
     @Autowired
     private SubscriptionService subscriptionService;
 
-    // B11：自注入代理，使同类内 processWebhook/fulfillOrder 的 @Transactional 经 AOP 代理生效
+    // 退款权益撤销（License + 未用兑换码）与退款流水统一入口
+    @Autowired
+    private RefundSettlementService refundSettlementService;
+
+    @Autowired
+    private RateLimitService rateLimitService;
+
+    @Autowired
+    private ClientIpResolver clientIpResolver;
+
+    @Autowired
+    private WebhookReplayGuard webhookReplayGuard;
+
+    /** 幂等预占结果。 */
+    private enum Reservation {
+        /** 首次处理（已插入 processed=false 的事件行） */
+        NEW,
+        /** 此前已成功处理 */
+        ALREADY_DONE,
+        /** 此前处理未完成，本次允许重试（沿用既有事件行） */
+        RETRY
+    }
+
+    // B11：自注入代理，使同类内 processWebhook 调用 processVerifiedWebhook 的 @Transactional 经 AOP 代理生效
     @Autowired
     @Lazy
     private WebhookController self;
@@ -160,6 +188,22 @@ public class WebhookController {
     }
 
     /**
+     * Creem 回调
+     */
+    @Operation(summary = "Creem 回调", description = "Creem 事件通知（creem-signature 验签）；含订阅生命周期与退款事件")
+    @PostMapping("/creem")
+    public ResponseEntity<String> creemWebhook(
+            @Parameter(description = "Creem 原始事件 JSON") @RequestBody String payload,
+            @Parameter(description = "creem-signature 签名头（HMAC-SHA256 hex）") @RequestHeader(value = "creem-signature", required = false) String signature,
+            @Parameter(hidden = true) @RequestHeader Map<String, String> headers) {
+
+        logger.info("收到 Creem Webhook 回调");
+
+        // w3：透传真实返回码，不恒 200
+        return self.processWebhook(PaymentMethod.CREEM, payload, signature, headers);
+    }
+
+    /**
      * PayPal 回调
      */
     @Operation(summary = "PayPal 回调", description = "PayPal 事件通知（Paypal-Transmission-Id 验签）")
@@ -185,8 +229,21 @@ public class WebhookController {
      */
     public ResponseEntity<String> processWebhook(PaymentMethod method, String payload,
                                                      String signature, Map<String, String> headers) {
+        // 0. 入口限流 + 防重放：先于验签/解析，避免匿名端点被刷爆
+        try {
+            rateLimitService.checkWebhook(method.name(), resolveClientIp());
+        } catch (RateLimitService.RateLimitExceededException e) {
+            logger.warn("Webhook 入口限流触发：provider={}, {}", method.name(), e.getMessage());
+            return ResponseEntity.status(429).header("Retry-After", "60").body("Too Many Requests");
+        }
+        String replayError = webhookReplayGuard.check(headers);
+        if (replayError != null) {
+            logger.warn("Webhook 防重放拒绝：provider={}, reason={}", method.name(), replayError);
+            return ResponseEntity.status(400).body(replayError);
+        }
+
         // 1. 获取对应支付策略
-        var strategy = paymentServiceFactory.getStrategy(method);
+        var strategy = paymentServiceFactory.getStrategyForExistingPayment(method);
 
         // 2. 验证签名（幂等性第一道防线）
         boolean signatureValid = strategy.verifyWebhookSignature(payload, signature, headers);
@@ -195,119 +252,268 @@ public class WebhookController {
             logger.error("Webhook 签名验证失败：{}", method);
             return ResponseEntity.status(401).body("Invalid signature");
         }
-        return self.processVerifiedWebhook(method, payload);
+
+        // 3. 解析 + 订阅反查必须在事务外（订阅反查是渠道 HTTP；硬约束 16/18）
+        WebhookPayload webhookData = strategy.parseWebhookPayload(payload);
+        if (!subscriptionService.enrichFromProvider(webhookData, method)) {
+            // 反查失败：事件缺订单号且本地无订阅记录。此时既不能发货也不能假装成功，
+            // 返回 503 让渠道重投，事件行保持 processed=false 供人工核对。
+            logger.error("订阅事件无法解析订单且渠道反查失败，等待重试：provider={}, subId={}, event={}",
+                method.name(), webhookData.getSubscriptionId(), webhookData.getEventType());
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body("Subscription lookup unavailable");
+        }
+        ResponseEntity<String> response = self.processVerifiedWebhook(method, webhookData, payload);
+        // 支付事务提交后再交付（事件已随支付事务落库）；失败由 FulfillmentService 后台重试
+        if (response.getStatusCode().is2xxSuccessful()
+                && webhookData.getEffectiveEventKind().isConfirmedPayment()
+                && webhookData.getOrderId() != null) {
+            fulfillmentService.processPending(webhookData.getOrderId(), LicenseFulfillmentHandler.TYPE);
+        }
+        return response;
+    }
+
+    private String resolveClientIp() {
+        ServletRequestAttributes attributes =
+            (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        return clientIpResolver.resolve(attributes != null ? attributes.getRequest() : null);
     }
 
     /**
-     * 验签通过后的回调处理（解析 → 幂等 → 金额校验 → 更新支付状态 → 发货/吊销），整体在一个事务内。
+     * 兼容入口（测试/内部调用）：先解析再进入事务。
      */
     @Transactional
     public ResponseEntity<String> processVerifiedWebhook(PaymentMethod method, String payload) {
-        var strategy = paymentServiceFactory.getStrategy(method);
+        WebhookPayload webhookData = paymentServiceFactory.getStrategyForExistingPayment(method).parseWebhookPayload(payload);
+        return processVerifiedWebhook(method, webhookData, payload);
+    }
 
-        // 3. 解析回调数据
-        WebhookPayload webhookData = strategy.parseWebhookPayload(payload);
+    /**
+     * 验签通过后的回调处理：幂等 → 校验 → 按**事件语义**分流。
+     *
+     * <p>核心不变量：**只有确认收款的事件才允许发货/续期**。订阅的同步/试用/暂停/欠费/取消、
+     * 未付款关单都不代表收到钱；退款单独走结算，不得被当作「取消」误吊销或当作「成功」再发货。
+     */
+    @Transactional
+    public ResponseEntity<String> processVerifiedWebhook(PaymentMethod method, WebhookPayload webhookData,
+                                                         String payload) {
+        PaymentEventType kind = webhookData.getEffectiveEventKind();
 
-        // 4. 基于 payment_events 的幂等性检查 - 防止重复处理（架构十二）
-        // B18：幂等键优先用 Webhook 投递事件 ID（Paddle event_id / Stripe evt_xxx），
-        // 对订阅生命周期事件（subscription.updated 重复投递）去重更可靠，缺失时回退到支付流水号
+        // 4. 幂等：已成功处理直接 200；处理未完成的旧事件允许重试
         String eventId = webhookData.getWebhookEventId() != null
             ? webhookData.getWebhookEventId()
             : (webhookData.getTransactionId() != null
                 ? webhookData.getTransactionId() : webhookData.getPaymentId());
-        if (eventId != null && paymentEventRepository.existsByProviderAndEventId(method.name(), eventId)) {
-            logger.info("支付事件已处理，跳过幂等：provider={}, eventId={}", method.name(), eventId);
-            return ResponseEntity.ok("Already processed");
+        Reserved reserved = reserveEvent(method, eventId, webhookData, payload);
+        if (reserved.state() == Reservation.ALREADY_DONE) {
+            logger.info("支付事件已处理，跳过幂等：provider={}, eventId={}", method.name(), reserved.dedupId());
+            return ResponseEntity.ok(SUCCESS_BODY);
         }
 
-        // B18：订阅事件分支（首充 / 续费均由渠道托管，走订阅生命周期处理）
-        // 订阅事件携带 subscriptionId；首充委托 fulfillOrder 签发 License + 标记订单 PAID，
-        // 续费时订单已 PAID，fulfillOrder 幂等跳过；随后订阅服务绑定/续期/作废 License
-        if (webhookData.getSubscriptionId() != null) {
-            // C5（资损/欺诈修复）：订阅首充携带金额时先做金额防篡改校验，与一次性支付同口径；
-            // 续期/取消等无金额字段的生命周期事件豁免（validateAmount 对空金额返 false，故仅在有金额时校验）。
-            // R4：金额不符仅返回 400 且**不预留幂等记录**，故校验必须在 reserveEvent 之前，确保合法重试可重新校验。
-            if (webhookData.getOrderId() != null && webhookData.getAmount() != null) {
-                Order subOrder = orderRepository.findByOrderNumber(webhookData.getOrderId()).orElse(null);
-                if (subOrder != null && !amountValidator.validateAmount(subOrder, webhookData)) {
-                    logger.error("订阅首充金额校验失败：orderId={}", webhookData.getOrderId());
-                    return ResponseEntity.status(400).body("Amount mismatch");
+        try {
+            ResponseEntity<String> response = dispatch(method, webhookData, kind);
+            if (response.getStatusCode().is2xxSuccessful()) {
+                markProcessed(method, reserved.dedupId());
+            }
+            return response;
+        } catch (BusinessException e) {
+            logger.error("Webhook 校验拒绝：provider={}, code={}, msg={}",
+                method.name(), e.getErrorCode(), e.getMessage());
+            return ResponseEntity.status(400).body(e.getErrorCode());
+        }
+    }
+
+    /** 按事件语义分流。任何分支都不得把「非收款事件」当成功收款。 */
+    private ResponseEntity<String> dispatch(PaymentMethod method, WebhookPayload data, PaymentEventType kind) {
+        switch (kind) {
+            case PAYMENT_SUCCEEDED -> {
+                return handleConfirmedPayment(method, data, false);
+            }
+            case SUBSCRIPTION_PAYMENT -> {
+                return handleConfirmedPayment(method, data, true);
+            }
+            case REFUND_SUCCEEDED -> {
+                return handleRefund(method, data);
+            }
+            case PAYMENT_CANCELLED -> {
+                cancelAttemptIfPresent(method, data);
+                logger.info("未付款交易关闭，仅更新尝试状态（不吊销权益）：orderId={}", data.getOrderId());
+                return ResponseEntity.ok(SUCCESS_BODY);
+            }
+            case OTHER -> {
+                logger.info("未处理的回调事件，仅审计：provider={}, event={}, status={}",
+                    method.name(), data.getEventType(), data.getStatus());
+                return ResponseEntity.ok(SUCCESS_BODY);
+            }
+            default -> {
+                // 订阅同步/试用/暂停/欠费/计划取消/取消/到期：只联动订阅状态，绝不发货
+                if (data.getSubscriptionId() == null) {
+                    logger.warn("订阅类事件缺少 subscriptionId，仅审计：event={}", data.getEventType());
+                    return ResponseEntity.ok(SUCCESS_BODY);
                 }
-            }
-            // R1：发放前先原子预留幂等记录，并发重复投递由唯一约束兜底
-            if (!reserveEvent(method, eventId, webhookData, payload, true)) {
-                return ResponseEntity.ok("Already processed");
-            }
-            if (webhookData.getOrderId() != null) {
-                self.fulfillOrder(webhookData.getOrderId());
-            }
-            subscriptionService.processSubscriptionEvent(webhookData, method);
-            logger.info("订阅事件处理成功：provider={}, subId={}, status={}",
-                method.name(), webhookData.getSubscriptionId(), webhookData.getStatus());
-            return ResponseEntity.ok("Success");
-        }
-
-        // 5. 金额校验（防篡改，架构十二 Webhook 必须做的检查）
-        // R4：金额不符仅返回 400，不预留/不写入幂等记录，确保后续合法重试可重新校验与发货
-        if ("SUCCESS".equals(webhookData.getStatus())) {
-            Order order = orderRepository.findByOrderNumber(webhookData.getOrderId()).orElse(null);
-            if (order != null && !amountValidator.validateAmount(order, webhookData)) {
-                logger.error("Webhook 金额校验失败：orderId={}", webhookData.getOrderId());
-                return ResponseEntity.status(400).body("Amount mismatch");
+                subscriptionService.processSubscriptionEvent(data, method);
+                logger.info("订阅事件处理成功：provider={}, subId={}, kind={}",
+                    method.name(), data.getSubscriptionId(), kind);
+                return ResponseEntity.ok(SUCCESS_BODY);
             }
         }
-
-        // 6. 更新支付状态
-        // B2：传入业务订单号，供 paymentId/transactionId 定位失败时回退（PayPal 存 Order ID、
-        // 回调却是 capture ID 的错配场景）；updatePaymentStatus 查无一律降级返回 null，绝不抛异常阻断发货。
-        Payment payment = paymentService.updatePaymentStatus(
-            webhookData.getPaymentId(),
-            PaymentStatus.valueOf(webhookData.getStatus()),
-            webhookData.getTransactionId(),
-            webhookData.getOrderId()
-        );
-        if (payment == null) {
-            logger.warn("支付记录未定位到，仅按订单号继续发货/退款流程：paymentId={}, orderId={}",
-                webhookData.getPaymentId(), webhookData.getOrderId());
-        } else {
-            payment.setMethod(method);
-            paymentRepository.save(payment);
-        }
-
-        // 7. 按支付状态分流：成功发货 / 退款·取消吊销 / 其余仅审计
-        String status = webhookData.getStatus();
-        if ("SUCCESS".equals(status)) {
-            // R1：并发重复投递时唯一约束保证仅一个请求能预留成功，其余返回 Already processed
-            if (!reserveEvent(method, eventId, webhookData, payload, true)) {
-                return ResponseEntity.ok("Already processed");
-            }
-            self.fulfillOrder(webhookData.getOrderId());
-        } else if ("REFUNDED".equals(status) || "CANCELLED".equals(status)) {
-            // B3（资损/欺诈修复）：渠道侧退款/取消回调必须吊销 License 并置订单为已退款，
-            // 与管理端人工退款（AdminService.refundOrder）同口径——否则客户退款后 License 仍可用。
-            // 先原子预留幂等记录，避免重复投递重复吊销。
-            if (!reserveEvent(method, eventId, webhookData, payload, true)) {
-                return ResponseEntity.ok("Already processed");
-            }
-            self.revokeOnChannelRefund(webhookData.getOrderId(), status);
-        } else {
-            // 非 SUCCESS（如 FAILED/PENDING）仍记录审计，但不发货
-            reserveEvent(method, eventId, webhookData, payload, true);
-        }
-
-        logger.info("Webhook 处理成功：orderId={}, status={}", webhookData.getOrderId(), webhookData.getStatus());
-        return ResponseEntity.ok("Success");
     }
 
     /**
-     * R1：原子预留幂等记录。在发货/状态变更之前写入 (provider,event_id) 唯一约束行；
-     * 并发重复投递时后者捕获 DataIntegrityViolationException → 返回 false（调用方转 Already processed）。
-     * R2：providerPaymentId 存真实渠道支付号（transactionId 优先，回退 paymentId），而非事件 ID。
+     * 确认收款的统一处理：订单必须存在、金额/币种必须可核、渠道归属必须一致，之后才记账并发货。
+     *
+     * <p>订阅续期时订单已 PAID：金额可能与首单不同（税费/按比例），故只要求正金额且币种一致；
+     * 首充与一次性付款仍按订单金额严格校验。
      */
-    private boolean reserveEvent(PaymentMethod method, String eventId, WebhookPayload webhookData,
-                                 String payload, boolean processed) {
-        // 事件 ID 缺失时无法去重，用 UUID 占位避免与唯一约束误冲突（不会拦截后续真实重试）
+    private ResponseEntity<String> handleConfirmedPayment(PaymentMethod method, WebhookPayload data,
+                                                          boolean subscription) {
+        if (data.getOrderId() == null || data.getOrderId().isBlank()) {
+            logger.error("收款事件缺少订单号，拒绝发货：provider={}, event={}", method.name(), data.getEventType());
+            return ResponseEntity.status(400).body("Order reference missing");
+        }
+        Order order = orderRepository.findByOrderNumber(data.getOrderId()).orElse(null);
+        if (order == null) {
+            logger.error("收款事件对应订单不存在，拒绝发货：orderId={}", data.getOrderId());
+            return ResponseEntity.status(400).body("Order not found");
+        }
+        if (order.getPaymentStatus() == Order.PaymentStatus.REFUNDED
+                || order.getStatus() == Order.OrderStatus.REFUNDED) {
+            logger.warn("订单已退款，忽略迟到的收款事件：orderId={}", data.getOrderId());
+            return ResponseEntity.ok(SUCCESS_BODY);
+        }
+        boolean alreadyPaid = order.getPaymentStatus() == Order.PaymentStatus.PAID
+            || order.getStatus() == Order.OrderStatus.PAID;
+        // 一次性订单只有一笔有效收款：已 PAID 后另一渠道的迟到通知、或同渠道换了事件号的重投，
+        // 都不能再追加一条 CHARGE（幂等键含事件号，不同事件号挡不住，账本会虚增收款）。
+        // 货已交付，直接确认收到即可；订阅续期走 subscription 分支，不受此处影响。
+        if (alreadyPaid && !subscription) {
+            logger.warn("订单已收款，忽略迟到的收款事件：orderId={}, provider={}, txn={}",
+                data.getOrderId(), method.name(), data.getTransactionId());
+            return ResponseEntity.ok(SUCCESS_BODY);
+        }
+        if (data.getAmount() == null) {
+            logger.error("收款事件缺少金额，拒绝处理：orderId={}", data.getOrderId());
+            return ResponseEntity.status(400).body("Amount missing");
+        }
+        if (data.getCurrency() == null
+                || order.getCurrency() == null
+                || !data.getCurrency().equalsIgnoreCase(order.getCurrency().code())) {
+            logger.error("收款事件币种缺失或不符：orderId={}, order={}, webhook={}",
+                data.getOrderId(), order.getCurrency(), data.getCurrency());
+            return ResponseEntity.status(400).body("Currency mismatch");
+        }
+        if (!alreadyPaid && !amountValidator.validateAmount(order, data)) {
+            logger.error("收款金额校验失败：orderId={}", data.getOrderId());
+            return ResponseEntity.status(400).body("Amount mismatch");
+        }
+        if (alreadyPaid && data.getAmount().signum() <= 0) {
+            logger.error("续期金额非法：orderId={}, amount={}", data.getOrderId(), data.getAmount());
+            return ResponseEntity.status(400).body("Amount mismatch");
+        }
+
+        String chargeKey = subscription
+            ? "subcharge:" + data.getSubscriptionId() + ":"
+                + (data.getTransactionId() != null ? data.getTransactionId() : data.getWebhookEventId())
+            : "charge:" + (data.getWebhookEventId() != null ? data.getWebhookEventId()
+                : (data.getTransactionId() != null ? data.getTransactionId() : data.getPaymentId()));
+        if (subscription && alreadyPaid) {
+            // 续期逐期入账：不新建/覆盖首单尝试，只追加一条不可变收款流水
+            paymentService.recordCharge(order, null, method, data.getAmount(), order.getCurrency(),
+                data.getTransactionId(), chargeKey, "subscription-renewal");
+        } else {
+            PaymentAttempt attempt = paymentService.ensureAttemptForWebhook(order, data, method);
+            paymentService.recordCharge(order, attempt, method, data.getAmount(), order.getCurrency(),
+                data.getTransactionId(), chargeKey, "webhook");
+            fulfillmentService.enqueue(order, LicenseFulfillmentHandler.TYPE, null);
+        }
+        if (subscription) {
+            subscriptionService.processSubscriptionEvent(data, method);
+        }
+        logger.info("收款事件处理成功：orderId={}, subscription={}", data.getOrderId(), subscription);
+        return ResponseEntity.ok(SUCCESS_BODY);
+    }
+
+    /**
+     * 渠道退款：解析订单与**实际退款金额**后统一结算（撤销 License + 未用兑换码、记账）。
+     *
+     * <p>缺金额或缺订单关联时返回 503/400 并保持 processed=false，绝不按全额猜测入账。
+     */
+    private ResponseEntity<String> handleRefund(PaymentMethod method, WebhookPayload data) {
+        Order order = resolveRefundOrder(data);
+        if (order == null) {
+            logger.error("退款回调无法关联订单，等待重试/人工核对：provider={}, txn={}, paymentId={}",
+                method.name(), data.getTransactionId(), data.getPaymentId());
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body("Refund order unresolved");
+        }
+        if (data.getRefundAmount() == null) {
+            logger.error("退款回调缺少退款金额，拒绝按全额猜测：orderId={}", order.getOrderNumber());
+            return ResponseEntity.status(400).body("Refund amount missing");
+        }
+        // 幂等键用事件 ID（同一退款重投不变、不同部分退款不撞）；原交易号只作追溯
+        String refundId = data.getWebhookEventId() != null
+            ? data.getWebhookEventId() : data.getTransactionId();
+        // 累计口径（支付宝 refund_fee）由结算层按差额入账，其余渠道给的是单笔退款额
+        refundSettlementService.settle(order, method, refundId,
+            data.getRefundAmount(), data.getRefundCurrency(), "Channel refund",
+            data.getTransactionId(), data.isRefundAmountCumulative());
+        logger.info("渠道退款结算完成：orderId={}, amount={}, cumulative={}", order.getOrderNumber(),
+            data.getRefundAmount(), data.isRefundAmountCumulative());
+        return ResponseEntity.ok(SUCCESS_BODY);
+    }
+
+    /** 退款订单解析：payload 订单号优先，其次按原交易号反查原收款流水所属订单。 */
+    private Order resolveRefundOrder(WebhookPayload data) {
+        if (data.getOrderId() != null && !data.getOrderId().isBlank()) {
+            Order order = orderRepository.findByOrderNumber(data.getOrderId()).orElse(null);
+            if (order != null) {
+                return order;
+            }
+        }
+        if (data.getTransactionId() != null) {
+            for (PaymentLedgerEntry entry : paymentLedgerRepository
+                    .findByChannelTxnIdOrderByOccurredAtDesc(data.getTransactionId())) {
+                if (entry.getOrderIdStr() == null) {
+                    continue;
+                }
+                try {
+                    Order order = orderRepository.findById(java.util.UUID.fromString(entry.getOrderIdStr()))
+                        .orElse(null);
+                    if (order != null) {
+                        return order;
+                    }
+                } catch (IllegalArgumentException ignored) {
+                    // 历史脏数据（非 UUID 文本）跳过
+                }
+            }
+        }
+        return null;
+    }
+
+    /** 关闭未付款交易：只更新尝试状态，绝不吊销权益。 */
+    private void cancelAttemptIfPresent(PaymentMethod method, WebhookPayload data) {
+        try {
+            PaymentAttempt attempt = paymentService.findAttemptForCharge(
+                data.getPaymentId(), data.getTransactionId(), data.getOrderId(), method);
+            if (attempt != null) {
+                paymentService.updateAttemptStatus(attempt, PaymentStatus.CANCELLED, data.getTransactionId());
+            }
+        } catch (BusinessException e) {
+            logger.error("关闭通知的支付尝试归属不符：{}", e.getMessage());
+        }
+    }
+
+    /**
+     * 原子预占幂等记录。先以 processed=false 插入；只有业务处理成功才 {@link #markProcessed}。
+     * 并发重复投递由唯一约束兜底；写库异常一律上抛（绝不假装成功）。
+     */
+    private Reserved reserveEvent(PaymentMethod method, String eventId, WebhookPayload webhookData,
+                                  String payload) {
         String dedupId = eventId != null ? eventId : "unknown-" + java.util.UUID.randomUUID();
+        var existing = paymentEventRepository.findByProviderAndEventId(method.name(), dedupId);
+        if (existing.isPresent()) {
+            return new Reserved(Boolean.TRUE.equals(existing.get().getProcessed())
+                ? Reservation.ALREADY_DONE : Reservation.RETRY, dedupId);
+        }
         String providerPaymentId = webhookData.getTransactionId() != null
             ? webhookData.getTransactionId() : webhookData.getPaymentId();
         try {
@@ -318,91 +524,28 @@ public class WebhookController {
                 .orderId(webhookData.getOrderId())
                 .providerPaymentId(providerPaymentId)
                 .signatureValid(true)
-                .processed(processed)
+                .processed(false)
                 .payload(payload)
                 .build();
-            // C6：主键为应用内生成 UUID，save() 的 INSERT 会延迟到 commit（在本 try-catch 之外的事务拦截器），
-            // 导致并发重复投递的唯一约束冲突绕过此处 catch、在 commit 时抛出 → 渠道收 500 而非设计的 200「已处理」。
-            // saveAndFlush 强制同步 INSERT，使冲突在 try 内立即抛 DataIntegrityViolationException 被优雅去重。
+            // saveAndFlush 让唯一约束冲突在 try 内立即抛出，而不是拖到事务提交时变成 500
             paymentEventRepository.saveAndFlush(event);
-            return true;
+            return new Reserved(Reservation.NEW, dedupId);
         } catch (org.springframework.dao.DataIntegrityViolationException e) {
             logger.info("支付事件已存在（并发去重）：provider={}, eventId={}", method.name(), dedupId);
-            return false;
-        } catch (Exception e) {
-            logger.error("记录支付事件失败", e);
-            // 写入失败不应阻断发货主流程
-            return true;
+            return new Reserved(Reservation.ALREADY_DONE, dedupId);
         }
     }
 
-    /**
-     * 发货逻辑 - 生成兑换码或 License，并发送通知（架构十三）
-     */
-    @Transactional
-    public void fulfillOrder(String orderId) {
-        logger.info("开始发货：orderId={}", orderId);
-
-        // #4（资损并发保护）：先锁订单行再判可发货状态。check-then-act 若无行锁，两个不同 eventId 的回调
-        // （如 Stripe 同时投 checkout.session.completed 与 payment_intent.succeeded）并发进入时，
-        // 双方都读到 canFulfill()=true → 同一订单签出两张证。后到者拿到锁后重读到已 PAID 即幂等跳过。
-        Order order = orderRepository.findByOrderNumberForUpdate(orderId)
-            .orElseThrow(() -> new RuntimeException("Order not found: " + orderId));
-
-        // H14 + B12：订单级前置校验——已支付/已退款/已取消/退款失败均不可再发货，
-        // 防止渠道重试 / 客户端轮询 / 重复回调造成重复签发 License 或兑换码（资损）。
-        if (!order.canFulfill()) {
-            logger.info("订单当前状态不可发货，跳过重复处理：orderId={}, status={}, paymentStatus={}",
-                orderId, order.getStatus(), order.getPaymentStatus());
-            return;
-        }
-
-        // H15：通过状态机唯一出口置为已支付，保证 status 与 paymentStatus 一致
-        order.markPaid();
-        orderRepository.save(order);
-
-        // 标记收银台会话为已支付
-        checkoutService.markPaid(orderId);
-
-        String machineCode = order.getMachineCode();
-        String productName = order.getTitle() != null ? order.getTitle() : "License";
-        String email = order.getEmail();
-        // F7：发货邮件按买家收银台 locale 出中/英（回调请求头属渠道服务器，不能用作买家语言）
-        String locale = checkoutService.findLocaleByOrderNumber(orderId);
-
-        if (machineCode != null && !machineCode.isEmpty()) {
-            // 有机器码：直接签发绑定设备的 License
-            logger.info("签发绑定设备的 License：orderId={}, machineCode={}", orderId, machineCode);
-            com.billing.license.entity.License issued = licenseService.issueLicense(orderId, machineCode);
-            if (email != null && !email.isEmpty()) {
-                emailNotificationService.sendPaymentSuccessEmail(
-                    email, orderId, productName,
-                    order.getTotalAmount() != null ? order.getTotalAmount().doubleValue() : 0.0,
-                    order.getCurrency(), locale);
-                // S3（plan-1.0）：直签分支此前**只**发支付成功通知，邮件里没有 License Key——
-                // 用户换机/重装时手上没有任何凭证（{@code sendLicenseIssuedEmail} 自定义起零调用点）。
-                // 与兑换码分支「支付成功 + 凭证」两封同发的形态对齐。
-                // F7：有效期文案改传 null，由模板按 locale 出「永久有效 / No expiration」，不再硬编码中文。
-                emailNotificationService.sendLicenseIssuedEmail(email, issued.getLicenseKey(), productName,
-                    issued.getExpiresAt() != null ? issued.getExpiresAt().toLocalDate().toString() : null, locale);
+    private void markProcessed(PaymentMethod method, String dedupId) {
+        paymentEventRepository.findByProviderAndEventId(method.name(), dedupId).ifPresent(event -> {
+            if (!Boolean.TRUE.equals(event.getProcessed())) {
+                event.setProcessed(true);
+                paymentEventRepository.save(event);
             }
-        } else {
-            // 无机器码：生成兑换码
-            logger.info("生成兑换码：orderId={}", orderId);
-            String code = redeemCodeService.generateCode(orderId);
-            if (email != null && !email.isEmpty()) {
-                // 支付成功 + 兑换码邮件（统一通知）
-                emailNotificationService.sendPaymentSuccessEmail(
-                    email, orderId, productName,
-                    order.getTotalAmount() != null ? order.getTotalAmount().doubleValue() : 0.0,
-                    order.getCurrency(), locale);
-                emailNotificationService.sendRedeemCodeEmail(email, code, productName,
-                    order.getPaidAt() != null ? order.getPaidAt().toString() : "", locale);
-            }
-        }
-
-        logger.info("发货完成：orderId={}", orderId);
+        });
     }
+
+    private record Reserved(Reservation state, String dedupId) {}
 
     /**
      * B3（资损/欺诈修复）：渠道侧退款/取消回调触发的 License 吊销 + 订单置退款。
@@ -416,37 +559,18 @@ public class WebhookController {
     @Transactional
     public void revokeOnChannelRefund(String orderId, String status) {
         if (orderId == null || orderId.isEmpty()) {
-            logger.warn("退款/取消回调缺订单号，无法吊销 License：status={}", status);
+            logger.warn("退款回调缺订单号，无法结算：status={}", status);
             return;
         }
-        // #4：与 fulfillOrder 同一订单行锁口径——本方法同样是 check-then-act（判已退款态 → 吊销 License → 置 REFUNDED），
-        // 渠道对同一退款事件重投或与另一退款回调并发时，后到者拿到锁后重读即见已退款态并跳过。
+        // #4：与 fulfillOrder 同一订单行锁口径——渠道重投或并发时后到者拿到锁后重读即见已退款态并跳过。
         Order order = orderRepository.findByOrderNumberForUpdate(orderId).orElse(null);
         if (order == null) {
-            logger.warn("退款/取消回调对应订单不存在：orderId={}, status={}", orderId, status);
+            logger.warn("退款回调对应订单不存在：orderId={}, status={}", orderId, status);
             return;
         }
-        if (order.getPaymentStatus() == Order.PaymentStatus.REFUNDED) {
-            logger.info("订单已是退款态，跳过重复吊销：orderId={}", orderId);
-            return;
-        }
-
-        // 吊销该订单下所有未吊销 License（与 AdminService.refundOrder 同口径）
-        var licenses = licenseRepository.findByOrder(order);
-        int revoked = 0;
-        for (var license : licenses) {
-            if (license.getStatus() != com.billing.license.entity.License.LicenseStatus.REVOKED) {
-                license.setStatus(com.billing.license.entity.License.LicenseStatus.REVOKED);
-                license.setRevokedAt(java.time.LocalDateTime.now());
-                licenseRepository.save(license);
-                revoked++;
-            }
-        }
-
-        // 订单置退款态（状态机唯一出口，保证 status 与 paymentStatus 一致）
-        order.markRefunded();
-        orderRepository.save(order);
-
-        logger.info("渠道退款/取消对账完成：orderId={}, status={}, 吊销 License {} 张", orderId, status, revoked);
+        // 未提供退款金额时按全额；销证与撤未用兑换码统一走 RefundSettlementService
+        refundSettlementService.settle(order, order.getPaymentProvider(),
+            "channel-" + orderId, null, null, "Channel " + status);
+        logger.info("渠道退款结算完成：orderId={}, status={}", orderId, status);
     }
 }

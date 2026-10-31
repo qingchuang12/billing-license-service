@@ -4,6 +4,7 @@ import com.billing.license.dto.accounting.AccountOverviewResponse;
 import com.billing.license.entity.Currency;
 import com.billing.license.exception.BusinessException;
 import com.billing.license.service.AccountingService;
+import com.billing.license.service.ChannelReconciliationService;
 import com.billing.license.service.payment.strategy.PaymentMethod;
 import com.billing.license.service.payment.strategy.PaymentStatus;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,12 +32,14 @@ import static org.mockito.Mockito.*;
 class AccountingControllerTest {
 
     private AccountingService accountingService;
+    private ChannelReconciliationService channelReconciliationService;
     private AccountingController controller;
 
     @BeforeEach
     void setUp() {
         accountingService = mock(AccountingService.class);
-        controller = new AccountingController(accountingService);
+        channelReconciliationService = mock(ChannelReconciliationService.class);
+        controller = new AccountingController(accountingService, channelReconciliationService);
     }
 
     private static AccountOverviewResponse emptyOverview() {

@@ -17,7 +17,7 @@ import java.math.BigDecimal;
  *
  * <ul>
  *   <li>{@code sku} 仅新增时生效：创建后锁定，编辑请求可留空，携带不同值将被服务端拒绝；</li>
- *   <li>{@code productCode} 必须指向已存在的产品档案（权益与产品级名称/描述在档案上维护）；</li>
+ *   <li>{@code productCode} 仅作分组/目录过滤键：非空、≤64 字符，不要求预先存在档案；</li>
  *   <li>{@code active} 仅新增时生效：默认 true，后续上下架走独立端点；</li>
  *   <li>双币价均为必填：缺任一区域价会让该区域下单被拒（C6，不做跨币种回退）。</li>
  * </ul>
@@ -28,8 +28,8 @@ public class AdminProductRequest {
     @Pattern(regexp = "^[A-Za-z0-9][A-Za-z0-9-]{1,63}$", message = "SKU 须为 2–64 位字母/数字/短横线")
     private String sku;
 
-    @NotBlank(message = "请选择产品档案")
-    @Pattern(regexp = "^[A-Za-z0-9][A-Za-z0-9-]{0,63}$", message = "产品码须为 1–64 位字母/数字/短横线")
+    @NotBlank(message = "请填写产品码")
+    @Size(max = 64, message = "产品码不得超过 64 字符")
     private String productCode;
 
     @NotBlank(message = "产品名称不能为空")
@@ -56,6 +56,9 @@ public class AdminProductRequest {
     @NotBlank(message = "计费周期不能为空")
     private String billingCycle;
 
+    /** 收款方式：ONE_TIME / AUTO_RECURRING；留空按计费周期推导（兼容旧客户端） */
+    private String chargeMode;
+
     @NotBlank(message = "产品档位不能为空")
     private String tier;
 
@@ -79,6 +82,10 @@ public class AdminProductRequest {
     /** Paddle 订阅价目 ID（pri_ 前缀）：订阅周期走 Paddle 必填（Paddle 只认目录价目） */
     @Size(max = 255, message = "Paddle 价目 ID 不得超过 255 字")
     private String paddlePriceId;
+
+    /** Creem 目录产品 ID（prod_ 前缀）：走 Creem 必填（渠道无内联价格） */
+    @Size(max = 255, message = "Creem 产品 ID 不得超过 255 字")
+    private String creemProductId;
 
     private Boolean active;
 

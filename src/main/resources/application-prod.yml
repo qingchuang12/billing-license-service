@@ -33,6 +33,11 @@ account:
   # 前提是 SMTP 已配置并实测可达（见 docs/上线准备工作.md §7-C）。
   code-log-only: false
 
+billing:
+  refund:
+    # 生产默认所有渠道退款都需管理员审核；Creem 始终强制审核。
+    require-approval: ${BILLING_REFUND_REQUIRE_APPROVAL:true}
+
 logging:
   level:
     # 生产禁用 DEBUG：会打印 License token 与支付回调 payload 等敏感信息

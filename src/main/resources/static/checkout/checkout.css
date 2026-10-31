@@ -28,6 +28,8 @@
 
   --success: #3E9C7A;
   --warning: #C9943A;
+  --danger: #B4544A;
+  --danger-bg: #FBEFEE;
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
                "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
@@ -205,6 +207,7 @@ a:hover { color: var(--brand-900); }
 
 /* -------------------------------- 档位选择 ------------------------------- */
 .plan-field { margin: 0; padding: 0; border: 0; }
+#orderForm .plan-field { margin-top: 16px; }
 .plan-field__legend {
   padding: 0;
   margin-bottom: 12px;
@@ -327,31 +330,6 @@ a:hover { color: var(--brand-900); }
   color: var(--ink-3);
   font-size: 13px;
 }
-.plan-card__benefits {
-  display: block;
-  margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px dashed var(--line-strong);
-}
-.plan-card__benefit {
-  display: block;
-  position: relative;
-  padding-left: 18px;
-  color: var(--ink-2);
-  font-size: 12.5px;
-  line-height: 1.9;
-}
-.plan-card__benefit::before {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: 11px;
-  width: 5px;
-  height: 9px;
-  border-right: 2px solid var(--brand-500);
-  border-bottom: 2px solid var(--brand-500);
-  transform: rotate(45deg) translateY(-2px);
-}
 
 /* --------------------------------- 表单 --------------------------------- */
 .field { margin-top: 24px; }
@@ -403,6 +381,8 @@ a:hover { color: var(--brand-900); }
 .machine-box__hint { margin-top: 6px; color: var(--ink-3); font-size: 12.5px; }
 
 .form-note { margin-top: 20px; color: var(--ink-3); font-size: 13px; }
+.form-legal { margin-top: 8px; color: var(--ink-3); font-size: 12px; line-height: 1.7; }
+.form-legal a { color: var(--accent, #2563eb); text-decoration: underline; }
 
 /* ------------------------------- 支付方式 ------------------------------- */
 .provider-list { display: grid; gap: 10px; margin-top: 16px; }
@@ -529,7 +509,187 @@ a:hover { color: var(--brand-900); }
 }
 .code-copy { margin-top: 12px; }
 
-/* -------------------------------- 摘要栏 -------------------------------- */
+/* ------------------------------- 档位分组 ------------------------------- */
+.plan-list { display: block; }
+.plan-group { list-style: none; }
+.plan-group + .plan-group { margin-top: 20px; }
+.plan-group-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 10px;
+  color: var(--ink-1);
+  font-size: 13px;
+  font-weight: 700;
+}
+.plan-group-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.plan-group .plan-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(232px, 1fr));
+  gap: 12px;
+}
+.plan-card__unavailable-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--brand-700);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ------------------------------- 支付方式卡片 ------------------------------- */
+.region-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.region-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--brand-200);
+  border-radius: 999px;
+  background: var(--brand-50);
+  color: var(--brand-700);
+  font-size: 12px;
+  font-weight: 600;
+}
+.region-row__note { margin: 0; color: var(--ink-3); font-size: 12.5px; }
+.provider-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.provider-card:hover { border-color: var(--brand-500); box-shadow: var(--shadow); }
+.provider-card[disabled] { opacity: .65; cursor: progress; }
+.provider-card__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+}
+.provider-card__name { display: block; color: var(--ink-1); font-size: 15px; font-weight: 700; }
+.provider-card__note { display: block; margin-top: 2px; color: var(--ink-3); font-size: 12px; }
+.provider-card__amount { display: flex; align-items: center; gap: 12px; margin-left: auto; text-align: right; }
+.provider-card__price { color: var(--ink-1); font-size: 16px; font-weight: 700; }
+.provider-card__arrow { color: var(--brand-500); font-size: 18px; }
+.recap {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-soft);
+  font-size: 13px;
+}
+.recap__row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; }
+.recap__row span { color: var(--ink-3); }
+.recap__row b { color: var(--ink-1); text-align: right; }
+.linklike {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--brand-700);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.linklike:hover { color: var(--brand-900); }
+
+/* ------------------------------- 倒计时 ------------------------------- */
+.cd-row { display: flex; align-items: center; gap: 12px; margin: 4px 0 16px; }
+.cd-row__label { color: var(--ink-3); font-size: 13px; white-space: nowrap; }
+.cd-text { color: var(--ink-1); font-family: var(--font-mono); font-size: 14px; font-weight: 700; }
+.cd-bar { flex: 1; height: 6px; border-radius: 999px; background: var(--brand-100); overflow: hidden; }
+.cd-bar__fill { display: block; height: 100%; width: 100%; border-radius: 999px; background: var(--brand-700); transition: width 1s linear; }
+.cd-row.is-urgent .cd-bar__fill { background: var(--danger); }
+
+/* ------------------------------- toast ------------------------------- */
+.toast-wrap {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.toast {
+  max-width: 80vw;
+  padding: 10px 18px;
+  border-radius: 10px;
+  background: var(--ink-1);
+  color: #fff;
+  font-size: 13px;
+  box-shadow: var(--shadow-lg);
+  animation: ck-toast-in .22s var(--ease);
+}
+.toast.is-out { opacity: 0; transition: opacity .25s; }
+@keyframes ck-toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* ------------------------------- 骨架屏 ------------------------------- */
+.sk-wrap { display: block; }
+.sk-row { display: flex; gap: 12px; align-items: center; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); margin-top: 12px; }
+.sk {
+  height: 13px;
+  flex: 1;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #EDF1F2 25%, #F7F9FA 50%, #EDF1F2 75%);
+  background-size: 200% 100%;
+  animation: ck-sk-move 1.2s linear infinite;
+}
+@keyframes ck-sk-move { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .sk { animation: none; }
+  .cd-bar__fill { transition: none; }
+}
+
+/* ------------------------------- 徽标 ------------------------------- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.badge--ok { background: #E4F3EC; color: #256B51; }
+.badge--warn { background: #FBF3E2; color: #8A6216; }
+.badge--danger { background: #F9E9E7; color: #8E3A31; }
+.badge--muted { background: #EEF1F2; color: #5F6D72; }
+
+/* ------------------------------- 摘要/机器码补充 ------------------------------- */
+.machine-box__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+#stage:focus { outline: none; }
+#stage:focus-visible { outline: 2px solid var(--brand-700); outline-offset: 4px; }
+
 .summary {
   padding: 20px;
   background: var(--bg-soft);
@@ -611,4 +771,26 @@ a:hover { color: var(--brand-900); }
   .plan-card,
   .provider-item,
   .steps__num { transition-duration: .01ms; }
+}
+
+/* 花呗分期选择（仅支付宝） */
+.installment-row {
+  margin: -4px 0 14px;
+}
+
+.installment-row label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted, #5b6b73);
+}
+
+.installment-row select {
+  padding: 6px 10px;
+  border: 1px solid var(--line, #cbd5dc);
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
 }

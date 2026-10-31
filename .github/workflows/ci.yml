@@ -10,16 +10,16 @@ on:
 
 jobs:
   test:
-    name: 单元测试（JDK 21）
+    name: 单元测试（JDK 25）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
-      - name: 安装 JDK 21
+      - name: 安装 JDK 25
         uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
           cache: maven
 
       # 单测走 src/test/resources/application-test.yml（H2 + Flyway 关闭），

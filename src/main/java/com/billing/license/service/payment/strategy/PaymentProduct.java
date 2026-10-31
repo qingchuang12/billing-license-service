@@ -9,5 +9,7 @@ public enum PaymentProduct {
     /** 扫码支付（返回二维码内容） */
     QRCODE,
     /** 网页跳转支付（返回跳转链接或表单） */
-    REDIRECT
+    REDIRECT,
+    /** 手机网站支付（支付宝 WAP，返回手机浏览器跳转链接） */
+    WAP
 }

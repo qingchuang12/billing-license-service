@@ -2,9 +2,8 @@ package com.billing.license.infrastructure.crypto;
 
 import com.billing.license.entity.License;
 import com.billing.license.entity.Product;
-import com.billing.license.entity.ProductProfile;
 import com.billing.license.infrastructure.kms.KmsService;
-import com.billing.license.repository.ProductProfileRepository;
+import com.billing.license.util.LogMask;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,7 +15,6 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Base64;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -28,7 +26,6 @@ import java.util.Map;
 public class LicenseIssuer {
 
     private final KmsService kmsService;
-    private final ProductProfileRepository productProfileRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
@@ -59,19 +56,10 @@ public class LicenseIssuer {
             Product product = license.getProduct();
             if (product != null) {
                 payload.put("sku", product.getSku());
-                // B17：写入档位与权益清单，供客户端离线校验 Pro / Pro Plus 的权益差异
+                // B17：写入档位，供客户端离线校验 Pro / Pro Plus 的权益差异；
+                // 权益清单（feat）已随产品档案下线——客户端解锁只按 SKU 映射。
                 if (product.getTier() != null) {
                     payload.put("plan", product.getTier().name());
-                }
-                String features = resolveFeatures(product);
-                if (features != null && !features.isEmpty()) {
-                    try {
-                        payload.put("feat", objectMapper.readValue(features, List.class));
-                    } catch (Exception e) {
-                        // A4：非法 JSON 不再静默丢弃——明确告警且不写入 feat 键；签发流程继续（不因权益描述异常阻断售卖）
-                        log.warn("产品档案 features 非合法 JSON 数组，已跳过 feat 键：sku={}, features={}",
-                            product.getSku(), features, e);
-                    }
                 }
                 // A3：更新门槛——键缺失即「不限制」，故为 null 或 <= 0 时均不写入；
                 // 注意：当前不支持用 0 表达「不含更新」，0 一律按「不限制」处理。
@@ -117,7 +105,7 @@ public class LicenseIssuer {
                 .encodeToString(signature);
             
             String token = signingInput + "." + signatureB64;
-            log.debug("Issued license token: {}", license.getLicenseKey());
+            log.debug("Issued license token: {}", LogMask.secret(license.getLicenseKey()));
             
             return token;
         } catch (Exception e) {
@@ -188,16 +176,6 @@ public class LicenseIssuer {
         }
     }
     
-    /** 权益属于产品档案：按产品的 product_code 读取，缺失档案则不写 feat 键。 */
-    private String resolveFeatures(Product product) {
-        String code = product.getProductCode();
-        if (code == null || code.isBlank()) {
-            return null;
-        }
-        ProductProfile profile = productProfileRepository.findByProductCodeIgnoreCase(code).orElse(null);
-        return profile != null ? profile.getFeatures() : null;
-    }
-
     private String getJwsAlgorithm() {
         String alg = kmsService.getAlgorithm();
         return switch (alg) {

@@ -98,4 +98,22 @@ class RateLimitServiceTest {
         // 仍能正常对已知 key 计数（未被淘汰逻辑破坏）
         assertEquals(1, rateLimitService.checkEmailPurchase("probe@b.com"));
     }
+
+    @Test
+    void checkWebhook_limitsPerProviderAndIp() {
+        BillingProperties props = new BillingProperties();
+        BillingProperties.Webhook webhook = new BillingProperties.Webhook();
+        webhook.setMaxPerMinute(2);
+        webhook.setWindowMinutes(1);
+        props.setWebhook(webhook);
+        RateLimitService service = new RateLimitService(props);
+
+        service.checkWebhook("ALIPAY", "1.2.3.4");
+        service.checkWebhook("ALIPAY", "1.2.3.4");
+        assertThrows(RateLimitService.RateLimitExceededException.class,
+            () -> service.checkWebhook("ALIPAY", "1.2.3.4"));
+        // 不同渠道 / 不同 IP 互不影响
+        assertDoesNotThrow(() -> service.checkWebhook("CREEM", "1.2.3.4"));
+        assertDoesNotThrow(() -> service.checkWebhook("ALIPAY", "5.6.7.8"));
+    }
 }
